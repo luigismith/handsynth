@@ -1,0 +1,399 @@
+// Owner: interaction-mapper
+//
+// Unit tests for InteractionMapperImpl. Mocks AudioEngine, MusicBrain, and
+// HandTracker with simple stubs so we can drive synthetic gesture states
+// through the public surface and assert what gets pushed downstream.
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type {
+  AudioEngine,
+  AudioEngineParams,
+  ChordEvent,
+  GestureState,
+  HandTracker,
+  HandTrackerEvents,
+  MusicBrain,
+  MusicBrainEvents,
+  MusicBrainInput,
+  NoteEvent,
+  VibePreset,
+} from '@contracts/contracts';
+import { InteractionMapperImpl, __testing } from './InteractionMapper';
+import { VIBES } from '@presets/vibes';
+
+// ---------------------------------------------------------------------------
+// Stubs
+// ---------------------------------------------------------------------------
+
+type AudioStub = AudioEngine & {
+  paramCalls: Partial<AudioEngineParams>[];
+  leadCalls: NoteEvent[];
+  bassCalls: NoteEvent[];
+  chordCalls: ChordEvent[];
+  stabCalls: number;
+  muteCalls: boolean[];
+  dropCalls: boolean[];
+};
+
+function makeAudioStub(): AudioStub {
+  const stub = {
+    paramCalls: [] as Partial<AudioEngineParams>[],
+    leadCalls: [] as NoteEvent[],
+    bassCalls: [] as NoteEvent[],
+    chordCalls: [] as ChordEvent[],
+    stabCalls: 0,
+    muteCalls: [] as boolean[],
+    dropCalls: [] as boolean[],
+    init: () => Promise.resolve(),
+    loadVibe: () => undefined,
+    triggerLead: (e: NoteEvent) => {
+      stub.leadCalls.push(e);
+    },
+    triggerBass: (e: NoteEvent) => {
+      stub.bassCalls.push(e);
+    },
+    triggerChord: (e: ChordEvent) => {
+      stub.chordCalls.push(e);
+    },
+    triggerKick: () => undefined,
+    triggerHat: () => undefined,
+    triggerPerc: () => undefined,
+    triggerStab: () => {
+      stub.stabCalls += 1;
+    },
+    setParams: (p: Partial<AudioEngineParams>) => {
+      stub.paramCalls.push({ ...p });
+    },
+    setMute: (m: boolean) => {
+      stub.muteCalls.push(m);
+    },
+    triggerDrop: (a: boolean) => {
+      stub.dropCalls.push(a);
+    },
+    getAnalyser: () => ({}) as AnalyserNode,
+    isReady: () => true,
+  };
+  return stub;
+}
+
+type MusicStub = MusicBrain & {
+  inputCalls: MusicBrainInput[];
+  advanceCalls: number;
+  subscriber: MusicBrainEvents | null;
+};
+
+function makeMusicStub(): MusicStub {
+  const stub = {
+    inputCalls: [] as MusicBrainInput[],
+    advanceCalls: 0,
+    subscriber: null as MusicBrainEvents | null,
+    start: () => undefined,
+    stop: () => undefined,
+    setInput: (i: MusicBrainInput) => {
+      stub.inputCalls.push(i);
+    },
+    advanceChord: () => {
+      stub.advanceCalls += 1;
+    },
+    on: (e: MusicBrainEvents) => {
+      stub.subscriber = e;
+    },
+    off: (e: MusicBrainEvents) => {
+      if (stub.subscriber === e) stub.subscriber = null;
+    },
+  };
+  return stub;
+}
+
+function makeHandsStub(): HandTracker & {
+  emit: <K extends keyof HandTrackerEvents>(
+    evt: K,
+    ...args: Parameters<HandTrackerEvents[K]>
+  ) => void;
+} {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const listeners: Map<keyof HandTrackerEvents, Set<any>> = new Map();
+  const tracker: HandTracker = {
+    init: () => Promise.resolve(),
+    start: () => undefined,
+    stop: () => undefined,
+    on: (evt, cb) => {
+      let set = listeners.get(evt);
+      if (!set) {
+        set = new Set();
+        listeners.set(evt, set);
+      }
+      set.add(cb);
+    },
+    off: (evt, cb) => {
+      listeners.get(evt)?.delete(cb);
+    },
+  };
+  return Object.assign(tracker, {
+    emit: <K extends keyof HandTrackerEvents>(
+      evt: K,
+      ...args: Parameters<HandTrackerEvents[K]>
+    ) => {
+      const set = listeners.get(evt);
+      if (!set) return;
+      for (const cb of set) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (cb as any)(...args);
+      }
+    },
+  });
+}
+
+function blankState(over: Partial<GestureState> = {}): GestureState {
+  return {
+    hands: [],
+    bothHandsDetected: true,
+    handsDistance: 0.5,
+    meanHeight: 0.5,
+    rightOpenness: 0.5,
+    leftOpenness: 0.5,
+    rightPinchActive: false,
+    leftPinchActive: false,
+    bothFists: false,
+    bothAboveHead: false,
+    fingerCount: 8,
+    noHandsDuration: 0,
+    ...over,
+  };
+}
+
+const VIBE: VibePreset = VIBES.tycho;
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('InteractionMapper helpers', () => {
+  it('maps handsDistance=0 to ~200Hz, =1 to ~12000Hz logarithmically', () => {
+    expect(__testing.mapDistanceToCutoff(0)).toBeCloseTo(200, 0);
+    expect(__testing.mapDistanceToCutoff(1)).toBeCloseTo(12000, 0);
+    // Midpoint should be roughly the geometric mean (~1549 Hz).
+    const mid = __testing.mapDistanceToCutoff(0.5);
+    expect(mid).toBeGreaterThan(1200);
+    expect(mid).toBeLessThan(2000);
+  });
+
+  it('maps handsDistance=0.5 to a sane cutoff value pushed via setParams', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Push two updates so the every-other-frame throttle definitely fires.
+    hands.emit('gesture:update', blankState({ handsDistance: 0.5 }));
+    hands.emit('gesture:update', blankState({ handsDistance: 0.5 }));
+
+    // Find the most recent setParams call that includes filterCutoff.
+    const cutoffs = audio.paramCalls
+      .map((p) => p.filterCutoff)
+      .filter((v): v is number => typeof v === 'number');
+    expect(cutoffs.length).toBeGreaterThan(0);
+    const last = cutoffs[cutoffs.length - 1]!;
+    expect(last).toBeGreaterThan(1200);
+    expect(last).toBeLessThan(2000);
+    mapper.stop();
+  });
+
+  it('maps right/left openness to expected ranges', () => {
+    const r = __testing.mapRightOpenness(0);
+    expect(r.reverbWet).toBeCloseTo(0.1, 5);
+    expect(r.delayFeedback).toBeCloseTo(0.1, 5);
+    const r1 = __testing.mapRightOpenness(1);
+    expect(r1.reverbWet).toBeCloseTo(0.85, 5);
+    expect(r1.delayFeedback).toBeCloseTo(0.7, 5);
+
+    const l = __testing.mapLeftOpenness(0);
+    expect(l.saturatorDrive).toBeCloseTo(0.8, 5);
+    expect(l.filterResonance).toBeCloseTo(0.5, 5);
+    const l1 = __testing.mapLeftOpenness(1);
+    expect(l1.saturatorDrive).toBeCloseTo(2.6, 5);
+    expect(l1.filterResonance).toBeCloseTo(14, 5);
+  });
+});
+
+describe('InteractionMapper edge gestures', () => {
+  let mapper: InteractionMapperImpl;
+  let audio: ReturnType<typeof makeAudioStub>;
+  let music: ReturnType<typeof makeMusicStub>;
+  let hands: ReturnType<typeof makeHandsStub>;
+
+  beforeEach(() => {
+    mapper = new InteractionMapperImpl();
+    audio = makeAudioStub();
+    music = makeMusicStub();
+    hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+  });
+
+  it('left pinch advances chord (with debounce)', () => {
+    hands.emit('gesture:pinch-left');
+    expect(music.advanceCalls).toBe(1);
+
+    // Within the debounce window, a second pinch is suppressed.
+    hands.emit('gesture:pinch-left');
+    expect(music.advanceCalls).toBe(1);
+  });
+
+  it('right pinch falls back to triggerStab when no chord context', () => {
+    hands.emit('gesture:pinch-right');
+    expect(audio.stabCalls).toBe(1);
+    expect(audio.leadCalls.length).toBe(0);
+  });
+
+  it('right pinch triggers harmony-aware stab when chord context is present', () => {
+    // Simulate the music brain emitting a chord; the mapper's subscription
+    // should record lastChordNotes from it.
+    expect(music.subscriber).not.toBeNull();
+    const chord: ChordEvent = {
+      notes: ['C4', 'E4', 'G4', 'B4'],
+      duration: '4m',
+      time: 0,
+    };
+    music.subscriber!.onChord(chord);
+    // Stab now should call triggerLead with a chord tone in octave 5.
+    hands.emit('gesture:pinch-right');
+    expect(audio.leadCalls.length).toBe(1);
+    expect(audio.stabCalls).toBe(0);
+    const stab = audio.leadCalls[0]!;
+    expect(['C5', 'E5', 'G5', 'B5']).toContain(stab.pitch);
+  });
+
+  it('bothFists held mutes audio and unmutes on release', () => {
+    hands.emit('gesture:update', blankState({ bothFists: true }));
+    expect(audio.muteCalls).toEqual([true]);
+    hands.emit('gesture:update', blankState({ bothFists: false }));
+    expect(audio.muteCalls).toEqual([true, false]);
+  });
+
+  it('bothAboveHead held triggers drop, releases on next state', () => {
+    hands.emit('gesture:update', blankState({ bothAboveHead: true }));
+    expect(audio.dropCalls).toEqual([true]);
+    hands.emit('gesture:update', blankState({ bothAboveHead: false }));
+    expect(audio.dropCalls).toEqual([true, false]);
+  });
+
+  it('no-hands engages drone mode (low intensity, quiet pad params)', () => {
+    hands.emit('gesture:no-hands');
+    // music.setInput should have been called with intensity 0.15, mood calm.
+    const last = music.inputCalls[music.inputCalls.length - 1]!;
+    expect(last.intensity).toBeCloseTo(0.15, 5);
+    expect(last.mood).toBe('calm');
+    // and audio params should reflect the drone fade-down.
+    const lastParams = audio.paramCalls[audio.paramCalls.length - 1]!;
+    expect(lastParams.reverbWet).toBeCloseTo(0.7, 5);
+    expect(lastParams.masterDuck).toBeCloseTo(0.4, 5);
+  });
+});
+
+describe('InteractionMapper mood detection', () => {
+  it('transitions toward "rising" when meanHeight ramps upward', async () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Synthesize a rising meanHeight series with real wall-clock spacing so
+    // the mood window has time to populate.
+    const start = performance.now();
+    let ramp = 0.1;
+    for (let i = 0; i < 16; i++) {
+      hands.emit('gesture:update', blankState({ meanHeight: ramp }));
+      ramp = Math.min(0.95, ramp + 0.06);
+      // micro-wait so timestamps are monotonic and span the mood window.
+      await new Promise((r) => setTimeout(r, 30));
+      void start;
+    }
+
+    const mood = mapper.getCurrentMood();
+    // Either 'rising' (mid-ramp) or 'peak' (if meanHeight stayed >0.7 for >1s).
+    expect(['rising', 'peak']).toContain(mood);
+
+    mapper.stop();
+  });
+
+  it('settles back to "calm" with steady low meanHeight', async () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    for (let i = 0; i < 10; i++) {
+      hands.emit('gesture:update', blankState({ meanHeight: 0.2 }));
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    expect(mapper.getCurrentMood()).toBe('calm');
+    mapper.stop();
+  });
+});
+
+describe('InteractionMapper lifecycle', () => {
+  it('stop() unsubscribes from MusicBrain and HandTracker', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+    expect(music.subscriber).not.toBeNull();
+
+    mapper.stop();
+    expect(music.subscriber).toBeNull();
+
+    // After stop, gesture events no longer call into audio.
+    const beforeCount = audio.paramCalls.length;
+    hands.emit('gesture:update', blankState({ handsDistance: 0.9 }));
+    hands.emit('gesture:update', blankState({ handsDistance: 0.9 }));
+    expect(audio.paramCalls.length).toBe(beforeCount);
+  });
+
+  it('start() is idempotent', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+    mapper.start(); // no throw, no double-subscribe
+    // We can't easily assert listener count, but starting twice and emitting
+    // once should call advanceChord once (one debounced edge).
+    hands.emit('gesture:pinch-left');
+    expect(music.advanceCalls).toBe(1);
+    mapper.stop();
+  });
+
+  it('autopilot start/stop without throwing', () => {
+    vi.useFakeTimers();
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+    mapper.startAutopilot();
+    vi.advanceTimersByTime(200);
+    mapper.stopAutopilot();
+    mapper.stop();
+    vi.useRealTimers();
+    // Autopilot should have produced at least one setParams call.
+    expect(audio.paramCalls.length).toBeGreaterThan(0);
+  });
+});
