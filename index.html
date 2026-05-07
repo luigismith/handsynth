@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0f" />
+    <title>HandSynth</title>
+    <meta
+      name="description"
+      content="A gestural synthesizer played with your hands and a webcam."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0a0a0f;
+        color: #e5e5ec;
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        height: 100%;
+        overflow: hidden;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+      }
+      #visualizer {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+      }
+      #webcam {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        width: 200px;
+        height: auto;
+        border-radius: 12px;
+        opacity: 0.6;
+        transform: scaleX(-1);
+        z-index: 2;
+        pointer-events: none;
+      }
+      #ui {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+      }
+      #ui > * {
+        pointer-events: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="visualizer"></canvas>
+      <video id="webcam" autoplay playsinline muted></video>
+      <div id="ui"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

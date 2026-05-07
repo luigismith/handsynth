@@ -1,0 +1,39 @@
+{
+  "name": "handsynth",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Gestural synthesizer controlled by webcam hands. Tone.js + MediaPipe + p5.js.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.{ts,html,css,json}\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.22",
+    "@tonaljs/tonal": "^4.10.0",
+    "p5": "^1.11.2",
+    "tone": "^15.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/p5": "^1.7.6",
+    "@typescript-eslint/eslint-plugin": "^8.15.0",
+    "@typescript-eslint/parser": "^8.15.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.0",
+    "happy-dom": "^15.11.7",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
