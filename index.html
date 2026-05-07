@@ -2,64 +2,89 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0f" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0a0e2c" />
     <title>HandSynth</title>
     <meta
       name="description"
-      content="A gestural synthesizer played with your hands and a webcam."
+      content="Un sintetizzatore gestuale suonato con le mani via webcam."
     />
     <style>
       :root {
         color-scheme: dark;
       }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
       html,
-      body {
+      body,
+      #app {
         margin: 0;
         padding: 0;
-        background: #0a0a0f;
-        color: #e5e5ec;
-        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
         height: 100%;
         overflow: hidden;
+        background: #0a0e2c;
+        color: #cfd6ff;
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       }
       #app {
         position: fixed;
         inset: 0;
       }
+      /*
+       * Webcam: subtle backdrop. UX caveat — we deliberately do NOT mirror via
+       * `transform: scaleX(-1)` here, because the Visualizer overlays
+       * landmark-derived graphics that share the un-mirrored MediaPipe
+       * coordinate space. Flipping CSS would desync the overlay. Low opacity
+       * keeps the un-mirrored video unobtrusive. TODO: revisit by adding a
+       * mirror flag to the Visualizer once landmark overlays land.
+       */
+      #webcam {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.18;
+        z-index: 1;
+        pointer-events: none;
+      }
       #visualizer {
         position: absolute;
         inset: 0;
-        z-index: 1;
-      }
-      #webcam {
-        position: absolute;
-        right: 16px;
-        bottom: 16px;
-        width: 200px;
-        height: auto;
-        border-radius: 12px;
-        opacity: 0.6;
-        transform: scaleX(-1);
         z-index: 2;
-        pointer-events: none;
       }
-      #ui {
+      #ui-layer {
         position: absolute;
         inset: 0;
         z-index: 3;
         pointer-events: none;
       }
-      #ui > * {
+      #ui-layer > * {
         pointer-events: auto;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+          animation: none !important;
+        }
       }
     </style>
   </head>
   <body>
     <div id="app">
-      <canvas id="visualizer"></canvas>
       <video id="webcam" autoplay playsinline muted></video>
-      <div id="ui"></div>
+      <canvas id="visualizer"></canvas>
+      <div id="ui-layer">
+        <div id="onboarding"></div>
+        <div id="vibe-selector" hidden></div>
+        <div id="error-overlay"></div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

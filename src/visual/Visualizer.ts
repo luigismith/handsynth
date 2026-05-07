@@ -64,7 +64,13 @@ export class VisualizerImpl implements Visualizer {
     pulse: 0,
     fftBins: this.fftBins,
     hasAnalyser: false,
+    reducedMotion: false,
   };
+
+  // OS-level reduced-motion preference query and listener (kept so we can
+  // remove the listener on unmount).
+  private reducedMotionMql: MediaQueryList | null = null;
+  private reducedMotionListener: ((e: MediaQueryListEvent) => void) | null = null;
 
   // Listener references — needed for off().
   private gestureUpdateHandler: HandTrackerEvents['gesture:update'] | null = null;
@@ -104,6 +110,23 @@ export class VisualizerImpl implements Visualizer {
     this.hiddenPlaceholder = canvas;
     this.placeholderPrevDisplay = canvas.style.display;
     canvas.style.display = 'none';
+
+    // Detect prefers-reduced-motion at startup and listen for changes.
+    // Wrapped in try/catch because matchMedia isn't available in all test
+    // environments (e.g. node), and we want the visualizer to still mount.
+    try {
+      if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+        this.reducedMotionMql = window.matchMedia('(prefers-reduced-motion: reduce)');
+        this.state.reducedMotion = this.reducedMotionMql.matches;
+        this.reducedMotionListener = (e: MediaQueryListEvent): void => {
+          this.state.reducedMotion = e.matches;
+        };
+        // Use addEventListener (preferred over deprecated addListener).
+        this.reducedMotionMql.addEventListener('change', this.reducedMotionListener);
+      }
+    } catch (err) {
+      console.warn('[Visualizer] reduced-motion detection skipped:', err);
+    }
 
     // Tap the master analyser. Defensive: AudioEngine may not be initialized
     // yet; we still want the visual layer to look alive without audio. In
@@ -234,6 +257,17 @@ export class VisualizerImpl implements Visualizer {
       this.resizeHandler = null;
     }
 
+    // Detach reduced-motion listener.
+    if (this.reducedMotionMql && this.reducedMotionListener) {
+      try {
+        this.reducedMotionMql.removeEventListener('change', this.reducedMotionListener);
+      } catch {
+        // Older Safari may not support removeEventListener on MQLs; ignore.
+      }
+    }
+    this.reducedMotionMql = null;
+    this.reducedMotionListener = null;
+
     if (this.rafHandle !== null && typeof cancelAnimationFrame === 'function') {
       cancelAnimationFrame(this.rafHandle);
     }
@@ -255,7 +289,19 @@ export class VisualizerImpl implements Visualizer {
     this.state.hands = [];
     this.state.pulse = 0;
     this.state.hasAnalyser = false;
+    this.state.reducedMotion = false;
     // Keep the same Uint8Array reference, just zero it.
     this.fftBins.fill(0);
+  }
+
+  /**
+   * Manual override for the reduced-motion accessibility mode. Concrete
+   * extension to the {@link Visualizer} interface — UX-curator may call
+   * this from a settings toggle. Calling this does NOT detach the
+   * `prefers-reduced-motion` media query listener; it just overrides the
+   * current value. The next OS-level change will overwrite it again.
+   */
+  setReducedMotion(reduced: boolean): void {
+    this.state.reducedMotion = reduced;
   }
 }

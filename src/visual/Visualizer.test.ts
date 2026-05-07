@@ -289,4 +289,32 @@ describe('VisualizerImpl (smoke)', () => {
       v.unmount();
     });
   });
+
+  describe('setReducedMotion (concrete extension)', () => {
+    it('exposes setReducedMotion as a public method', () => {
+      const v = new VisualizerImpl();
+      expect(typeof v.setReducedMotion).toBe('function');
+    });
+
+    it('does not throw when called before/after mount or unmount', () => {
+      const v = new VisualizerImpl();
+      expect(() => v.setReducedMotion(true)).not.toThrow();
+      expect(() => v.setReducedMotion(false)).not.toThrow();
+
+      const canvas = makeMountedCanvas();
+      const audio = makeMockAudio();
+      const hands = makeMockHands();
+      const music = makeMockMusic();
+      try {
+        v.mount(canvas, { audio, hands, music });
+      } catch {
+        // ignore
+      }
+
+      expect(() => v.setReducedMotion(true)).not.toThrow();
+      v.unmount();
+      // Still safe after unmount.
+      expect(() => v.setReducedMotion(false)).not.toThrow();
+    });
+  });
 });

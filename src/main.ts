@@ -1,41 +1,198 @@
-// Owner: ux-curator (entry / wiring) — stub by architect
+// Owner: ux-curator
 //
-// Application entry point. Wires the subsystems together but does no real
-// work itself. The ux-curator agent is responsible for the lifecycle
-// (onboarding, webcam permission flow, autopilot fallback). Until then this
-// stub just constructs the modules and waits.
+// Application entry point. Lifecycle (per ARCHITECTURE.md §3):
+//
+//   1. Page load: construct subsystems (cheap, no audio, no webcam).
+//   2. Onboarding card asks for the single user-gesture click.
+//   3. Inside that click handler:
+//        - audio.init()       (Tone.start unlocks AudioContext)
+//        - audio.loadVibe()   (apply default vibe presets)
+//        - hands.init()       (getUserMedia + MediaPipe model fetch)
+//          on success → mapper attaches & starts; music starts.
+//          on failure → autopilot mode (synthetic gestures), warning toast.
+//   4. Visualizer mounts last (audio analyser is now ready).
+//   5. VibeSelector reveals; clicks call mapper.setVibe — the engines own
+//      the crossfade.
+//   6. Visibility / unload: resume context on focus; stop+unmount on unload.
+//
+// We deliberately avoid trying to crossfade or smooth in UI code: the
+// AudioEngine ramps params, MusicBrain ramps BPM. We just call setVibe.
 
+import * as Tone from 'tone';
 import { AudioEngineImpl } from '@audio/AudioEngine';
 import { HandTrackerImpl } from '@hands/HandTracker';
 import { MusicBrainImpl } from '@music/MusicBrain';
 import { InteractionMapperImpl } from '@interaction/InteractionMapper';
 import { VisualizerImpl } from '@visual/Visualizer';
-import { VIBES, DEFAULT_VIBE } from '@presets/vibes';
+import { VIBES, DEFAULT_VIBE, VIBE_LIST } from '@presets/vibes';
+import type { VibeId } from '@contracts/contracts';
+import { OnboardingImpl } from '@ui/Onboarding';
+import { VibeSelectorImpl } from '@ui/VibeSelector';
+import { ErrorOverlayImpl } from '@ui/ErrorOverlay';
+import { injectStyles } from '@ui/styles';
+
+function $(id: string): HTMLElement {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`[main] missing DOM node #${id}`);
+  return el;
+}
 
 async function bootstrap(): Promise<void> {
-  // Element references — present in index.html.
-  const canvas = document.getElementById('visualizer') as HTMLCanvasElement | null;
-  const video = document.getElementById('webcam') as HTMLVideoElement | null;
-  if (!canvas || !video) {
-    throw new Error('Required DOM nodes not found (#visualizer or #webcam).');
-  }
+  injectStyles();
 
-  // Construct subsystems. Real init happens later from a user gesture.
+  // Reduced-motion hint for the visualizer (it's free to read this attr later).
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) document.body.dataset.reducedMotion = 'true';
+
+  // DOM hosts.
+  const canvas = $('visualizer') as HTMLCanvasElement;
+  const video = $('webcam') as HTMLVideoElement;
+  const onboardingHost = $('onboarding');
+  const vibeHost = $('vibe-selector');
+  const errorHost = $('error-overlay');
+
+  // UI modules.
+  const onboarding = new OnboardingImpl();
+  const vibeSelector = new VibeSelectorImpl();
+  const errorOverlay = new ErrorOverlayImpl();
+  errorOverlay.mount(errorHost);
+
+  // Subsystem modules.
   const audio = new AudioEngineImpl();
   const music = new MusicBrainImpl();
   const hands = new HandTrackerImpl();
-  const interaction = new InteractionMapperImpl();
+  const mapper = new InteractionMapperImpl();
   const visual = new VisualizerImpl();
 
-  // Vibe seed — UI will swap this once VibeSelector is wired.
+  // Phase 1: onboarding waits for the click.
+  onboarding.mount(onboardingHost);
+
+  // Phase 2: try to start the full stack. If anything user-recoverable
+  // fails we re-prompt (showError + awaitStart returns a fresh promise).
+  let started = false;
+  while (!started) {
+    await onboarding.awaitStart();
+    try {
+      await startSession({
+        audio,
+        music,
+        hands,
+        mapper,
+        visual,
+        videoEl: video,
+        canvasEl: canvas,
+        onAutopilotEngaged: (msg) => errorOverlay.showWarning(msg),
+      });
+      started = true;
+    } catch (err) {
+      console.error('[main] startup failed', err);
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Avvio non riuscito. Riprova.';
+      onboarding.showError(`${msg}`);
+      // Loop continues; awaitStart() will resolve again on next click.
+    }
+  }
+
+  onboarding.unmount();
+
+  // Phase 3: reveal the vibe selector.
+  vibeSelector.mount(vibeHost, VIBE_LIST.slice() as Array<typeof VIBE_LIST[number]>, DEFAULT_VIBE);
+  vibeSelector.onChange((id: VibeId) => {
+    mapper.setVibe(VIBES[id]);
+  });
+  vibeHost.removeAttribute('hidden');
+
+  // Phase 4: visibility + cleanup.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      void Tone.getContext().resume();
+    }
+  });
+  window.addEventListener('beforeunload', () => {
+    try {
+      mapper.stop();
+    } catch {
+      /* noop */
+    }
+    try {
+      music.stop();
+    } catch {
+      /* noop */
+    }
+    try {
+      hands.stop();
+    } catch {
+      /* noop */
+    }
+    try {
+      visual.unmount();
+    } catch {
+      /* noop */
+    }
+  });
+}
+
+interface StartSessionDeps {
+  audio: AudioEngineImpl;
+  music: MusicBrainImpl;
+  hands: HandTrackerImpl;
+  mapper: InteractionMapperImpl;
+  visual: VisualizerImpl;
+  videoEl: HTMLVideoElement;
+  canvasEl: HTMLCanvasElement;
+  onAutopilotEngaged: (message: string) => void;
+}
+
+/**
+ * Runs inside the onboarding-button gesture context.
+ *
+ * Order matters:
+ *  1. audio.init() first — Tone.start() needs the user gesture window
+ *     and the visualizer wants the analyser ready before it mounts.
+ *  2. audio.loadVibe() seeds the FX chain so the first triggered chord
+ *     hits a tuned voice.
+ *  3. mapper.attach(...) before mapper.start(): the InteractionMapper
+ *     hard-fails if start() is called before deps are wired.
+ *  4. Hand init may throw (permission denied / model fetch failed). On
+ *     throw we still produce music via mapper.startAutopilot().
+ */
+async function startSession(deps: StartSessionDeps): Promise<void> {
+  const { audio, music, hands, mapper, visual, videoEl, canvasEl } = deps;
   const initialVibe = VIBES[DEFAULT_VIBE];
 
-  // The orchestration below is intentionally minimal — the ux-curator agent
-  // owns the real flow (gating audio init on user gesture, onboarding, etc).
-  void { audio, music, hands, interaction, visual, video, canvas, initialVibe };
+  // 1. Audio (must run inside user-gesture stack)
+  await audio.init();
+  audio.loadVibe(initialVibe);
 
-  // eslint-disable-next-line no-console
-  console.info('[handsynth] bootstrap stub ready — awaiting ux-curator implementation');
+  // 2. Mapper attach — required before start() per its contract.
+  mapper.attach({ audio, music, hands });
+  mapper.setVibe(initialVibe);
+
+  // 3. Hand tracking — best-effort. Failure → autopilot.
+  let handsLive = false;
+  try {
+    await hands.init(videoEl);
+    hands.start();
+    handsLive = true;
+  } catch (err) {
+    console.warn('[main] hand tracking unavailable, falling back to autopilot:', err);
+  }
+
+  // 4. Music + mapper run regardless.
+  music.start();
+  mapper.start();
+
+  if (!handsLive) {
+    mapper.startAutopilot();
+    deps.onAutopilotEngaged(
+      'Webcam non disponibile — modalità autopilot attiva.',
+    );
+  }
+
+  // 5. Visualizer mounts last so analyser tap is hot.
+  visual.mount(canvasEl, { audio, hands, music });
 }
 
 void bootstrap();
