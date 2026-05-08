@@ -41,9 +41,16 @@ const FINGERTIP_INDICES = [INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP];
 // ---------------------------------------------------------------------------
 
 /** Below this raw normalized openness ratio → fully closed (0). */
-const OPEN_MIN = 0.4;
+// PROGRESSION FIX: widened window so closing/opening the fist feels
+// continuous all the way to the physical extremes. Previously OPEN_MIN=0.4
+// meant raw values below 0.4 pegged openness at 0 — and a typical natural
+// fist sits around raw≈0.30..0.35, so the last ~30% of the closing motion
+// produced no audible change. The wider 0.30..1.55 envelope keeps every
+// finger position inside the active range so the gesture stays expressive
+// edge-to-edge.
+const OPEN_MIN = 0.3;
 /** Above this raw normalized openness ratio → fully open (1). */
-const OPEN_MAX = 1.4;
+const OPEN_MAX = 1.55;
 /** Pinch ratio below this is considered an active pinch trigger. */
 const PINCH_TRIGGER = 0.04;
 /** Fist threshold: all 4 fingertips inside this fraction of hand size. */
@@ -149,9 +156,13 @@ function opennessFromLandmarks(
   }
   if (n === 0) return 0;
   const raw = sum / n / size;
-  if (raw <= OPEN_MIN) return 0;
-  if (raw >= OPEN_MAX) return 1;
-  return (raw - OPEN_MIN) / (OPEN_MAX - OPEN_MIN);
+  // PROGRESSION FIX: linear-inside-window with soft clamp via clamp01.
+  // The hard `if (raw <= OPEN_MIN) return 0` cutoff that used to live here
+  // was redundant with this clamp but read as "any tighter and nothing
+  // happens" — the wider OPEN_MIN/OPEN_MAX (0.30..1.55) plus this single
+  // expression gives a smooth ramp across the whole physical motion.
+  const t = (raw - OPEN_MIN) / (OPEN_MAX - OPEN_MIN);
+  return t <= 0 ? 0 : t >= 1 ? 1 : t;
 }
 
 /** Backwards-compat: openness from raw landmarks. */

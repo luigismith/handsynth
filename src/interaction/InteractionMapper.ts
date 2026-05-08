@@ -313,19 +313,32 @@ function mapDistanceToCutoff(distance: number): number {
   return Math.exp(logMin + (logMax - logMin) * x);
 }
 
+// PROGRESSION FIX: perceptual curves on the openness mappings.
+// Reverb wetness, delay feedback, and saturator drive are all heard
+// logarithmically — a linear lerp made the audible change feel "back-loaded"
+// (most of the perceived motion happened in the last 30% of finger spread).
+// Gamma < 1 pushes more wetness/drive into the early opening so the user
+// hears progress immediately as the fingers start to spread; filterResonance
+// keeps an exponential curve since Q peaks read perceptually as sudden
+// resonance only past ~Q=4 anyway.
 function mapRightOpenness(o: number): { reverbWet: number; delayFeedback: number } {
   const x = clamp01(o);
+  const wetCurve = Math.pow(x, 0.7);
+  const fbCurve = Math.pow(x, 0.85);
   return {
-    reverbWet: lerp(REVERB_MIN, REVERB_MAX, x),
-    delayFeedback: lerp(DELAY_FB_MIN, DELAY_FB_MAX, x),
+    reverbWet: lerp(REVERB_MIN, REVERB_MAX, wetCurve),
+    delayFeedback: lerp(DELAY_FB_MIN, DELAY_FB_MAX, fbCurve),
   };
 }
 
 function mapLeftOpenness(o: number): { saturatorDrive: number; filterResonance: number } {
   const x = clamp01(o);
+  const driveCurve = Math.pow(x, 0.75);
+  // Q ramps up exponentially — same perceptual rationale.
+  const qCurve = Math.pow(x, 1.4);
   return {
-    saturatorDrive: lerp(DRIVE_MIN, DRIVE_MAX, x),
-    filterResonance: lerp(Q_MIN, Q_MAX, x),
+    saturatorDrive: lerp(DRIVE_MIN, DRIVE_MAX, driveCurve),
+    filterResonance: lerp(Q_MIN, Q_MAX, qCurve),
   };
 }
 

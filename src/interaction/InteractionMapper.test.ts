@@ -281,7 +281,10 @@ describe('InteractionMapper helpers', () => {
     mapper.stop();
   });
 
-  it('maps right/left openness to expected ranges', () => {
+  it('maps right/left openness to expected ranges (endpoints unchanged)', () => {
+    // Endpoints must hit exact min/max — perceptual curves only reshape the
+    // middle. Both x=0 and x=1 are pinned by the gamma curve identity
+    // (0^k = 0, 1^k = 1).
     const r = __testing.mapRightOpenness(0);
     expect(r.reverbWet).toBeCloseTo(0.1, 5);
     expect(r.delayFeedback).toBeCloseTo(0.1, 5);
@@ -295,6 +298,42 @@ describe('InteractionMapper helpers', () => {
     const l1 = __testing.mapLeftOpenness(1);
     expect(l1.saturatorDrive).toBeCloseTo(2.6, 5);
     expect(l1.filterResonance).toBeCloseTo(14, 5);
+  });
+
+  it('PROGRESSION: openness mapping is strictly monotonic and never plateaus', () => {
+    // Regression for "fist close/open isn't progressive": every increment of
+    // openness must produce a strictly greater audio param value across the
+    // whole 0..1 range. No dead zones, no equal-output runs.
+    let prevWet = -Infinity;
+    let prevFb = -Infinity;
+    let prevDrive = -Infinity;
+    let prevQ = -Infinity;
+    for (let i = 0; i <= 100; i++) {
+      const x = i / 100;
+      const r = __testing.mapRightOpenness(x);
+      const l = __testing.mapLeftOpenness(x);
+      expect(r.reverbWet).toBeGreaterThan(prevWet);
+      expect(r.delayFeedback).toBeGreaterThan(prevFb);
+      expect(l.saturatorDrive).toBeGreaterThan(prevDrive);
+      expect(l.filterResonance).toBeGreaterThan(prevQ);
+      prevWet = r.reverbWet;
+      prevFb = r.delayFeedback;
+      prevDrive = l.saturatorDrive;
+      prevQ = l.filterResonance;
+    }
+  });
+
+  it('PROGRESSION: gamma<1 mappings push more wetness/drive into the early opening', () => {
+    // At openness = 0.3 (just-cracked-open hand), the user should already
+    // hear a meaningful slice of the wet/drive range, not just 30% of it.
+    const r = __testing.mapRightOpenness(0.3);
+    // Linear lerp would give 0.1 + 0.3*0.75 = 0.325. Gamma 0.7 lifts it to
+    // 0.1 + 0.3^0.7 * 0.75 ≈ 0.420. Assert we're meaningfully above linear.
+    expect(r.reverbWet).toBeGreaterThan(0.4);
+
+    const l = __testing.mapLeftOpenness(0.3);
+    // Drive: linear 0.8 + 0.3*1.8 = 1.34; gamma 0.75 ≈ 0.8 + 0.3^0.75 * 1.8 ≈ 1.530.
+    expect(l.saturatorDrive).toBeGreaterThan(1.45);
   });
 });
 
@@ -919,10 +958,12 @@ describe('InteractionMapper face integration', () => {
     hands.emit('gesture:update', blankState());
 
     // masterDuck should sit at 0 (no face contribution); reverbWet should be
-    // hand-driven (rightOpenness=0.5 -> ~0.475), with no face blend.
+    // hand-driven. Right openness 0.5 → gamma 0.7 curve t=0.5^0.7=0.616 →
+    // reverbWet = lerp(0.1, 0.85, 0.616) ≈ 0.562. (Perceptual curve added
+    // to make the closing-fist progression feel smoother edge-to-edge.)
     const lastParams = audio.paramCalls[audio.paramCalls.length - 1]!;
     expect(lastParams.masterDuck).toBe(0);
-    expect(lastParams.reverbWet).toBeCloseTo(0.475, 2);
+    expect(lastParams.reverbWet).toBeCloseTo(0.562, 2);
 
     // Mood/intensity should be hand-only (no pitch boost).
     const lastInput = music.inputCalls[music.inputCalls.length - 1]!;
