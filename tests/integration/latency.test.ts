@@ -92,6 +92,11 @@ function makeMusic(): MusicBrain & { subscriber: MusicBrainEvents | null } {
     off: (e: MusicBrainEvents) => {
       if (m.subscriber === e) m.subscriber = null;
     },
+    setKey: (_t: string) => undefined,
+    setMode: (_md: string) => undefined,
+    setScale: (_t: string, _md: string) => undefined,
+    clearScaleOverride: () => null,
+    getCurrentScale: () => null,
   };
   return m;
 }

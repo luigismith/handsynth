@@ -184,6 +184,34 @@ Your patches persist in `localStorage` and re-appear next session. Click
 The **Reset to vibe** button returns every knob to the active vibe's defaults
 without losing your saved patches.
 
+## Scale & key
+
+The synth's harmonic engine plays in a key + scale (e.g. C minor, F# lydian).
+By default each vibe ships with its own preferred scale, but you can override
+it independently of the vibe's BPM, voicing, and FX.
+
+Open the **PATCH editor** (gear icon, top right, or press `p`) and look for
+the **KEY** and **SCALE** dropdowns above the knob grid.
+
+- **Key** — the root note. Twelve options: `C`, `C# / Db`, `D`, `D# / Eb`,
+  `E`, `F`, `F# / Gb`, `G`, `G# / Ab`, `A`, `A# / Bb`, `B`.
+- **Scale** — Major (Ionian), Minor (Aeolian), Harmonic Minor, Melodic Minor,
+  Dorian, Phrygian, Lydian, Mixolydian, Locrian, Pentatonic Major,
+  Pentatonic Minor, Blues, Chromatic.
+
+Changing either snaps every generated lead and bass note to the new scale.
+The chord progression stays as the vibe wrote it, so you keep the song's
+character — the music brain's snap-to-consonance filter gracefully
+reharmonizes any out-of-scale chord tones, so you can play the Bonobo
+progression in C-minor (or anything else) without it sounding wrong.
+
+Hit the small **↺** button to the right of the dropdowns to reset both back
+to the active vibe's defaults.
+
+Your selection is sticky: it persists across vibe changes for the rest of
+the session, and is remembered in `localStorage` between sessions. The reset
+button clears the stored override.
+
 ## Keyboard shortcuts
 
 | Key | Action |

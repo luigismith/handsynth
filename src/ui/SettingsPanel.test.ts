@@ -49,19 +49,51 @@ function stubAudio(): AudioEngine & {
   };
 }
 
-function stubMusic(): MusicBrain {
-  return {
+interface MusicStub extends MusicBrain {
+  setKey: ReturnType<typeof vi.fn>;
+  setMode: ReturnType<typeof vi.fn>;
+  setScale: ReturnType<typeof vi.fn>;
+  clearScaleOverride: ReturnType<typeof vi.fn>;
+  getCurrentScale: ReturnType<typeof vi.fn>;
+  /** Test helper: mutate what getCurrentScale returns next. */
+  __scale: { tonic: string; mode: string } | null;
+}
+
+function stubMusic(initial: { tonic: string; mode: string } | null = { tonic: 'F#', mode: 'lydian' }): MusicStub {
+  const stub = {
     start: vi.fn(),
     stop: vi.fn(),
     setInput: vi.fn(),
     advanceChord: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
-  };
+    setKey: vi.fn(),
+    setMode: vi.fn(),
+    setScale: vi.fn(),
+    clearScaleOverride: vi.fn(),
+    getCurrentScale: vi.fn(),
+    __scale: initial,
+  } as unknown as MusicStub;
+  stub.getCurrentScale.mockImplementation(() => stub.__scale);
+  stub.clearScaleOverride.mockImplementation(() => {
+    stub.__scale = { tonic: 'F#', mode: 'lydian' };
+    return stub.__scale;
+  });
+  stub.setKey.mockImplementation((tonic: string) => {
+    if (stub.__scale) stub.__scale = { ...stub.__scale, tonic };
+  });
+  stub.setMode.mockImplementation((mode: string) => {
+    if (stub.__scale) stub.__scale = { ...stub.__scale, mode };
+  });
+  stub.setScale.mockImplementation((tonic: string, mode: string) => {
+    stub.__scale = { tonic, mode };
+  });
+  return stub;
 }
 
 function makeDeps(): SettingsPanelDeps & {
   audio: ReturnType<typeof stubAudio>;
+  music: MusicStub;
   setVibe: ReturnType<typeof vi.fn>;
   setManualIntensity: ReturnType<typeof vi.fn>;
 } {
@@ -251,7 +283,10 @@ describe('SettingsPanelImpl', () => {
     const panel = new SettingsPanelImpl();
     const deps = makeDeps();
     panel.mount(parent, deps);
-    const sel = parent.querySelector('select') as HTMLSelectElement;
+    const sel = parent.querySelector(
+      '#hs-settings-vibe-select',
+    ) as HTMLSelectElement;
+    expect(sel).not.toBeNull();
     sel.value = 'bonobo';
     sel.dispatchEvent(new Event('change'));
     expect(deps.setVibe).toHaveBeenCalledWith('bonobo');
@@ -397,12 +432,166 @@ describe('SettingsPanelImpl', () => {
     const panel = new SettingsPanelImpl();
     const deps = makeDeps();
     panel.mount(parent, deps);
-    // Find the "Reset to vibe" button.
+    // Use the patches-section "Reset to vibe" button (text-content based) —
+    // we deliberately avoid the small ↺ music-row reset button which is
+    // tested separately below.
     const resetBtn = Array.from(parent.querySelectorAll('button')).find(
-      (b) => /reset/i.test(b.textContent ?? ''),
+      (b) => /reset to vibe$/i.test((b.textContent ?? '').trim()),
     ) as HTMLButtonElement;
+    expect(resetBtn).toBeDefined();
     resetBtn.click();
     expect(deps.audio.setParams).toHaveBeenCalled();
+    panel.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scale + Key dropdowns
+// ---------------------------------------------------------------------------
+
+describe('SettingsPanelImpl — scale / key controls', () => {
+  let parent: HTMLDivElement;
+
+  beforeEach(() => {
+    parent = document.createElement('div');
+    document.body.appendChild(parent);
+    localStorage.clear();
+  });
+  afterEach(() => {
+    if (parent.parentElement) parent.parentElement.removeChild(parent);
+    localStorage.clear();
+  });
+
+  it('renders KEY and SCALE dropdowns plus a reset button', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const row = parent.querySelector('.hs-music-row');
+    expect(row).not.toBeNull();
+    const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
+    const scaleSel = parent.querySelector('select[data-music-scale]') as HTMLSelectElement;
+    const resetBtn = parent.querySelector('.hs-music-reset') as HTMLButtonElement;
+    expect(keySel).not.toBeNull();
+    expect(scaleSel).not.toBeNull();
+    expect(resetBtn).not.toBeNull();
+    expect(keySel.options.length).toBe(12);
+    expect(scaleSel.options.length).toBe(13);
+    panel.unmount();
+  });
+
+  it('initial selection mirrors the brain\'s current scale (vibe default)', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
+    const scaleSel = parent.querySelector('select[data-music-scale]') as HTMLSelectElement;
+    expect(keySel.value).toBe('F#');
+    expect(scaleSel.value).toBe('lydian');
+    panel.unmount();
+  });
+
+  it('changing the key dropdown calls music.setKey and persists', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
+    keySel.value = 'A';
+    keySel.dispatchEvent(new Event('change'));
+    expect(deps.music.setKey).toHaveBeenCalledWith('A');
+    const stored = JSON.parse(localStorage.getItem('hs.musicSettings') ?? 'null');
+    expect(stored).toEqual({ key: 'A', mode: 'lydian' });
+    panel.unmount();
+  });
+
+  it('changing the scale dropdown calls music.setMode and persists', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const scaleSel = parent.querySelector('select[data-music-scale]') as HTMLSelectElement;
+    scaleSel.value = 'minor';
+    scaleSel.dispatchEvent(new Event('change'));
+    expect(deps.music.setMode).toHaveBeenCalledWith('minor');
+    const stored = JSON.parse(localStorage.getItem('hs.musicSettings') ?? 'null');
+    expect(stored).toEqual({ key: 'F#', mode: 'minor' });
+    panel.unmount();
+  });
+
+  it('rejects an invalid value silently (does not call setKey)', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
+    // Force an invalid option past the typical UI guard.
+    keySel.value = 'C';
+    deps.music.setKey.mockClear();
+    // Manually invoke change with a bogus value by constructing a new option.
+    const bogus = document.createElement('option');
+    bogus.value = 'XYZ';
+    bogus.textContent = 'XYZ';
+    keySel.appendChild(bogus);
+    keySel.value = 'XYZ';
+    keySel.dispatchEvent(new Event('change'));
+    expect(deps.music.setKey).not.toHaveBeenCalled();
+    panel.unmount();
+  });
+
+  it('mounting reads localStorage and applies it via music.setScale', () => {
+    localStorage.setItem('hs.musicSettings', JSON.stringify({ key: 'A', mode: 'phrygian' }));
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    expect(deps.music.setScale).toHaveBeenCalledWith('A', 'phrygian');
+    const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
+    const scaleSel = parent.querySelector('select[data-music-scale]') as HTMLSelectElement;
+    expect(keySel.value).toBe('A');
+    expect(scaleSel.value).toBe('phrygian');
+    panel.unmount();
+  });
+
+  it('reset button clears localStorage and calls clearScaleOverride', () => {
+    localStorage.setItem('hs.musicSettings', JSON.stringify({ key: 'A', mode: 'phrygian' }));
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const resetBtn = parent.querySelector('.hs-music-reset') as HTMLButtonElement;
+    resetBtn.click();
+    expect(deps.music.clearScaleOverride).toHaveBeenCalled();
+    expect(localStorage.getItem('hs.musicSettings')).toBeNull();
+    // Dropdowns reflect the vibe default (the stub returns F# lydian).
+    const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
+    const scaleSel = parent.querySelector('select[data-music-scale]') as HTMLSelectElement;
+    expect(keySel.value).toBe('F#');
+    expect(scaleSel.value).toBe('lydian');
+    panel.unmount();
+  });
+
+  it('ignores corrupted localStorage payloads', () => {
+    localStorage.setItem('hs.musicSettings', '{"not":"valid"}');
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    expect(deps.music.setScale).not.toHaveBeenCalled();
+    panel.unmount();
+  });
+
+  it('ignores localStorage entries with unknown ids', () => {
+    localStorage.setItem(
+      'hs.musicSettings',
+      JSON.stringify({ key: 'XYZ', mode: 'galactic' }),
+    );
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    expect(deps.music.setScale).not.toHaveBeenCalled();
+    panel.unmount();
+  });
+
+  it('seeds dropdowns from a flat-tonic vibe via normalizeKeyId', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    // Override the stub: vibe-equivalent state with a flat tonic.
+    deps.music.__scale = { tonic: 'Bb', mode: 'dorian' };
+    panel.mount(parent, deps);
+    const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
+    expect(keySel.value).toBe('A#'); // Bb canonicalized to A#
     panel.unmount();
   });
 });

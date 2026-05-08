@@ -25,6 +25,9 @@ import {
   buildPercPatterns,
   densityForIntensity,
 } from './generator';
+import { MusicBrainImpl } from './MusicBrain';
+import { VIBES } from '@presets/vibes';
+import type { MusicBrainInput } from '@contracts/contracts';
 
 describe('harmony.getChordTones', () => {
   it('returns chord tones for F#maj9', () => {
@@ -213,6 +216,115 @@ describe('generator', () => {
     expect(count(lo.kick)).toBeLessThan(count(hi.kick));
     expect(count(lo.hat)).toBeLessThan(count(hi.hat));
     expect(count(lo.perc)).toBeLessThan(count(hi.perc));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MusicBrain.setScale / setKey / setMode / clearScaleOverride
+// ---------------------------------------------------------------------------
+
+function makeBrainAtVibe(vibeId: keyof typeof VIBES = 'tycho'): MusicBrainImpl {
+  const brain = new MusicBrainImpl();
+  brain.setRng(makeSeededRng(1));
+  // setInput primes the brain with the vibe (and constructs lead/bass state)
+  // without starting Tone.Transport, so we can introspect getCurrentScale
+  // and force-reapply the scale without any audio scheduling.
+  const input: MusicBrainInput = {
+    intensity: 0.5,
+    mood: 'calm',
+    vibe: VIBES[vibeId],
+  };
+  brain.setInput(input);
+  return brain;
+}
+
+describe('MusicBrain.setScale / setKey / setMode', () => {
+  it('reports null scale before any input is set', () => {
+    const brain = new MusicBrainImpl();
+    expect(brain.getCurrentScale()).toBeNull();
+  });
+
+  it('setInput seeds the scale from the vibe by default', () => {
+    const brain = makeBrainAtVibe('tycho');
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'F#', mode: 'lydian' });
+  });
+
+  it('setScale replaces both tonic and mode', () => {
+    const brain = makeBrainAtVibe('tycho');
+    brain.setScale('C', 'minor');
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'C', mode: 'minor' });
+  });
+
+  it('setKey changes only the tonic', () => {
+    const brain = makeBrainAtVibe('bonobo');
+    // Bonobo defaults to D dorian.
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'D', mode: 'dorian' });
+    brain.setKey('A');
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'A', mode: 'dorian' });
+  });
+
+  it('setMode changes only the mode', () => {
+    const brain = makeBrainAtVibe('hopkins');
+    // Hopkins defaults to A phrygian.
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'A', mode: 'phrygian' });
+    brain.setMode('major');
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'A', mode: 'major' });
+  });
+
+  it('setScale propagates the new scale to the lead generator state', () => {
+    interface BrainInternals {
+      leadState: { scale: { tonic: string; mode: string } } | null;
+    }
+    const brain = makeBrainAtVibe('tycho');
+    brain.setScale('Eb', 'dorian');
+    const lead = (brain as unknown as BrainInternals).leadState;
+    expect(lead).not.toBeNull();
+    expect(lead?.scale.tonic).toBe('Eb');
+    expect(lead?.scale.mode).toBe('dorian');
+  });
+
+  it('user override is sticky across vibe changes', () => {
+    const brain = makeBrainAtVibe('tycho');
+    brain.setScale('C', 'minor');
+    // Switch to bonobo (D dorian) — the user override should hold.
+    brain.setInput({ intensity: 0.5, mood: 'calm', vibe: VIBES.bonobo });
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'C', mode: 'minor' });
+  });
+
+  it('clearScaleOverride snaps back to the active vibe', () => {
+    const brain = makeBrainAtVibe('tycho');
+    brain.setScale('C', 'minor');
+    const restored = brain.clearScaleOverride();
+    expect(restored).toEqual({ tonic: 'F#', mode: 'lydian' });
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'F#', mode: 'lydian' });
+  });
+
+  it('after clearScaleOverride a subsequent vibe change uses that vibe', () => {
+    const brain = makeBrainAtVibe('tycho');
+    brain.setScale('C', 'minor');
+    brain.clearScaleOverride();
+    brain.setInput({ intensity: 0.5, mood: 'calm', vibe: VIBES.bonobo });
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'D', mode: 'dorian' });
+  });
+
+  it('setKey before any vibe falls back to a sane default', () => {
+    const brain = new MusicBrainImpl();
+    brain.setKey('A');
+    // No vibe yet → mode defaults to 'major'.
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'A', mode: 'major' });
+  });
+
+  it('setMode before any vibe falls back to a sane default', () => {
+    const brain = new MusicBrainImpl();
+    brain.setMode('phrygian');
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'C', mode: 'phrygian' });
+  });
+
+  it('chained setKey + setMode equivalent to setScale', () => {
+    const brain = makeBrainAtVibe('tycho');
+    brain.setKey('A');
+    brain.setMode('phrygian');
+    expect(brain.getCurrentScale()).toEqual({ tonic: 'A', mode: 'phrygian' });
   });
 });
 

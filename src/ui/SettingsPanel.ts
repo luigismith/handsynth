@@ -18,6 +18,12 @@ import type {
 import type { VoiceShape } from '@audio/voice-shape';
 import { VIBES } from '@presets/vibes';
 import { FACTORY_PRESETS, type FactoryPreset } from '@presets/factory-presets';
+import { SCALE_OPTIONS, SCALE_OPTION_IDS } from '@presets/scale-options';
+import {
+  KEY_OPTIONS,
+  KEY_OPTION_IDS,
+  normalizeKeyId,
+} from '@presets/key-options';
 
 /**
  * The contract `AudioEngine` interface (in `@contracts/contracts`) is owned
@@ -50,6 +56,49 @@ export interface SettingsPanelDeps {
 }
 
 const TOGGLE_KEY = 'p';
+
+/** localStorage key for the user's scale + key override. */
+const MUSIC_SETTINGS_KEY = 'hs.musicSettings';
+
+interface PersistedMusicSettings {
+  key: string;
+  mode: string;
+}
+
+function loadMusicSettings(): PersistedMusicSettings | null {
+  try {
+    const raw = localStorage.getItem(MUSIC_SETTINGS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedMusicSettings>;
+    if (
+      typeof parsed.key === 'string' &&
+      typeof parsed.mode === 'string' &&
+      KEY_OPTION_IDS.has(parsed.key) &&
+      SCALE_OPTION_IDS.has(parsed.mode)
+    ) {
+      return { key: parsed.key, mode: parsed.mode };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveMusicSettings(s: PersistedMusicSettings): void {
+  try {
+    localStorage.setItem(MUSIC_SETTINGS_KEY, JSON.stringify(s));
+  } catch {
+    /* localStorage may be denied (private mode); silently noop */
+  }
+}
+
+function clearMusicSettings(): void {
+  try {
+    localStorage.removeItem(MUSIC_SETTINGS_KEY);
+  } catch {
+    /* noop */
+  }
+}
 
 interface KnobDef {
   id: keyof AudioEngineParams | 'bpm' | 'intensity';
@@ -96,6 +145,8 @@ export class SettingsPanelImpl {
   private knobs = new Map<KnobDef['id'], Knob>();
   private patchListEl: HTMLDivElement | null = null;
   private vibeSelectEl: HTMLSelectElement | null = null;
+  private keySelectEl: HTMLSelectElement | null = null;
+  private scaleSelectEl: HTMLSelectElement | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private intensityOverride: number | null = null;
   private bpmCurrent = 92;
@@ -143,6 +194,12 @@ export class SettingsPanelImpl {
       presetRow.appendChild(chip);
     }
     card.appendChild(presetRow);
+
+    // Key + scale selectors. Sit above the knobs so the harmonic identity
+    // is the first thing the user sees after the factory chips. The vibe
+    // still seeds these on first load; the user override is sticky and
+    // persists to localStorage.
+    card.appendChild(this.buildMusicRow());
 
     // Sections.
     const initial = deps.getCurrentParams();
@@ -192,6 +249,11 @@ export class SettingsPanelImpl {
     vsel.addEventListener('change', () => {
       const id = vsel.value as VibeId;
       deps.setVibe(id);
+      // If no user override is active, the vibe just (re)installed its own
+      // scale; mirror that into the dropdowns. If an override IS active,
+      // MusicBrain keeps the override and getCurrentScale still reports it
+      // — syncMusicRowFromBrain therefore leaves the dropdowns alone.
+      this.syncMusicRowFromBrain();
     });
     vibeRow.append(vlbl, vsel);
     vibeSec.appendChild(vibeRow);
@@ -272,6 +334,10 @@ export class SettingsPanelImpl {
       }
     };
     window.addEventListener('keydown', this.keydownHandler);
+
+    // Apply persisted scale/key override AFTER the panel is fully built so
+    // the dropdowns reflect the just-restored selection.
+    this.applyPersistedMusicSettings();
   }
 
   unmount(): void {
@@ -285,11 +351,161 @@ export class SettingsPanelImpl {
     this.toggleBtn = null;
     this.patchListEl = null;
     this.vibeSelectEl = null;
+    this.keySelectEl = null;
+    this.scaleSelectEl = null;
     if (this.keydownHandler) {
       window.removeEventListener('keydown', this.keydownHandler);
       this.keydownHandler = null;
     }
     this.deps = null;
+  }
+
+  /**
+   * Build the KEY + SCALE + reset row. Each dropdown writes through to
+   * MusicBrain (via deps.music) and persists to localStorage. The reset
+   * button clears localStorage and tells the brain to re-derive from the
+   * current vibe.
+   */
+  private buildMusicRow(): HTMLDivElement {
+    const row = document.createElement('div');
+    row.className = 'hs-music-row';
+    row.setAttribute('role', 'group');
+    row.setAttribute('aria-label', 'Scale and key');
+
+    const keyLbl = document.createElement('label');
+    keyLbl.className = 'hs-music-label';
+    keyLbl.textContent = 'KEY';
+    keyLbl.htmlFor = 'hs-music-key';
+
+    const keySel = document.createElement('select');
+    keySel.id = 'hs-music-key';
+    keySel.className = 'hs-music-select';
+    keySel.dataset.musicKey = '';
+    keySel.setAttribute('aria-label', 'Key');
+    for (const k of KEY_OPTIONS) {
+      const opt = document.createElement('option');
+      opt.value = k.id;
+      opt.textContent = k.displayName;
+      keySel.appendChild(opt);
+    }
+    keySel.addEventListener('change', () => {
+      this.handleKeyChange(keySel.value);
+    });
+    this.keySelectEl = keySel;
+
+    const scaleLbl = document.createElement('label');
+    scaleLbl.className = 'hs-music-label';
+    scaleLbl.textContent = 'SCALE';
+    scaleLbl.htmlFor = 'hs-music-scale';
+
+    const scaleSel = document.createElement('select');
+    scaleSel.id = 'hs-music-scale';
+    scaleSel.className = 'hs-music-select';
+    scaleSel.dataset.musicScale = '';
+    scaleSel.setAttribute('aria-label', 'Scale');
+    for (const s of SCALE_OPTIONS) {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.displayName;
+      scaleSel.appendChild(opt);
+    }
+    scaleSel.addEventListener('change', () => {
+      this.handleModeChange(scaleSel.value);
+    });
+    this.scaleSelectEl = scaleSel;
+
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'hs-music-reset';
+    resetBtn.textContent = '↺'; // counter-clockwise arrow
+    resetBtn.title = 'Reset to vibe default';
+    resetBtn.setAttribute('aria-label', 'Reset key and scale to vibe default');
+    resetBtn.addEventListener('click', () => this.handleScaleReset());
+
+    // Seed the dropdowns with the current vibe's defaults; the actual
+    // displayed selection is later overridden by applyPersistedMusicSettings
+    // if a user preference is saved.
+    this.syncMusicRowFromBrain();
+
+    row.append(keyLbl, keySel, scaleLbl, scaleSel, resetBtn);
+    return row;
+  }
+
+  /**
+   * Reflect MusicBrain's current scale (or, if not yet started, the vibe
+   * default) in the dropdowns. Called on mount and after `setVibe` so the
+   * UI doesn't drift from the model.
+   */
+  private syncMusicRowFromBrain(): void {
+    if (!this.keySelectEl || !this.scaleSelectEl || !this.deps) return;
+    const current = this.deps.music.getCurrentScale?.();
+    let tonic: string;
+    let mode: string;
+    if (current) {
+      tonic = current.tonic;
+      mode = current.mode;
+    } else {
+      const vibe = VIBES[this.deps.getCurrentVibeId()];
+      tonic = vibe.scale.tonic;
+      mode = vibe.scale.mode;
+    }
+    const keyId = normalizeKeyId(tonic);
+    if (KEY_OPTION_IDS.has(keyId)) this.keySelectEl.value = keyId;
+    if (SCALE_OPTION_IDS.has(mode)) this.scaleSelectEl.value = mode;
+  }
+
+  private applyPersistedMusicSettings(): void {
+    if (!this.deps) return;
+    const persisted = loadMusicSettings();
+    if (!persisted) {
+      // No override — dropdowns already match the vibe default from
+      // syncMusicRowFromBrain().
+      return;
+    }
+    if (this.keySelectEl) this.keySelectEl.value = persisted.key;
+    if (this.scaleSelectEl) this.scaleSelectEl.value = persisted.mode;
+    this.deps.music.setScale?.(persisted.key, persisted.mode);
+  }
+
+  private handleKeyChange(value: string): void {
+    if (!this.deps) return;
+    if (!KEY_OPTION_IDS.has(value)) return;
+    const mode = this.scaleSelectEl?.value ?? 'major';
+    this.deps.music.setKey?.(value);
+    saveMusicSettings({ key: value, mode });
+  }
+
+  private handleModeChange(value: string): void {
+    if (!this.deps) return;
+    if (!SCALE_OPTION_IDS.has(value)) return;
+    const key = this.keySelectEl?.value ?? 'C';
+    this.deps.music.setMode?.(value);
+    saveMusicSettings({ key, mode: value });
+  }
+
+  private handleScaleReset(): void {
+    if (!this.deps) return;
+    clearMusicSettings();
+    const result = this.deps.music.clearScaleOverride?.();
+    if (result) {
+      if (this.keySelectEl) {
+        const id = normalizeKeyId(result.tonic);
+        if (KEY_OPTION_IDS.has(id)) this.keySelectEl.value = id;
+      }
+      if (this.scaleSelectEl && SCALE_OPTION_IDS.has(result.mode)) {
+        this.scaleSelectEl.value = result.mode;
+      }
+    } else {
+      // Fallback: pull from the active vibe directly.
+      const vibe = VIBES[this.deps.getCurrentVibeId()];
+      if (this.keySelectEl) {
+        const id = normalizeKeyId(vibe.scale.tonic);
+        if (KEY_OPTION_IDS.has(id)) this.keySelectEl.value = id;
+      }
+      if (this.scaleSelectEl && SCALE_OPTION_IDS.has(vibe.scale.mode)) {
+        this.scaleSelectEl.value = vibe.scale.mode;
+      }
+    }
   }
 
   setVisible(visible: boolean): void {

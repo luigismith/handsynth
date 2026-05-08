@@ -188,6 +188,23 @@ export interface MusicBrain {
   on(events: MusicBrainEvents): void;
   /** Unsubscribe. */
   off(events: MusicBrainEvents): void;
+  /**
+   * Override the active scale's tonic (root note). The chord progression is
+   * NOT regenerated — the snap-to-consonance filter reharmonizes any clashes.
+   * Sticky across vibe changes until cleared via `clearScaleOverride`.
+   */
+  setKey(tonic: string): void;
+  /** Override the active scale's mode (e.g. `'minor'`, `'dorian'`). */
+  setMode(mode: string): void;
+  /** Override both at once (avoids two refreshes). */
+  setScale(tonic: string, mode: string): void;
+  /**
+   * Drop the user override and re-derive the active scale from the current
+   * vibe. Returns the new {tonic,mode} that is now active.
+   */
+  clearScaleOverride(): { tonic: string; mode: string } | null;
+  /** Read the active scale; returns null before `start()` has been called. */
+  getCurrentScale(): { tonic: string; mode: string } | null;
 }
 
 // =============================================================================

@@ -33,7 +33,7 @@ A web app + Electron desktop app that turns your body into an expressive musical
 - **Smile / frown / surprise / anger** modulate brightness, cutoff, drive, and resonance — your face is the fourth controller
 - **Both fists** mutes; **both hands above head** is the "drop"
 
-The music brain stays inside the active scale — **it is impossible to play a wrong note** — and four built-in vibes (Tycho, Bonobo, Hopkins, Floating Points) set tonality, BPM, and timbre. Eight factory PATCH presets (LUSH, ACID, DUB, BRIGHT, DARK, TAPE, SPACE, INIT) flip whole-sound character with one click — each preset re-shapes the **oscillators and envelopes** of the pad/lead/bass voices on top of the FX chain, so they sound genuinely different (not just "same patch through different reverb"). Save your own patches to `localStorage`.
+The music brain stays inside the active scale — **it is impossible to play a wrong note** — and four built-in vibes (Tycho, Bonobo, Hopkins, Floating Points) set tonality, BPM, and timbre. The PATCH editor lets you override the **key** (12 chromatic roots) and **scale** (Major, Minor, Harmonic / Melodic Minor, the seven church modes, Pentatonic Major / Minor, Blues, Chromatic) independently of the vibe — keep the Bonobo style but play in C-minor, or run Tycho through Phrygian for a darker drift. Eight factory PATCH presets (LUSH, ACID, DUB, BRIGHT, DARK, TAPE, SPACE, INIT) flip whole-sound character with one click — each preset re-shapes the **oscillators and envelopes** of the pad/lead/bass voices on top of the FX chain, so they sound genuinely different (not just "same patch through different reverb"). Save your own patches to `localStorage`.
 
 ## Quick start (web)
 
@@ -134,6 +134,10 @@ for the full cheat sheet.
 | `F1` or `?` | Toggle the in-app manual (also exposed as the bottom-right help icon) |
 
 A small bottom-right HUD strip surfaces these as three tiny icon buttons (STOP / TERMINAL / HELP) for users who prefer a click. See [`USER_MANUAL.md`](./USER_MANUAL.md) for the long-form user guide.
+
+### Key & scale
+
+The PATCH editor exposes two dropdowns above the knob grid: **KEY** (12 chromatic roots) and **SCALE** (13 modes, from Major and the church modes through Harmonic / Melodic Minor, Pentatonics, Blues, and Chromatic). Pick whatever you want and the music brain re-tunes the lead and bass generators on the next note — the chord progression keeps the vibe's character, the snap-to-consonance filter handles any clashes. The `↺` button resets to the current vibe's default; your selection persists across sessions in `localStorage`.
 
 ## Architecture
 

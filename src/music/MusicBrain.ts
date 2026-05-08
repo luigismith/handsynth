@@ -90,6 +90,13 @@ export class MusicBrainImpl implements MusicBrain {
   private isStarted = false;
   /** Stable RNG; pluggable in tests via setRng. */
   private rng: () => number = Math.random;
+  /**
+   * When true, the user has explicitly set the scale via setScale/setKey/
+   * setMode. We then preserve the override across `applyVibe` calls — the
+   * vibe still drives BPM, FX, and progressions, but the scale stays user-
+   * pinned until `clearScaleOverride()` is invoked.
+   */
+  private userOverrideScale = false;
 
   // -------------------------------------------------------------------------
   // Public surface
@@ -167,12 +174,64 @@ export class MusicBrainImpl implements MusicBrain {
   }
 
   // -------------------------------------------------------------------------
+  // Scale / key override (public)
+  // -------------------------------------------------------------------------
+
+  setScale(tonic: string, mode: string): void {
+    this.userOverrideScale = true;
+    this.applyScale(tonic, mode);
+  }
+
+  setKey(tonic: string): void {
+    const mode = this.scale?.mode ?? this.vibe?.scale.mode ?? 'major';
+    this.setScale(tonic, mode);
+  }
+
+  setMode(mode: string): void {
+    const tonic = this.scale?.tonic ?? this.vibe?.scale.tonic ?? 'C';
+    this.setScale(tonic, mode);
+  }
+
+  clearScaleOverride(): { tonic: string; mode: string } | null {
+    this.userOverrideScale = false;
+    if (!this.vibe) return null;
+    this.applyScale(this.vibe.scale.tonic, this.vibe.scale.mode);
+    return { tonic: this.vibe.scale.tonic, mode: this.vibe.scale.mode };
+  }
+
+  getCurrentScale(): { tonic: string; mode: string } | null {
+    if (!this.scale) return null;
+    return { tonic: this.scale.tonic, mode: this.scale.mode };
+  }
+
+  // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
 
+  /**
+   * Recompute the active scale and propagate it to lead/bass generator state
+   * without regenerating the chord progression. Used by both the public
+   * setScale family and `applyVibe()` (when no override is active).
+   */
+  private applyScale(tonic: string, mode: string): void {
+    const next = getScale(tonic, mode);
+    this.scale = next;
+    if (this.leadState) this.leadState.scale = next;
+    // Bass state only carries chord context (not scale); nothing to update.
+  }
+
   private applyVibe(vibe: VibePreset, hardReset: boolean): void {
     this.vibe = vibe;
-    this.scale = getScale(vibe.scale.tonic, vibe.scale.mode);
+    // If the user has previously pinned a scale via setScale/setKey/setMode
+    // we keep that scale alive across vibe changes. The vibe still drives
+    // BPM, FX, voicing, and the chord progression source — only the
+    // tonal centre stays user-controlled. Without an override, the vibe's
+    // own scale is the source of truth (the original behaviour).
+    if (this.userOverrideScale && this.scale) {
+      this.scale = getScale(this.scale.tonic, this.scale.mode);
+    } else {
+      this.scale = getScale(vibe.scale.tonic, vibe.scale.mode);
+    }
     this.pickProgression();
     if (hardReset) this.currentChordIndex = 0;
     const chord = this.currentChordSymbol();

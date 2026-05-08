@@ -107,6 +107,11 @@ function makeMusicStub(): MusicStub {
     off: (e: MusicBrainEvents) => {
       if (stub.subscriber === e) stub.subscriber = null;
     },
+    setKey: (_t: string) => undefined,
+    setMode: (_m: string) => undefined,
+    setScale: (_t: string, _m: string) => undefined,
+    clearScaleOverride: () => null,
+    getCurrentScale: () => null,
   };
   return stub;
 }

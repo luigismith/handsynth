@@ -397,6 +397,26 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
   //    of being lost to the console-log fallback.
   mapper.start();
   music.start();
+
+  // Apply any persisted user override of key + scale BEFORE the first chord
+  // re-schedules. The SettingsPanel mounts later (Phase 3.6) and would
+  // re-apply the same value via setScale; doing it here too means the user
+  // never hears a single bar in the wrong key when they reload the page.
+  try {
+    const raw = localStorage.getItem('hs.musicSettings');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { key?: unknown; mode?: unknown };
+      if (
+        typeof parsed.key === 'string' &&
+        typeof parsed.mode === 'string'
+      ) {
+        music.setScale(parsed.key, parsed.mode);
+      }
+    }
+  } catch {
+    /* localStorage may be denied / corrupted — silently ignore */
+  }
+
   console.info(
     '[boot] music + mapper running · transport bpm:',
     Tone.getTransport().bpm.value,
