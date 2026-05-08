@@ -23,6 +23,7 @@
       "@audio/*": ["src/audio/*"],
       "@music/*": ["src/music/*"],
       "@hands/*": ["src/hands/*"],
+      "@face/*": ["src/face/*"],
       "@interaction/*": ["src/interaction/*"],
       "@visual/*": ["src/visual/*"],
       "@ui/*": ["src/ui/*"],

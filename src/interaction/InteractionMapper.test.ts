@@ -9,6 +9,9 @@ import type {
   AudioEngine,
   AudioEngineParams,
   ChordEvent,
+  FaceState,
+  FaceTracker,
+  FaceTrackerEvents,
   GestureState,
   HandTracker,
   HandTrackerEvents,
@@ -142,6 +145,58 @@ function makeHandsStub(): HandTracker & {
       }
     },
   });
+}
+
+function makeFaceStub(): FaceTracker & {
+  emit: <K extends keyof FaceTrackerEvents>(
+    evt: K,
+    ...args: Parameters<FaceTrackerEvents[K]>
+  ) => void;
+} {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const listeners: Map<keyof FaceTrackerEvents, Set<any>> = new Map();
+  const tracker: FaceTracker = {
+    init: () => Promise.resolve(),
+    start: () => undefined,
+    stop: () => undefined,
+    on: (evt, cb) => {
+      let set = listeners.get(evt);
+      if (!set) {
+        set = new Set();
+        listeners.set(evt, set);
+      }
+      set.add(cb);
+    },
+    off: (evt, cb) => {
+      listeners.get(evt)?.delete(cb);
+    },
+  };
+  return Object.assign(tracker, {
+    emit: <K extends keyof FaceTrackerEvents>(
+      evt: K,
+      ...args: Parameters<FaceTrackerEvents[K]>
+    ) => {
+      const set = listeners.get(evt);
+      if (!set) return;
+      for (const cb of set) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (cb as any)(...args);
+      }
+    },
+  });
+}
+
+function blankFace(over: Partial<FaceState> = {}): FaceState {
+  return {
+    detected: true,
+    center: { x: 0.5, y: 0.5 },
+    apparentSize: 0.5,
+    pose: { yaw: 0, pitch: 0, roll: 0, depth: 0 },
+    mouthOpen: 0,
+    browRaise: 0,
+    noFaceDuration: 0,
+    ...over,
+  };
 }
 
 function blankState(over: Partial<GestureState> = {}): GestureState {
@@ -395,5 +450,123 @@ describe('InteractionMapper lifecycle', () => {
     vi.useRealTimers();
     // Autopilot should have produced at least one setParams call.
     expect(audio.paramCalls.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Face integration
+// ---------------------------------------------------------------------------
+
+describe('InteractionMapper face integration', () => {
+  it('apparentSize=1 (close face) drops reverbWet below 0.4', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    const face = makeFaceStub();
+    mapper.attach({ audio, music, hands, face });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Face very close → near-dry reverb. Push the face state first, then
+    // drive a hand-gesture update so the param-push path runs.
+    face.emit('face:update', blankFace({ apparentSize: 1 }));
+    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState());
+
+    const reverbs = audio.paramCalls
+      .map((p) => p.reverbWet)
+      .filter((v): v is number => typeof v === 'number');
+    expect(reverbs.length).toBeGreaterThan(0);
+    const last = reverbs[reverbs.length - 1]!;
+    expect(last).toBeLessThan(0.4);
+    mapper.stop();
+  });
+
+  it('mouth-open rising edge triggers a stab via the lead path', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    const face = makeFaceStub();
+    mapper.attach({ audio, music, hands, face });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Provide a chord context so the stab routes through triggerLead (the
+    // harmony-aware path) rather than the bare triggerStab fallback.
+    expect(music.subscriber).not.toBeNull();
+    music.subscriber!.onChord({
+      notes: ['C4', 'E4', 'G4', 'B4'],
+      duration: '4m',
+      time: 0,
+    });
+
+    // Mouth closed → no fire.
+    face.emit('face:update', blankFace({ mouthOpen: 0.1 }));
+    expect(audio.leadCalls.length).toBe(0);
+    expect(audio.stabCalls).toBe(0);
+
+    // Rising edge through threshold → one stab.
+    face.emit('face:update', blankFace({ mouthOpen: 0.8 }));
+    expect(audio.leadCalls.length + audio.stabCalls).toBe(1);
+
+    // Holding above threshold → no re-fire.
+    face.emit('face:update', blankFace({ mouthOpen: 0.85 }));
+    expect(audio.leadCalls.length + audio.stabCalls).toBe(1);
+
+    mapper.stop();
+  });
+
+  it('noFaceDuration > 1.5 s pushes masterDuck up via face contribution', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    const face = makeFaceStub();
+    mapper.attach({ audio, music, hands, face });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Face lost (detected=false, noFaceDuration big enough).
+    face.emit(
+      'face:update',
+      blankFace({ detected: false, noFaceDuration: 2.0 }),
+    );
+    // Drive a couple of gesture frames so the throttled setParams pushes.
+    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState());
+
+    const ducks = audio.paramCalls
+      .map((p) => p.masterDuck)
+      .filter((v): v is number => typeof v === 'number');
+    expect(ducks.length).toBeGreaterThan(0);
+    expect(ducks[ducks.length - 1]!).toBeGreaterThan(0.1);
+    mapper.stop();
+  });
+
+  it('without a FaceTracker, all face contributions are no-ops', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    // Note: no `face` in attach()
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState());
+
+    // masterDuck should sit at 0 (no face contribution); reverbWet should be
+    // hand-driven (rightOpenness=0.5 -> ~0.475), with no face blend.
+    const lastParams = audio.paramCalls[audio.paramCalls.length - 1]!;
+    expect(lastParams.masterDuck).toBe(0);
+    expect(lastParams.reverbWet).toBeCloseTo(0.475, 2);
+
+    // Mood/intensity should be hand-only (no pitch boost).
+    const lastInput = music.inputCalls[music.inputCalls.length - 1]!;
+    expect(lastInput.intensity).toBeCloseTo(0.725, 2); // INTENSITY_FLOOR + 0.5*(1-floor)
+    mapper.stop();
   });
 });

@@ -24,12 +24,15 @@ import { HandTrackerImpl } from '@hands/HandTracker';
 import { MusicBrainImpl } from '@music/MusicBrain';
 import { InteractionMapperImpl } from '@interaction/InteractionMapper';
 import { VisualizerImpl } from '@visual/Visualizer';
+import { FaceTrackerImpl } from '@face/FaceTracker';
 import { VIBES, DEFAULT_VIBE, VIBE_LIST } from '@presets/vibes';
 import type { VibeId } from '@contracts/contracts';
 import { OnboardingImpl } from '@ui/Onboarding';
 import { VibeSelectorImpl } from '@ui/VibeSelector';
 import { ErrorOverlayImpl } from '@ui/ErrorOverlay';
 import { DebugPanelImpl } from '@ui/DebugPanel';
+import { SettingsPanelImpl } from '@ui/SettingsPanel';
+import { TerminalImpl } from '@ui/Terminal';
 import { injectStyles } from '@ui/styles';
 
 function $(id: string): HTMLElement {
@@ -62,6 +65,7 @@ async function bootstrap(): Promise<void> {
   const audio = new AudioEngineImpl();
   const music = new MusicBrainImpl();
   const hands = new HandTrackerImpl();
+  const face = new FaceTrackerImpl();
   const mapper = new InteractionMapperImpl();
   const visual = new VisualizerImpl();
 
@@ -78,6 +82,7 @@ async function bootstrap(): Promise<void> {
         audio,
         music,
         hands,
+        face,
         mapper,
         visual,
         videoEl: video,
@@ -98,9 +103,13 @@ async function bootstrap(): Promise<void> {
 
   onboarding.unmount();
 
+  // Track current vibe for the settings panel readback.
+  let currentVibeId: VibeId = DEFAULT_VIBE;
+
   // Phase 3: reveal the vibe selector.
   vibeSelector.mount(vibeHost, VIBE_LIST.slice() as Array<typeof VIBE_LIST[number]>, DEFAULT_VIBE);
   vibeSelector.onChange((id: VibeId) => {
+    currentVibeId = id;
     mapper.setVibe(VIBES[id]);
   });
   vibeHost.removeAttribute('hidden');
@@ -120,6 +129,36 @@ async function bootstrap(): Promise<void> {
       mapper.setVibe(VIBES[id]);
       vibeSelector.setActive(id);
     },
+  });
+
+  // Phase 3.6: analog-synth-style Settings (patches) panel + Terminal HUD.
+  const settingsHost = $('settings-host');
+  const terminalHost = $('terminal-host');
+
+  const settings = new SettingsPanelImpl();
+  settings.mount(settingsHost, {
+    audio,
+    music,
+    setVibe: (id: VibeId) => {
+      currentVibeId = id;
+      mapper.setVibe(VIBES[id]);
+      vibeSelector.setActive(id);
+    },
+    setManualIntensity: (v: number | null) => mapper.setManualIntensity(v),
+    getCurrentVibeId: () => currentVibeId,
+    getCurrentParams: () => ({ bpm: Tone.getTransport().bpm.value }),
+  });
+
+  const terminal = new TerminalImpl();
+  terminal.mount(terminalHost, {
+    music,
+    audio,
+    hands,
+    getMapperState: () => ({
+      intensity: mapper.getCurrentIntensity(),
+      mood: mapper.getCurrentMood(),
+      bpm: Tone.getTransport().bpm.value,
+    }),
   });
 
   // Periodic context-resume tick. Some browsers (especially Safari) silently
@@ -153,6 +192,11 @@ async function bootstrap(): Promise<void> {
       /* noop */
     }
     try {
+      face.stop();
+    } catch {
+      /* noop */
+    }
+    try {
       hands.stop();
     } catch {
       /* noop */
@@ -167,6 +211,16 @@ async function bootstrap(): Promise<void> {
     } catch {
       /* noop */
     }
+    try {
+      settings.unmount();
+    } catch {
+      /* noop */
+    }
+    try {
+      terminal.unmount();
+    } catch {
+      /* noop */
+    }
     clearInterval(resumeTimer);
   });
 }
@@ -175,6 +229,7 @@ interface StartSessionDeps {
   audio: AudioEngineImpl;
   music: MusicBrainImpl;
   hands: HandTrackerImpl;
+  face: FaceTrackerImpl;
   mapper: InteractionMapperImpl;
   visual: VisualizerImpl;
   videoEl: HTMLVideoElement;
@@ -196,7 +251,7 @@ interface StartSessionDeps {
  *     throw we still produce music via mapper.startAutopilot().
  */
 async function startSession(deps: StartSessionDeps): Promise<void> {
-  const { audio, music, hands, mapper, visual, videoEl, canvasEl } = deps;
+  const { audio, music, hands, face, mapper, visual, videoEl, canvasEl } = deps;
   const initialVibe = VIBES[DEFAULT_VIBE];
 
   // 1. Audio (must run inside user-gesture stack)
@@ -217,11 +272,7 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
     audio.isReady(),
   );
 
-  // 2. Mapper attach — required before start() per its contract.
-  mapper.attach({ audio, music, hands });
-  mapper.setVibe(initialVibe);
-
-  // 3. Hand tracking — best-effort. Failure → autopilot.
+  // 2. Hand tracking — best-effort. Failure → autopilot.
   let handsLive = false;
   try {
     await hands.init(videoEl);
@@ -234,6 +285,24 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
       err,
     );
   }
+
+  // 2b. Face tracking — second modality, shares the same <video>. Best-effort.
+  //     Only attempted if hands succeeded (we know the webcam stream is good).
+  let faceLive = false;
+  if (handsLive) {
+    try {
+      await face.init(videoEl);
+      face.start();
+      faceLive = true;
+      console.info('[boot] face tracking live');
+    } catch (err) {
+      console.warn('[boot] face tracking unavailable:', err);
+    }
+  }
+
+  // 3. Mapper attach — face is optional; mapper tolerates absence.
+  mapper.attach({ audio, music, hands, face: faceLive ? face : undefined });
+  mapper.setVibe(initialVibe);
 
   // 4. Wire mapper → music BEFORE music starts emitting events. This
   //    ensures the very first scheduled chord (fired inside music.start())

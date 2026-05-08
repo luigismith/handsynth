@@ -279,6 +279,82 @@ export interface HandTracker {
 }
 
 // =============================================================================
+// FACE
+// =============================================================================
+
+/** A single normalized face landmark (x, y in 0..1, z relative). */
+export interface FaceLandmark {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * Head pose extracted from the FaceLandmarker's facialTransformationMatrix
+ * (4x4). Angles are in radians; coordinate convention is selfie-mirrored to
+ * match HandTracker output.
+ */
+export interface HeadPose {
+  /** Yaw (left-right rotation) in radians, ~-π/2 .. π/2. Positive = right turn. */
+  yaw: number;
+  /** Pitch (up-down rotation) in radians. Positive = chin up. */
+  pitch: number;
+  /** Roll (head tilt). Positive = right ear toward right shoulder. */
+  roll: number;
+  /** Z-translation in normalized units; <0.5 = closer, >0.5 = farther. */
+  depth: number;
+}
+
+/** Aggregate face state, emitted at `face:update`. */
+export interface FaceState {
+  detected: boolean;
+  /** Face center in normalized image coords (0..1, mirrored to selfie space). */
+  center: { x: number; y: number };
+  /** Bounding-box-normalized scale (apparent face size, used as depth proxy). */
+  apparentSize: number;
+  pose: HeadPose;
+  /** Mouth open 0..1 (from blendshapes if available, else fallback geometry). */
+  mouthOpen: number;
+  /** Eyebrow raise 0..1. */
+  browRaise: number;
+  /** Time since face last seen, seconds. 0 if currently detected. */
+  noFaceDuration: number;
+  /** Optional: full landmark array for visualizer overlay (478 points). */
+  landmarks?: FaceLandmark[];
+}
+
+/** Event map for the FaceTracker. */
+export interface FaceTrackerEvents {
+  /** Emitted every frame with the latest face state (whether or not detected). */
+  'face:update': (state: FaceState) => void;
+  /** Edge: face disappeared from view (after a stable absence window). */
+  'face:lost': () => void;
+  /** Edge: face re-appeared after a `face:lost`. */
+  'face:back': () => void;
+  /** Tracker error. */
+  error: (e: Error) => void;
+}
+
+/**
+ * MediaPipe Tasks Vision FaceLandmarker wrapper. Mirrors the HandTracker
+ * lifecycle: lazy init from a user gesture, frame loop driven by
+ * requestVideoFrameCallback, One-Euro smoothing on emitted scalars.
+ *
+ * Owned by `hand-tracker` agent (face tracking is a sibling module under
+ * `src/face/` — see ARCHITECTURE.md "Head tracking").
+ */
+export interface FaceTracker {
+  /** Wire the webcam stream and load the model. */
+  init(videoEl: HTMLVideoElement): Promise<void>;
+  /** Begin per-frame tracking. */
+  start(): void;
+  /** Stop tracking and release resources. */
+  stop(): void;
+  on<K extends keyof FaceTrackerEvents>(evt: K, cb: FaceTrackerEvents[K]): void;
+  off<K extends keyof FaceTrackerEvents>(evt: K, cb: FaceTrackerEvents[K]): void;
+}
+
+// =============================================================================
 // INTERACTION MAPPER
 // =============================================================================
 
@@ -287,11 +363,16 @@ export interface HandTracker {
  * vibe selection state machine. Owned by `interaction-mapper` agent.
  */
 export interface InteractionMapper {
-  /** Wire dependencies. Call once after all subsystems are constructed. */
+  /**
+   * Wire dependencies. Call once after all subsystems are constructed. The
+   * `face` dependency is optional: if FaceTracker init fails or the user
+   * declines, the mapper runs hand-only.
+   */
   attach(deps: {
     audio: AudioEngine;
     music: MusicBrain;
     hands: HandTracker;
+    face?: FaceTracker;
   }): void;
   /** Switch vibe — propagates to audio + music. */
   setVibe(vibe: VibePreset): void;

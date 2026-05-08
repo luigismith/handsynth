@@ -20,6 +20,9 @@ import type {
   AudioEngine,
   AudioEngineParams,
   ChordEvent,
+  FaceState,
+  FaceTracker,
+  FaceTrackerEvents,
   GestureState,
   HandTracker,
   HandTrackerEvents,
@@ -64,6 +67,53 @@ const MOOD_MIN_HOLD_MS = 250;
 
 /** No-hands fallback engages at this elapsed time. */
 const NO_HANDS_FALLBACK_SECONDS = 2.0;
+
+// ---------------------------------------------------------------------------
+// Face → audio param mapping constants.
+//
+// Face is an *additive modulator* on top of the hand-driven signal. All
+// contributions are zero when no FaceTracker is attached or no face has been
+// seen. See ARCHITECTURE.md §"Head tracking" for the design rationale.
+//
+//   apparentSize (0=far, 1=close) -> reverbWet override blend
+//      lerp(REVERB_FAR, REVERB_NEAR, apparentSize) replaces the hand reverb
+//      contribution by a weighted blend (FACE_REVERB_BLEND).
+//   pose.roll  -> brightness offset (±FACE_BRIGHTNESS_GAIN around hand value)
+//   pose.yaw   -> filterResonance offset (±FACE_RESONANCE_GAIN)
+//   pose.pitch -> intensity boost (+FACE_INTENSITY_GAIN * sin(pitch))
+//   mouthOpen  -> rising-edge stab trigger
+//   noFaceDuration > face-lost threshold -> masterDuck += FACE_LOST_DUCK
+// ---------------------------------------------------------------------------
+
+/** apparentSize=0 (far) -> wet 0.65; apparentSize=1 (close) -> wet 0.15. */
+const FACE_REVERB_FAR = 0.65;
+const FACE_REVERB_NEAR = 0.15;
+/** Blend weight: 1 = face fully overrides hand reverb, 0 = no contribution. */
+const FACE_REVERB_BLEND = 0.6;
+
+/** roll modulates brightness by ±FACE_BRIGHTNESS_GAIN. */
+const FACE_BRIGHTNESS_GAIN = 0.15;
+/** Approx half-range of useful head tilt (rad). */
+const FACE_BRIGHTNESS_ROLL_SCALE = 0.6;
+
+/** yaw modulates resonance by ±FACE_RESONANCE_GAIN (in Q units). */
+const FACE_RESONANCE_GAIN = 5;
+const FACE_RESONANCE_YAW_SCALE = 0.6;
+
+/** pitch lifts intensity by +FACE_INTENSITY_GAIN * sin(pitch). */
+const FACE_INTENSITY_GAIN = 0.15;
+
+/** Mouth-open rising edge threshold for stab trigger. */
+const FACE_MOUTH_STAB_THRESHOLD = 0.6;
+/** Mouth-open falling edge (with hysteresis) before re-arming the stab. */
+const FACE_MOUTH_STAB_RELEASE = 0.4;
+/** Stab debounce window. */
+const FACE_MOUTH_STAB_DEBOUNCE_MS = 200;
+
+/** Threshold (seconds) for face-lost masterDuck nudge. */
+const FACE_LOST_DUCK_AFTER_SEC = 1.5;
+/** Additive masterDuck while face is lost. */
+const FACE_LOST_DUCK = 0.15;
 
 /**
  * Lower bound on the intensity pushed into MusicBrain. Re-maps the gesture's
@@ -148,6 +198,15 @@ export class InteractionMapperImpl implements InteractionMapper {
   private audio: AudioEngine | null = null;
   private music: MusicBrain | null = null;
   private hands: HandTracker | null = null;
+  private face: FaceTracker | null = null;
+
+  // Latest face state — null until the FaceTracker emits at least once. The
+  // mapper tolerates `null` for the entire session (hand-only mode).
+  private lastFace: FaceState | null = null;
+  /** Mouth-open hysteresis state (true between rising edge and release). */
+  private mouthOpenHigh = false;
+  /** Last mouth stab fire time, for debounce. */
+  private lastMouthStabMs = 0;
 
   // State.
   private currentVibe: VibePreset | null = null;
@@ -185,6 +244,8 @@ export class InteractionMapperImpl implements InteractionMapper {
   private onPinchLeft: HandTrackerEvents['gesture:pinch-left'] | null = null;
   private onNoHands: HandTrackerEvents['gesture:no-hands'] | null = null;
   private onHandsBack: HandTrackerEvents['gesture:hands-back'] | null = null;
+  /** Bound face listener (kept for off()). */
+  private onFaceUpdate: FaceTrackerEvents['face:update'] | null = null;
 
   /** MusicBrain subscription — kept for off(). */
   private musicSubscription: MusicBrainEvents | null = null;
@@ -210,12 +271,18 @@ export class InteractionMapperImpl implements InteractionMapper {
   // Public API
   // -------------------------------------------------------------------------
 
-  attach(deps: { audio: AudioEngine; music: MusicBrain; hands: HandTracker }): void {
+  attach(deps: {
+    audio: AudioEngine;
+    music: MusicBrain;
+    hands: HandTracker;
+    face?: FaceTracker;
+  }): void {
     // Idempotent: store latest refs. If start() was already called, callers
     // are expected to stop() first; we do not rewire automatically.
     this.audio = deps.audio;
     this.music = deps.music;
     this.hands = deps.hands;
+    this.face = deps.face ?? null;
   }
 
   setVibe(vibe: VibePreset): void {
@@ -264,6 +331,15 @@ export class InteractionMapperImpl implements InteractionMapper {
     this.hands.on('gesture:pinch-left', this.onPinchLeft);
     this.hands.on('gesture:no-hands', this.onNoHands);
     this.hands.on('gesture:hands-back', this.onHandsBack);
+
+    // Wire FaceTracker -> mapper if present. Face is an additive modulator on
+    // top of the hand-driven param stream; we only need 'face:update' here.
+    // Mouth-open rising-edge stabs are detected inside the same handler so we
+    // don't have to introduce a separate event in the contract.
+    if (this.face) {
+      this.onFaceUpdate = (s: FaceState) => this.handleFaceUpdate(s);
+      this.face.on('face:update', this.onFaceUpdate);
+    }
   }
 
   stop(): void {
@@ -286,6 +362,13 @@ export class InteractionMapperImpl implements InteractionMapper {
     this.onPinchLeft = null;
     this.onNoHands = null;
     this.onHandsBack = null;
+
+    if (this.face && this.onFaceUpdate) {
+      this.face.off('face:update', this.onFaceUpdate);
+    }
+    this.onFaceUpdate = null;
+    this.lastFace = null;
+    this.mouthOpenHigh = false;
 
     if (this.music && this.musicSubscription) {
       this.music.off(this.musicSubscription);
@@ -436,6 +519,11 @@ export class InteractionMapperImpl implements InteractionMapper {
       masterDuck: 0,
     };
 
+    // Face additive modulation. Only contributes when a FaceTracker is
+    // attached AND has emitted at least one detected state. All branches are
+    // tolerant of `lastFace === null` (no-op).
+    target = this.applyFaceModulation(target);
+
     // Hands-back crossfade: blend from drone params back to gesture-driven.
     if (this.handsBackFade) {
       const elapsed = performance.now() - this.handsBackFade.startMs;
@@ -449,9 +537,13 @@ export class InteractionMapperImpl implements InteractionMapper {
 
     // Push intensity / mood to MusicBrain whenever it changes meaningfully.
     // If a manual override is active (debug panel slider), it wins over the
-    // gesture-derived value.
-    this.currentInputIntensity =
+    // gesture-derived value. Face pitch contributes a small additive boost
+    // (chin up = denser) after the mood logic — see applyFaceIntensityBoost.
+    const baseIntensity =
       this.manualIntensity !== null ? this.manualIntensity : intensity;
+    this.currentInputIntensity = clamp01(
+      baseIntensity + this.faceIntensityBoost(),
+    );
     this.pushMusicInput();
 
     // Throttle param push to every other frame (AudioEngine ramps internally).
@@ -585,6 +677,110 @@ export class InteractionMapperImpl implements InteractionMapper {
       vibe: this.currentVibe,
     };
     this.music.setInput(input);
+  }
+
+  // -------------------------------------------------------------------------
+  // Face modulation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Edge-detect mouth-open and update the cached face state. Hand-driven
+   * `handleGestureUpdate` reads `this.lastFace` to apply additive modulation.
+   *
+   * Stabs trigger on a rising edge through `FACE_MOUTH_STAB_THRESHOLD`, and
+   * re-arm only after mouthOpen falls below `FACE_MOUTH_STAB_RELEASE`
+   * (hysteresis) and the debounce window has elapsed.
+   */
+  private handleFaceUpdate(state: FaceState): void {
+    this.lastFace = state;
+
+    // Mouth-open rising edge -> stab. Hand-driven stabs already fire from the
+    // right pinch; this is the face-driven equivalent. We funnel through the
+    // same triggerStab() so it remains harmony-aware when chord context is
+    // present.
+    if (state.detected) {
+      if (!this.mouthOpenHigh && state.mouthOpen >= FACE_MOUTH_STAB_THRESHOLD) {
+        const now = performance.now();
+        if (now - this.lastMouthStabMs >= FACE_MOUTH_STAB_DEBOUNCE_MS) {
+          this.lastMouthStabMs = now;
+          this.triggerStab();
+        }
+        this.mouthOpenHigh = true;
+      } else if (
+        this.mouthOpenHigh &&
+        state.mouthOpen <= FACE_MOUTH_STAB_RELEASE
+      ) {
+        this.mouthOpenHigh = false;
+      }
+    } else {
+      // Face left the frame — disarm so the next time it re-appears with
+      // mouth open we get a fresh rising edge.
+      this.mouthOpenHigh = false;
+    }
+  }
+
+  /**
+   * Blend face modulators into the partial param target. Idempotent: with no
+   * face state, returns `target` unchanged.
+   */
+  private applyFaceModulation(
+    target: Partial<AudioEngineParams>,
+  ): Partial<AudioEngineParams> {
+    const f = this.lastFace;
+    if (!f) return target;
+
+    const out: Partial<AudioEngineParams> = { ...target };
+
+    if (f.detected) {
+      // Reverb wet: blend hand-driven reverb with the depth-mapped face value.
+      const faceReverb = lerp(
+        FACE_REVERB_FAR,
+        FACE_REVERB_NEAR,
+        clamp01(f.apparentSize),
+      );
+      const handReverb =
+        typeof out.reverbWet === 'number' ? out.reverbWet : faceReverb;
+      out.reverbWet = lerp(handReverb, faceReverb, FACE_REVERB_BLEND);
+
+      // Brightness offset from head tilt (roll). Centred on 0.
+      const rollNorm = clamp(
+        f.pose.roll / FACE_BRIGHTNESS_ROLL_SCALE,
+        -1,
+        1,
+      );
+      const handBrightness =
+        typeof out.brightness === 'number' ? out.brightness : 0.5;
+      out.brightness = clamp01(handBrightness + rollNorm * FACE_BRIGHTNESS_GAIN);
+
+      // Resonance offset from yaw.
+      const yawNorm = clamp(f.pose.yaw / FACE_RESONANCE_YAW_SCALE, -1, 1);
+      const handQ =
+        typeof out.filterResonance === 'number' ? out.filterResonance : 1;
+      out.filterResonance = clamp(
+        handQ + yawNorm * FACE_RESONANCE_GAIN,
+        Q_MIN,
+        Q_MAX,
+      );
+    }
+
+    // Face-lost duck (additive). Independent of detected/undetected snapshot
+    // because `noFaceDuration` is provided in both branches.
+    if (f.noFaceDuration >= FACE_LOST_DUCK_AFTER_SEC) {
+      const handDuck = typeof out.masterDuck === 'number' ? out.masterDuck : 0;
+      out.masterDuck = clamp01(handDuck + FACE_LOST_DUCK);
+    }
+
+    return out;
+  }
+
+  /**
+   * Pitch-driven intensity contribution. Returns 0 when no face is present.
+   * Chin up (positive pitch) -> +boost, chin down -> -boost (small).
+   */
+  private faceIntensityBoost(): number {
+    const f = this.lastFace;
+    if (!f || !f.detected) return 0;
+    return FACE_INTENSITY_GAIN * Math.sin(f.pose.pitch);
   }
 
   // -------------------------------------------------------------------------

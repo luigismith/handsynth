@@ -18,7 +18,8 @@ This document is the contract between the eight agents that build HandSynth. Mod
 | `src/audio/worklets/` | audio-engineer | AudioWorkletProcessors (saturator, etc). |
 | `src/music/` | music-brain | Generative engine: clock, harmony, sequencer, generator. |
 | `src/hands/` | hand-tracker | MediaPipe wrapper, gesture derivations, One-Euro filter. |
-| `src/interaction/` | interaction-mapper | Gesture → audio param + music input mapping. |
+| `src/face/` | hand-tracker | MediaPipe FaceLandmarker wrapper, head-pose + expression derivations, One-Euro smoothing (re-uses `src/hands/one-euro-filter`). |
+| `src/interaction/` | interaction-mapper | Gesture + face → audio param + music input mapping. |
 | `src/visual/` | visualizer | p5 instance-mode FFT visualization. |
 | `src/ui/` | ux-curator | Onboarding flow, VibeSelector chip strip, autopilot fallback. |
 | `src/presets/` | architect (data) | Vibe preset objects; consumed read-only. |
@@ -189,7 +190,91 @@ The order is contractual. Voices connect only to `MasterChain.input`; nothing el
 
 ---
 
-## 13. Agent ownership matrix
+## 13. Head tracking
+
+A second input modality runs alongside the hands: the user's head. This
+provides a low-effort continuous controller (depth, pose, expression) that
+modulates the audio while the hands continue to drive the primary gestures.
+
+**Module:** `src/face/`
+
+- `FaceTracker.ts` — MediaPipe `FaceLandmarker` wrapper. Same shape as
+  `HandTracker`: `init(videoEl)` lazy-loads model + WASM via the
+  jsdelivr CDN, `start()` drives a per-frame loop via
+  `requestVideoFrameCallback` (rAF fallback), emits
+  `face:update | face:lost | face:back | error`.
+- `face-gestures.ts` — pure helpers: `extractEulerFromMatrix`,
+  `apparentFaceWidth`, `mouthOpenFromLandmarks`, `browRaiseFromLandmarks`,
+  `faceCenter`, `faceHeight`. Synthetic-fixture testable.
+
+**Pipeline.**
+
+```
+<video> ──► FaceLandmarker.detectForVideo
+            │
+            ├─ faceLandmarks[0]            (478 NormalizedLandmarks)
+            ├─ faceBlendshapes[0]          (categories: 'jawOpen', 'browInnerUp', …)
+            └─ facialTransformationMatrixes[0]  (4x4, row-major)
+                       │
+                       ▼
+            extractEulerFromMatrix → {yaw, pitch, roll, depth}
+            apparentFaceWidth      → 0..1 closeness via tragus distance
+            (blendshape | geometric fallback) → mouthOpen, browRaise
+                       │
+                       ▼
+            One-Euro smoothing  (mincutoff/beta tuned per channel)
+                       │
+                       ▼
+            FaceState (selfie-mirrored: x-flip, yaw and roll negated)
+                       │
+                       ▼
+            InteractionMapper   (additive modulator on top of hand stream)
+```
+
+**Coord space.** Selfie-mirrored, matching hands. The FaceLandmarker sees the
+un-mirrored pixel stream; we flip `x → 1 − x` and negate `yaw` and `roll` at
+emit time. `pitch` sign is preserved.
+
+**Latency budget.** FaceLandmarker is heavier than HandLandmarker; budget
+< 12 ms per inference. Both trackers run from the same `<video>` element and,
+in v1, run on every frame each. If profiling shows main-thread contention,
+the architect's call is to alternate frames (face on even frames, hands on
+odd) — a cheap follow-up that does not change the contract.
+
+**Lifecycle.** Parallel to HandTracker. The boot path:
+
+1. `await hands.init(videoEl)` — owns `getUserMedia`, attaches the stream to
+   the `<video>`.
+2. `await face.init(videoEl)` — does NOT call `getUserMedia`; reuses the
+   running stream. If init fails the app stays hand-only — `mapper.attach`
+   simply omits the `face` dep and all face contributions become 0.
+3. `mapper.attach({ audio, music, hands, face? })` then `mapper.start()`.
+4. `face.start()` begins the per-frame loop.
+
+**Contract surface.** See `src/types/contracts.ts` — `FaceLandmark`,
+`HeadPose`, `FaceState`, `FaceTrackerEvents`, `FaceTracker`. Also
+`InteractionMapper.attach({..., face?: FaceTracker })`.
+
+**Mappings (see InteractionMapper).** Face is an *additive modulator*; all
+contributions are zero when no FaceTracker is attached.
+
+| Source | Target | Range |
+|---|---|---|
+| `face.apparentSize` (depth proxy, 0=far, 1=close) | `reverbWet` | blends 0.65 → 0.15 (closer = drier) |
+| `face.pose.roll` (head tilt, ±~0.6 rad) | `brightness` shift | ±0.15 around hand value |
+| `face.pose.yaw` (head turn, ±~0.6 rad) | `filterResonance` shift | ±5 around hand Q |
+| `face.pose.pitch` (head up/down) | `MusicBrainInput.intensity` | `+0.15 * sin(pitch)` |
+| `mouthOpen` rising edge through 0.6 | chord-aware lead stab | hysteresis at 0.4, 200 ms debounce |
+| `face.noFaceDuration > 1.5 s` | `masterDuck` additive | +0.15 |
+
+**Bundle.** Model is ~5 MB and is loaded lazily from
+`storage.googleapis.com/mediapipe-models/face_landmarker/...` exactly like
+the hand model. The MediaPipe runtime ships in the existing `mediapipe`
+manual chunk — no new top-level deps.
+
+---
+
+## 14. Agent ownership matrix
 
 Each row lists files an agent may write. Anything not listed is read-only for that agent.
 
@@ -198,7 +283,7 @@ Each row lists files an agent may write. Anything not listed is read-only for th
 | architect | `ARCHITECTURE.md`, `README.md`, `package.json`, `vite.config.ts`, `tsconfig.json`, `.eslintrc.cjs`, `.prettierrc`, `.gitignore`, `index.html`, `src/types/contracts.ts`, `src/presets/vibes.ts`, `src/main.ts` (initial stub), `.claude/agents/*.md`. |
 | audio-engineer | `src/audio/**`. May ask architect for a new param in contracts; never edits contracts directly. |
 | music-brain | `src/music/**`. |
-| hand-tracker | `src/hands/**`. May add `public/models/*` for MediaPipe assets if checked-in is preferred. |
+| hand-tracker | `src/hands/**`, `src/face/**`. May add `public/models/*` for MediaPipe assets if checked-in is preferred. |
 | interaction-mapper | `src/interaction/**`. |
 | visualizer | `src/visual/**`. |
 | ux-curator | `src/ui/**`, `src/main.ts` (final wiring), updates to `index.html` for layout. |

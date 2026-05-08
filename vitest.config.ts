@@ -11,6 +11,7 @@ export default defineConfig({
       '@audio': resolve(__dirname, 'src/audio'),
       '@music': resolve(__dirname, 'src/music'),
       '@hands': resolve(__dirname, 'src/hands'),
+      '@face': resolve(__dirname, 'src/face'),
       '@interaction': resolve(__dirname, 'src/interaction'),
       '@visual': resolve(__dirname, 'src/visual'),
       '@ui': resolve(__dirname, 'src/ui'),

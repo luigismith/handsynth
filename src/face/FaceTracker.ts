@@ -1,0 +1,475 @@
+// Owner: hand-tracker (sibling module under src/face/)
+//
+// MediaPipe Tasks Vision FaceLandmarker wrapper. Runs face-landmark inference
+// per video frame, maintains One-Euro smoothing state, derives `FaceState`,
+// and emits events. Mirrors the structure of HandTracker — same threading
+// model (rVFC + rAF fallback), same emitter pattern, same lifecycle. Shares
+// the `<video>` element with HandTracker; we do not call getUserMedia here.
+
+import {
+  FaceLandmarker,
+  FilesetResolver,
+  type FaceLandmarkerResult,
+} from '@mediapipe/tasks-vision';
+import type {
+  FaceLandmark,
+  FaceState,
+  FaceTracker,
+  FaceTrackerEvents,
+  HeadPose,
+} from '@contracts/contracts';
+import { OneEuroFilter } from '@hands/one-euro-filter';
+import {
+  apparentFaceWidth,
+  apparentSizeToCloseness,
+  browRaiseFromLandmarks,
+  extractEulerFromMatrix,
+  faceCenter,
+  mouthOpenFromLandmarks,
+} from './face-gestures';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MEDIAPIPE_WASM_BASE =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
+const FACE_LANDMARKER_MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+
+const NUM_FACE_LANDMARKS = 478;
+
+/** Edge transition for face-lost. */
+const FACE_LOST_EDGE_SECONDS = 1.5;
+
+/** Defensive update throttle (Hz). */
+const MAX_UPDATE_HZ = 60;
+const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
+
+/** Filter resets after this re-entry gap. */
+const FACE_GAP_RESET_MS = 700;
+
+// ---------------------------------------------------------------------------
+// Tiny typed event emitter (mirrors HandTrackerEmitter shape).
+// ---------------------------------------------------------------------------
+
+type Listener<K extends keyof FaceTrackerEvents> = FaceTrackerEvents[K];
+
+class FaceTrackerEmitter {
+  private listeners = new Map<keyof FaceTrackerEvents, Set<unknown>>();
+
+  on<K extends keyof FaceTrackerEvents>(evt: K, cb: Listener<K>): void {
+    let set = this.listeners.get(evt);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(evt, set);
+    }
+    set.add(cb);
+  }
+
+  off<K extends keyof FaceTrackerEvents>(evt: K, cb: Listener<K>): void {
+    this.listeners.get(evt)?.delete(cb);
+  }
+
+  emit<K extends keyof FaceTrackerEvents>(
+    evt: K,
+    ...args: Parameters<Listener<K>>
+  ): void {
+    const set = this.listeners.get(evt);
+    if (!set) return;
+    for (const cb of set) {
+      try {
+        (cb as (...a: unknown[]) => void)(...args);
+      } catch (err) {
+        if (evt !== 'error') {
+          // eslint-disable-next-line no-console
+          console.warn('[FaceTracker] listener threw:', err);
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Filter slot — one set of One-Euro filters, kept as long as the face is
+// continuously detected. Reset on a long gap (FACE_GAP_RESET_MS).
+// ---------------------------------------------------------------------------
+
+interface FaceFilterSlot {
+  centerX: OneEuroFilter;
+  centerY: OneEuroFilter;
+  apparentSize: OneEuroFilter;
+  yaw: OneEuroFilter;
+  pitch: OneEuroFilter;
+  roll: OneEuroFilter;
+  mouthOpen: OneEuroFilter;
+  browRaise: OneEuroFilter;
+  lastSeenMs: number;
+}
+
+function makeFaceFilterSlot(): FaceFilterSlot {
+  // mincutoff=2.0, beta=0.02 for the centroid; mincutoff=1.5, beta=0.01 for
+  // pose & expression scalars (per spec).
+  const centroid = (): OneEuroFilter =>
+    new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 });
+  const pose = (): OneEuroFilter =>
+    new OneEuroFilter({ mincutoff: 1.5, beta: 0.01 });
+  return {
+    centerX: centroid(),
+    centerY: centroid(),
+    apparentSize: pose(),
+    yaw: pose(),
+    pitch: pose(),
+    roll: pose(),
+    mouthOpen: pose(),
+    browRaise: pose(),
+    lastSeenMs: 0,
+  };
+}
+
+function resetSlot(slot: FaceFilterSlot): void {
+  slot.centerX.reset();
+  slot.centerY.reset();
+  slot.apparentSize.reset();
+  slot.yaw.reset();
+  slot.pitch.reset();
+  slot.roll.reset();
+  slot.mouthOpen.reset();
+  slot.browRaise.reset();
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function clamp01(v: number): number {
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
+}
+
+/** Pull the named blendshape score from a Classifications result, or null. */
+function blendshapeScore(
+  result: FaceLandmarkerResult,
+  name: string,
+): number | null {
+  const cls = result.faceBlendshapes?.[0];
+  if (!cls) return null;
+  for (const cat of cls.categories) {
+    if (cat.categoryName === name) return cat.score;
+  }
+  return null;
+}
+
+type VideoElementWithRVFC = HTMLVideoElement;
+
+// ---------------------------------------------------------------------------
+// FaceTrackerImpl
+// ---------------------------------------------------------------------------
+
+export class FaceTrackerImpl implements FaceTracker {
+  private emitter = new FaceTrackerEmitter();
+  private landmarker: FaceLandmarker | null = null;
+  private videoEl: VideoElementWithRVFC | null = null;
+
+  private running = false;
+  private rvfcHandle: number | null = null;
+  private rafHandle: number | null = null;
+
+  private slot: FaceFilterSlot = makeFaceFilterSlot();
+
+  private lastFrameMs: number | null = null;
+  private lastEmitMs = 0;
+
+  private noFaceAccumSec = 0;
+  private faceLostEmitted = false;
+
+  private lastDetection: FaceLandmarkerResult | null = null;
+
+  // -------------------------------------------------------------------------
+  // FaceTracker interface
+  // -------------------------------------------------------------------------
+
+  async init(videoEl: HTMLVideoElement): Promise<void> {
+    this.videoEl = videoEl as VideoElementWithRVFC;
+
+    let vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
+    try {
+      vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_BASE);
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      this.emitter.emit('error', e);
+      throw e;
+    }
+
+    try {
+      this.landmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: FACE_LANDMARKER_MODEL_URL,
+          delegate: 'GPU',
+        },
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: true,
+        runningMode: 'VIDEO',
+        numFaces: 1,
+      });
+    } catch (err) {
+      const e =
+        err instanceof Error
+          ? err
+          : new Error('FaceLandmarker creation failed');
+      this.emitter.emit('error', e);
+      throw e;
+    }
+    // We deliberately do NOT call getUserMedia here — the HandTracker owns the
+    // webcam stream and the same <video> element is reused. Caller is
+    // responsible for ensuring the video has a stream before start().
+  }
+
+  start(): void {
+    if (this.running) return;
+    if (!this.videoEl || !this.landmarker) {
+      const e = new Error('FaceTracker.start() called before init()');
+      this.emitter.emit('error', e);
+      return;
+    }
+    this.running = true;
+    this.scheduleNextFrame();
+  }
+
+  stop(): void {
+    this.running = false;
+    if (
+      this.rvfcHandle !== null &&
+      this.videoEl &&
+      typeof this.videoEl.cancelVideoFrameCallback === 'function'
+    ) {
+      this.videoEl.cancelVideoFrameCallback(this.rvfcHandle);
+    }
+    this.rvfcHandle = null;
+    if (this.rafHandle !== null) {
+      cancelAnimationFrame(this.rafHandle);
+    }
+    this.rafHandle = null;
+
+    this.lastFrameMs = null;
+    this.noFaceAccumSec = 0;
+    this.faceLostEmitted = false;
+    resetSlot(this.slot);
+  }
+
+  on<K extends keyof FaceTrackerEvents>(
+    evt: K,
+    cb: FaceTrackerEvents[K],
+  ): void {
+    this.emitter.on(evt, cb);
+  }
+
+  off<K extends keyof FaceTrackerEvents>(
+    evt: K,
+    cb: FaceTrackerEvents[K],
+  ): void {
+    this.emitter.off(evt, cb);
+  }
+
+  // -------------------------------------------------------------------------
+  // Public extras
+  // -------------------------------------------------------------------------
+
+  /** Last raw FaceLandmarker result, for visualizer overlay. May be null. */
+  getLastDetectionResult(): FaceLandmarkerResult | null {
+    return this.lastDetection;
+  }
+
+  // -------------------------------------------------------------------------
+  // Frame loop
+  // -------------------------------------------------------------------------
+
+  private scheduleNextFrame(): void {
+    if (!this.running || !this.videoEl) return;
+    const v = this.videoEl;
+    if (typeof v.requestVideoFrameCallback === 'function') {
+      this.rvfcHandle = v.requestVideoFrameCallback((now) => this.tick(now));
+    } else {
+      this.rafHandle = requestAnimationFrame((now) => this.tick(now));
+    }
+  }
+
+  private tick(nowMs: number): void {
+    if (!this.running) return;
+    try {
+      this.runFrame(nowMs);
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      this.emitter.emit('error', e);
+    } finally {
+      if (this.running) this.scheduleNextFrame();
+    }
+  }
+
+  private runFrame(nowMs: number): void {
+    const v = this.videoEl;
+    const lm = this.landmarker;
+    if (!v || !lm) return;
+    if (v.readyState < 2 || v.paused || v.ended) return;
+    if (nowMs - this.lastEmitMs < MIN_UPDATE_INTERVAL_MS) return;
+
+    let result: FaceLandmarkerResult;
+    try {
+      result = lm.detectForVideo(v, nowMs);
+    } catch (err) {
+      const e =
+        err instanceof Error ? err : new Error('FaceLandmarker.detectForVideo failed');
+      this.emitter.emit('error', e);
+      return;
+    }
+    this.lastDetection = result;
+
+    const dt = this.lastFrameMs === null ? 0 : (nowMs - this.lastFrameMs) / 1000;
+    this.lastFrameMs = nowMs;
+    const tSec = nowMs / 1000;
+
+    const state = this.deriveState(result, tSec, nowMs, dt);
+    this.emitter.emit('face:update', state);
+
+    // Edge: face-lost / face-back.
+    if (
+      !state.detected &&
+      state.noFaceDuration >= FACE_LOST_EDGE_SECONDS &&
+      !this.faceLostEmitted
+    ) {
+      this.faceLostEmitted = true;
+      this.emitter.emit('face:lost');
+    } else if (state.detected && this.faceLostEmitted) {
+      this.faceLostEmitted = false;
+      this.emitter.emit('face:back');
+    }
+
+    this.lastEmitMs = nowMs;
+  }
+
+  // -------------------------------------------------------------------------
+  // Derivation: result -> FaceState
+  // -------------------------------------------------------------------------
+
+  /**
+   * Build the smoothed FaceState. Public on the class so tests can drive it
+   * directly with a synthetic FaceLandmarkerResult without spinning up the
+   * MediaPipe runtime.
+   */
+  deriveStateFromResult(
+    result: FaceLandmarkerResult,
+    nowMs: number,
+    dt: number,
+  ): FaceState {
+    return this.deriveState(result, nowMs / 1000, nowMs, dt);
+  }
+
+  private deriveState(
+    result: FaceLandmarkerResult,
+    tSec: number,
+    nowMs: number,
+    dt: number,
+  ): FaceState {
+    const rawLandmarks = result.faceLandmarks?.[0] ?? null;
+    const detected = !!rawLandmarks && rawLandmarks.length >= NUM_FACE_LANDMARKS;
+
+    if (!detected) {
+      // Accumulate no-face duration; emit a "not detected" state.
+      this.noFaceAccumSec += dt > 0 ? dt : 0;
+      const empty: HeadPose = { yaw: 0, pitch: 0, roll: 0, depth: 0 };
+      return {
+        detected: false,
+        center: { x: 0.5, y: 0.5 },
+        apparentSize: 0,
+        pose: empty,
+        mouthOpen: 0,
+        browRaise: 0,
+        noFaceDuration: this.noFaceAccumSec,
+      };
+    }
+
+    // Long gap → reset filter state so we don't blend two distinct sessions.
+    if (
+      this.slot.lastSeenMs > 0 &&
+      nowMs - this.slot.lastSeenMs > FACE_GAP_RESET_MS
+    ) {
+      resetSlot(this.slot);
+    }
+    this.slot.lastSeenMs = nowMs;
+    this.noFaceAccumSec = 0;
+
+    // Convert NormalizedLandmark[] -> FaceLandmark[] (strip visibility/presence)
+    // for downstream helpers. Allocate fresh; 478 small objects per frame is
+    // affordable and keeps the data flow simple. We could share a buffer in a
+    // future optimisation pass.
+    const lms: FaceLandmark[] = new Array(rawLandmarks!.length);
+    for (let i = 0; i < rawLandmarks!.length; i += 1) {
+      const p = rawLandmarks![i]!;
+      lms[i] = { x: p.x, y: p.y, z: p.z };
+    }
+
+    // Pose from facialTransformationMatrix (if available).
+    const matrix = result.facialTransformationMatrixes?.[0];
+    let yaw = 0;
+    let pitch = 0;
+    let roll = 0;
+    let depth = 0;
+    if (matrix && matrix.data) {
+      const e = extractEulerFromMatrix(matrix.data);
+      yaw = e.yaw;
+      pitch = e.pitch;
+      roll = e.roll;
+      depth = e.depth;
+    }
+
+    // Face center (un-mirrored), then mirror x.
+    const rawCenter = faceCenter(lms);
+    const mirroredCenterX = 1 - rawCenter.x;
+
+    // Apparent size (depth proxy).
+    const rawWidth = apparentFaceWidth(lms);
+    const closeness = apparentSizeToCloseness(rawWidth);
+
+    // Mouth open: prefer blendshape, else geometric fallback.
+    let mouthOpenRaw: number;
+    const blendJaw = blendshapeScore(result, 'jawOpen');
+    if (blendJaw !== null) {
+      mouthOpenRaw = clamp01(blendJaw);
+    } else {
+      mouthOpenRaw = mouthOpenFromLandmarks(lms);
+    }
+
+    // Brow raise: prefer blendshape, else geometric fallback.
+    let browRaiseRaw: number;
+    const blendBrow = blendshapeScore(result, 'browInnerUp');
+    if (blendBrow !== null) {
+      browRaiseRaw = clamp01(blendBrow);
+    } else {
+      browRaiseRaw = browRaiseFromLandmarks(lms);
+    }
+
+    // Apply One-Euro filtering. Negate yaw/roll for selfie-mirrored
+    // coordinates (pitch sign stays).
+    const cx = clamp01(this.slot.centerX.filter(mirroredCenterX, tSec));
+    const cy = clamp01(this.slot.centerY.filter(rawCenter.y, tSec));
+    const sz = clamp01(this.slot.apparentSize.filter(closeness, tSec));
+    const yawF = this.slot.yaw.filter(-yaw, tSec);
+    const pitchF = this.slot.pitch.filter(pitch, tSec);
+    const rollF = this.slot.roll.filter(-roll, tSec);
+    const mo = clamp01(this.slot.mouthOpen.filter(mouthOpenRaw, tSec));
+    const br = clamp01(this.slot.browRaise.filter(browRaiseRaw, tSec));
+
+    const state: FaceState = {
+      detected: true,
+      center: { x: cx, y: cy },
+      apparentSize: sz,
+      pose: { yaw: yawF, pitch: pitchF, roll: rollF, depth },
+      mouthOpen: mo,
+      browRaise: br,
+      noFaceDuration: 0,
+      landmarks: lms,
+    };
+    return state;
+  }
+}
