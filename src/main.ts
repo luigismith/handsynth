@@ -41,6 +41,13 @@ function $(id: string): HTMLElement {
   return el;
 }
 
+function isTypingTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
+}
+
 async function bootstrap(): Promise<void> {
   injectStyles();
 
@@ -159,6 +166,28 @@ async function bootstrap(): Promise<void> {
       mood: mapper.getCurrentMood(),
       bpm: Tone.getTransport().bpm.value,
     }),
+  });
+
+  // Mirror toggle: 'm' key flips the selfie mirror on the <video> + the
+  // HandTracker data flip + the FaceTracker mirror. Use this if the visible
+  // webcam image and the skeleton/face overlay show on opposite sides
+  // (typical when the user's webcam is already native-mirrored at the OS or
+  // virtual-cam level).
+  let mirrorOn = true;
+  const applyMirror = (on: boolean): void => {
+    mirrorOn = on;
+    video.style.transform = on ? 'scaleX(-1)' : 'none';
+    // HandTracker exposes setMirror; FaceTracker may too (if not, no-op).
+    interface MirrorAware { setMirror?: (on: boolean) => void }
+    (hands as unknown as MirrorAware).setMirror?.(on);
+    (face as unknown as MirrorAware).setMirror?.(on);
+    console.info('[mirror] selfie mirror =', on);
+  };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'm' && !isTypingTarget(e.target)) {
+      applyMirror(!mirrorOn);
+      e.preventDefault();
+    }
   });
 
   // Periodic context-resume tick. Some browsers (especially Safari) silently

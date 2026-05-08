@@ -173,6 +173,22 @@ export class HandTrackerImpl implements HandTracker {
   // Last raw detection result, exposed for the visualizer.
   private lastDetection: HandLandmarkerResult | null = null;
 
+  // Runtime mirror toggle. The default (true) is correct for the typical
+  // setup: a Windows/Chrome built-in webcam that returns un-mirrored pixels,
+  // a CSS-flipped <video> for the user (selfie-style), and a HandTracker
+  // that flips landmark x on output so the skeleton overlays the visible
+  // hand. If the user's webcam is ALREADY native-mirrored (some phones,
+  // some OBS-virtual-cam setups, some Mac setups) the data flip would
+  // double-mirror — flip this to false in that case.
+  private mirrorEnabled = true;
+
+  setMirror(enabled: boolean): void {
+    this.mirrorEnabled = enabled;
+  }
+  isMirrored(): boolean {
+    return this.mirrorEnabled;
+  }
+
   // ---- HandTracker interface --------------------------------------------
 
   async init(videoEl: HTMLVideoElement): Promise<void> {
@@ -414,11 +430,15 @@ export class HandTrackerImpl implements HandTracker {
       const raw = rawLandmarks[i];
       if (!raw || raw.length < NUM_LANDMARKS) continue;
 
-      // MediaPipe handedness is from the camera POV. We mirror to the
-      // user's POV: "Left" (camera) → user's right hand and vice versa.
+      // MediaPipe handedness assumes a SELFIE-mirrored input. With un-
+      // mirrored input (mirrorEnabled=true case), the labels arrive
+      // reversed and we swap them to user's POV: 'Left' → user's right.
+      // With pre-mirrored input (mirrorEnabled=false), MediaPipe's labels
+      // are already correct and we pass them through unchanged.
       const cat = handedness[i]?.[0]?.categoryName ?? 'Right';
-      const side: 'left' | 'right' =
-        cat === 'Left' ? 'right' : 'left';
+      const side: 'left' | 'right' = this.mirrorEnabled
+        ? (cat === 'Left' ? 'right' : 'left')
+        : (cat === 'Left' ? 'left' : 'right');
 
       // If two detections claim the same side, keep the first.
       if (seen.has(side)) continue;
@@ -426,12 +446,12 @@ export class HandTrackerImpl implements HandTracker {
 
       const slot = this.getOrCreateSlot(side, nowMs);
 
-      // Smooth landmarks per axis. Also x-mirror in place so all consumer
-      // coordinates (visualizer skeleton, gesture distance, palmCenter) live
-      // in the same "selfie-mirrored" frame as the visible <video> (which is
-      // CSS-flipped). MediaPipe sees the un-mirrored pixel stream; we only
-      // mirror the *output*. The handedness swap above is still correct
-      // for un-mirrored MediaPipe input.
+      // Smooth landmarks per axis. Apply selfie x-mirror on output so all
+      // consumer coordinates (visualizer skeleton, gesture distance,
+      // palmCenter) live in the same frame as the CSS-flipped <video>.
+      // The mirror is runtime-toggleable for users whose webcams are
+      // already mirrored at the OS / virtual-cam level.
+      const mirror = this.mirrorEnabled;
       const smoothed: HandLandmark[] = new Array(NUM_LANDMARKS);
       for (let k = 0; k < NUM_LANDMARKS; k += 1) {
         const p = raw[k];
@@ -444,7 +464,11 @@ export class HandTrackerImpl implements HandTracker {
           { x: p.x, y: p.y, z: p.z },
           tSec,
         );
-        smoothed[k] = { x: 1 - filtered.x, y: filtered.y, z: filtered.z };
+        smoothed[k] = {
+          x: mirror ? 1 - filtered.x : filtered.x,
+          y: filtered.y,
+          z: filtered.z,
+        };
       }
 
       // Provisional Hand for derivation calls.

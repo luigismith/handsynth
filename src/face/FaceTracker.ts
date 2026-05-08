@@ -42,8 +42,16 @@ const NUM_FACE_LANDMARKS = 478;
 /** Edge transition for face-lost. */
 const FACE_LOST_EDGE_SECONDS = 1.5;
 
-/** Defensive update throttle (Hz). */
-const MAX_UPDATE_HZ = 60;
+/**
+ * Defensive update throttle (Hz). Face inference is expensive (~10–15ms per
+ * call on a CPU/GPU mid-tier laptop) and runs on the main thread alongside
+ * HandLandmarker. Two MediaPipe inferences at 60Hz starve the audio
+ * scheduler and produce stutter. Face changes slowly relative to hands, so
+ * 20Hz is musically and perceptually plenty (one update per 50ms) while
+ * leaving the main thread headroom for the audio worker, the visualizer,
+ * and the hand inference at full rate.
+ */
+const MAX_UPDATE_HZ = 20;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 /** Filter resets after this re-entry gap. */
@@ -185,6 +193,12 @@ export class FaceTrackerImpl implements FaceTracker {
   private faceLostEmitted = false;
 
   private lastDetection: FaceLandmarkerResult | null = null;
+
+  // Runtime selfie-mirror toggle (matches HandTracker.mirrorEnabled).
+  private mirrorEnabled = true;
+  setMirror(enabled: boolean): void {
+    this.mirrorEnabled = enabled;
+  }
 
   // -------------------------------------------------------------------------
   // FaceTracker interface
@@ -423,9 +437,9 @@ export class FaceTrackerImpl implements FaceTracker {
       depth = e.depth;
     }
 
-    // Face center (un-mirrored), then mirror x.
+    // Face center; apply selfie x-mirror only when the toggle is on.
     const rawCenter = faceCenter(lms);
-    const mirroredCenterX = 1 - rawCenter.x;
+    const mirroredCenterX = this.mirrorEnabled ? 1 - rawCenter.x : rawCenter.x;
 
     // Apparent size (depth proxy).
     const rawWidth = apparentFaceWidth(lms);
@@ -454,9 +468,12 @@ export class FaceTrackerImpl implements FaceTracker {
     const cx = clamp01(this.slot.centerX.filter(mirroredCenterX, tSec));
     const cy = clamp01(this.slot.centerY.filter(rawCenter.y, tSec));
     const sz = clamp01(this.slot.apparentSize.filter(closeness, tSec));
-    const yawF = this.slot.yaw.filter(-yaw, tSec);
+    // Selfie mirror negates yaw and roll (pitch is invariant).
+    const yawSign = this.mirrorEnabled ? -1 : 1;
+    const rollSign = this.mirrorEnabled ? -1 : 1;
+    const yawF = this.slot.yaw.filter(yawSign * yaw, tSec);
     const pitchF = this.slot.pitch.filter(pitch, tSec);
-    const rollF = this.slot.roll.filter(-roll, tSec);
+    const rollF = this.slot.roll.filter(rollSign * roll, tSec);
     const mo = clamp01(this.slot.mouthOpen.filter(mouthOpenRaw, tSec));
     const br = clamp01(this.slot.browRaise.filter(browRaiseRaw, tSec));
 
