@@ -30,7 +30,6 @@ import type { VibeId } from '@contracts/contracts';
 import { OnboardingImpl } from '@ui/Onboarding';
 import { VibeSelectorImpl } from '@ui/VibeSelector';
 import { ErrorOverlayImpl } from '@ui/ErrorOverlay';
-import { DebugPanelImpl } from '@ui/DebugPanel';
 import { SettingsPanelImpl } from '@ui/SettingsPanel';
 import { TerminalImpl } from '@ui/Terminal';
 import { injectStyles } from '@ui/styles';
@@ -121,22 +120,12 @@ async function bootstrap(): Promise<void> {
   });
   vibeHost.removeAttribute('hidden');
 
-  // Phase 3.5: debug / mouse-control panel. Toggleable with `?`.
+  // Phase 3.5: SettingsPanel is the single control surface. The previous
+  // DebugPanel ('controls' pill) was a duplicate of the same parameters
+  // and confused users — removed. SettingsPanel ("PATCH", gear icon)
+  // exposes everything it had plus the patch save/load system.
   const uiLayer = $('ui-layer');
-  const debugPanel = new DebugPanelImpl();
-  debugPanel.mount(uiLayer, {
-    audio,
-    music,
-    getMapperState: () => ({
-      intensity: mapper.getCurrentIntensity(),
-      mood: mapper.getCurrentMood(),
-    }),
-    setManualIntensity: (v) => mapper.setManualIntensity(v),
-    setVibe: (id) => {
-      mapper.setVibe(VIBES[id]);
-      vibeSelector.setActive(id);
-    },
-  });
+  void uiLayer;
 
   // Phase 3.6: analog-synth-style Settings (patches) panel + Terminal HUD.
   const settingsHost = $('settings-host');
@@ -232,11 +221,6 @@ async function bootstrap(): Promise<void> {
     }
     try {
       visual.unmount();
-    } catch {
-      /* noop */
-    }
-    try {
-      debugPanel.unmount();
     } catch {
       /* noop */
     }
