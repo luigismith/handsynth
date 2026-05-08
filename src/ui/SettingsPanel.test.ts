@@ -16,7 +16,10 @@ import {
 import { FACTORY_PRESETS } from '@presets/factory-presets';
 import type { AudioEngine, MusicBrain, AudioEngineParams, VibeId } from '@contracts/contracts';
 
-function stubAudio(): AudioEngine & { lastSet: Partial<AudioEngineParams> } {
+function stubAudio(): AudioEngine & {
+  lastSet: Partial<AudioEngineParams>;
+  applyVoiceShape: ReturnType<typeof vi.fn>;
+} {
   const lastSet: Partial<AudioEngineParams> = {};
   return {
     lastSet,
@@ -36,7 +39,14 @@ function stubAudio(): AudioEngine & { lastSet: Partial<AudioEngineParams> } {
     triggerDrop: vi.fn(),
     getAnalyser: vi.fn(() => ({} as unknown as AnalyserNode)),
     isReady: () => true,
-  } as AudioEngine & { lastSet: Partial<AudioEngineParams> };
+    // Not part of the contract interface (impl-only), but SettingsPanel
+    // calls it post-setParams. We expose a vi.fn so the wiring test can
+    // assert it was invoked with the preset's voice.
+    applyVoiceShape: vi.fn(),
+  } as AudioEngine & {
+    lastSet: Partial<AudioEngineParams>;
+    applyVoiceShape: ReturnType<typeof vi.fn>;
+  };
 }
 
 function stubMusic(): MusicBrain {
@@ -355,6 +365,31 @@ describe('SettingsPanelImpl', () => {
     ) as HTMLButtonElement;
     chip.click();
     expect(bpmDial?.getAttribute('aria-valuenow')).toBe(before);
+    panel.unmount();
+  });
+
+  it('clicking a preset with a voice-shape calls audio.applyVoiceShape with it', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const lush = FACTORY_PRESETS.find((p) => p.id === 'lush')!;
+    const chip = parent.querySelector(
+      `.hs-preset-chip[data-preset-id="lush"]`,
+    ) as HTMLButtonElement;
+    chip.click();
+    expect(deps.audio.applyVoiceShape).toHaveBeenCalledWith(lush.voice);
+    panel.unmount();
+  });
+
+  it('clicking the INIT preset (no voice) does NOT call applyVoiceShape', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const chip = parent.querySelector(
+      `.hs-preset-chip[data-preset-id="init"]`,
+    ) as HTMLButtonElement;
+    chip.click();
+    expect(deps.audio.applyVoiceShape).not.toHaveBeenCalled();
     panel.unmount();
   });
 

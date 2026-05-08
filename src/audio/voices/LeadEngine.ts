@@ -22,6 +22,7 @@
 
 import * as Tone from 'tone';
 import type { NoteEvent, VibePreset } from '@contracts/contracts';
+import type { VoiceShape } from '../voice-shape';
 
 const PORTAMENTO = 0.05;
 const VIBRATO_HZ = 5.5;
@@ -182,6 +183,39 @@ export class LeadEngine {
     this.baseModIndex = value;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.mono.set({ oscillator: { modulationIndex: value } as any });
+  }
+
+  /**
+   * Apply a factory-preset overlay on top of whatever the current vibe set.
+   * Only the fields explicitly set on `shape` are applied. modIndex /
+   * harmonicity flow through OmniOscillator's set() for FM/AM types and are
+   * silently ignored on plain types — no need to gate by oscType here.
+   */
+  applyVoiceShape(shape: VoiceShape['lead'] | undefined): void {
+    if (!shape) return;
+    if (shape.oscType) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.mono.set({ oscillator: { type: shape.oscType as any } });
+    }
+    if (typeof shape.modIndex === 'number') {
+      const m = Math.max(0, Math.min(20, shape.modIndex));
+      this.baseModIndex = m;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.mono.set({ oscillator: { modulationIndex: m } as any });
+    }
+    if (typeof shape.harmonicity === 'number') {
+      const h = Math.max(0.25, Math.min(8, shape.harmonicity));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.mono.set({ oscillator: { harmonicity: h } as any });
+    }
+    if (typeof shape.attack === 'number') {
+      const a = Math.max(0.001, Math.min(4, shape.attack));
+      this.mono.set({ envelope: { attack: a } });
+    }
+    if (typeof shape.release === 'number') {
+      const r = Math.max(0.05, Math.min(6, shape.release));
+      this.mono.set({ envelope: { release: r } });
+    }
   }
 
   dispose(): void {

@@ -20,6 +20,7 @@
 
 import * as Tone from 'tone';
 import type { NoteEvent, VibePreset } from '@contracts/contracts';
+import type { VoiceShape } from '../voice-shape';
 
 const PORTAMENTO = 0.08;
 const HPF_FREQ = 30;
@@ -132,6 +133,28 @@ export class BassEngine {
       this.main.set({
         envelope: { attack: 0.005, decay: 0.2, sustain: 0.4, release: 0.3 },
       });
+    }
+  }
+
+  /**
+   * Apply a factory-preset overlay. `subLevel` is normalized 0..1 and maps
+   * non-linearly to dB (1 → 0 dB, ~0.5 → -12 dB, 0 → -Infinity / silent).
+   * Setting subLevel to 0 also disables the sub trigger so we don't waste
+   * voices on a muted layer.
+   */
+  applyVoiceShape(shape: VoiceShape['bass'] | undefined): void {
+    if (!shape) return;
+    if (shape.waveform) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.main.set({ oscillator: { type: shape.waveform as any } });
+    }
+    if (typeof shape.subLevel === 'number') {
+      const s = Math.max(0, Math.min(1, shape.subLevel));
+      this.subEnabled = s > 0;
+      // Non-linear curve: 0 -> -Infinity, 1 -> 0 dB. Approximate with
+      // 24*log10(s); guard the s=0 case explicitly.
+      const db = s > 0 ? 24 * Math.log10(s) : -Infinity;
+      this.sub.volume.rampTo(db, 0.1);
     }
   }
 

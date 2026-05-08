@@ -16,6 +16,7 @@
 
 import * as Tone from 'tone';
 import type { ChordEvent, VibePreset } from '@contracts/contracts';
+import type { VoiceShape } from '../voice-shape';
 
 const ATTACK = 2.5;
 const DECAY = 0.8;
@@ -122,6 +123,39 @@ export class PadEngine {
     const cents = Math.max(2, Math.min(24, vibe.pad.detuneCents)) / 2;
     this.layerA.set({ detune: +cents });
     this.layerB.set({ detune: -cents });
+  }
+
+  /**
+   * Apply a factory-preset overlay on top of whatever the current vibe set.
+   * Only the fields explicitly set on `shape` are applied — missing fields
+   * leave the existing engine state alone. Called by AudioEngine after
+   * `setParams` when a factory-preset chip is clicked.
+   *
+   * `detuneCents` is the TOTAL spread (both layers combined); the engine
+   * splits it ±half. Clamped to [2..40] to avoid pathological detune.
+   */
+  applyVoiceShape(shape: VoiceShape['pad'] | undefined): void {
+    if (!shape) return;
+    if (shape.waveform) {
+      const w = this.normalizeWaveform(shape.waveform);
+      setOscType(this.layerA, w);
+      setOscType(this.layerB, w);
+    }
+    if (typeof shape.detuneCents === 'number') {
+      const c = Math.max(2, Math.min(40, shape.detuneCents)) / 2;
+      this.layerA.set({ detune: +c });
+      this.layerB.set({ detune: -c });
+    }
+    if (typeof shape.attack === 'number') {
+      const a = Math.max(0.001, Math.min(6, shape.attack));
+      this.layerA.set({ envelope: { attack: a } });
+      this.layerB.set({ envelope: { attack: a } });
+    }
+    if (typeof shape.release === 'number') {
+      const r = Math.max(0.05, Math.min(10, shape.release));
+      this.layerA.set({ envelope: { release: r } });
+      this.layerB.set({ envelope: { release: r } });
+    }
   }
 
   /**

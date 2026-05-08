@@ -26,6 +26,7 @@ import { PadEngine } from './voices/PadEngine';
 import { LeadEngine } from './voices/LeadEngine';
 import { BassEngine } from './voices/BassEngine';
 import { PercEngine } from './voices/PercEngine';
+import type { VoiceShape } from './voice-shape';
 
 const DEFAULT_STAB_NOTE = 'C5';
 
@@ -206,6 +207,23 @@ export class AudioEngineImpl implements AudioEngine {
     if (typeof partial.masterDuck === 'number')
       mapped.duck = clamp(partial.masterDuck, 0, 1);
     this.master.setParams(mapped);
+  }
+
+  /**
+   * Fan a per-engine voice-shape overlay out to the three pitched voices.
+   * Called by SettingsPanel.applyFactoryPreset after `setParams` so a factory
+   * preset can carry its own *timbre* identity (oscillators + envelopes), not
+   * just an FX-chain identity. Missing fields leave the engine alone — i.e.
+   * preset INIT (no `voice` field) cleanly reverts to vibe defaults.
+   *
+   * Pre-init: no-op (voices not yet built; the next preset click after init
+   * will apply them).
+   */
+  applyVoiceShape(shape: VoiceShape | undefined): void {
+    if (!shape) return;
+    this.pad?.applyVoiceShape(shape.pad);
+    this.lead?.applyVoiceShape(shape.lead);
+    this.bass?.applyVoiceShape(shape.bass);
   }
 
   setMute(muted: boolean): void {

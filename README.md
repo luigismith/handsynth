@@ -33,7 +33,7 @@ A web app + Electron desktop app that turns your body into an expressive musical
 - **Smile / frown / surprise / anger** modulate brightness, cutoff, drive, and resonance — your face is the fourth controller
 - **Both fists** mutes; **both hands above head** is the "drop"
 
-The music brain stays inside the active scale — **it is impossible to play a wrong note** — and four built-in vibes (Tycho, Bonobo, Hopkins, Floating Points) set tonality, BPM, and timbre. Eight factory PATCH presets (LUSH, ACID, DUB, BRIGHT, DARK, TAPE, SPACE, INIT) let you flip whole-sound character with one click. Save your own patches to `localStorage`.
+The music brain stays inside the active scale — **it is impossible to play a wrong note** — and four built-in vibes (Tycho, Bonobo, Hopkins, Floating Points) set tonality, BPM, and timbre. Eight factory PATCH presets (LUSH, ACID, DUB, BRIGHT, DARK, TAPE, SPACE, INIT) flip whole-sound character with one click — each preset re-shapes the **oscillators and envelopes** of the pad/lead/bass voices on top of the FX chain, so they sound genuinely different (not just "same patch through different reverb"). Save your own patches to `localStorage`.
 
 ## Quick start (web)
 

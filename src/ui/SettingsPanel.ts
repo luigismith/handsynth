@@ -15,8 +15,21 @@ import type {
   MusicBrain,
   VibeId,
 } from '@contracts/contracts';
+import type { VoiceShape } from '@audio/voice-shape';
 import { VIBES } from '@presets/vibes';
 import { FACTORY_PRESETS, type FactoryPreset } from '@presets/factory-presets';
+
+/**
+ * The contract `AudioEngine` interface (in `@contracts/contracts`) is owned
+ * by another agent and we deliberately don't extend it here. The concrete
+ * `AudioEngineImpl` exposes `applyVoiceShape` for factory-preset timbre
+ * overlays; we widen the dep type via this intersection so SettingsPanel can
+ * call it without depending on the impl class. If `applyVoiceShape` happens
+ * not to exist (older mock, partial test stub), the call site guards.
+ */
+type AudioEngineWithVoiceShape = AudioEngine & {
+  applyVoiceShape?: (shape: VoiceShape | undefined) => void;
+};
 import { injectStyles } from './styles';
 import { Knob, type KnobOpts } from './Knob';
 import {
@@ -371,6 +384,15 @@ export class SettingsPanelImpl {
     // Push timbral params first so the engine smooths them.
     if (Object.keys(audioParams).length > 0) {
       this.deps.audio.setParams(audioParams as Partial<AudioEngineParams>);
+    }
+
+    // Apply the voice-shape overlay (oscillator + envelope per engine).
+    // Without this the FX chain changes but every preset keeps the vibe's
+    // baseline oscillator — which is exactly the "i preset sembrano tutti
+    // uguali" complaint that motivated this feature.
+    if (preset.voice) {
+      const audio = this.deps.audio as AudioEngineWithVoiceShape;
+      audio.applyVoiceShape?.(preset.voice);
     }
 
     // Ramp BPM if the preset has a tempo identity.
