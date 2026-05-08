@@ -937,22 +937,25 @@ export function drawEyeLasers(
     if (!eye.lm) continue;
     const [ex, ey] = landmarkToScreen(eye.lm.x, eye.lm.y, width, height, cover);
 
-    // Beam direction: PURE HORIZONTAL outward (Superman style), away from
-    // the face's vertical axis. Eye-to-face-center had an unwanted upward
-    // component because eyes sit above the face center; user wants the
-    // beams to shoot sideways out of the eyes, not skyward. We just take
-    // the sign of (ex - fcx) and zero the y component. A tiny pose-driven
-    // lift (cos/sin face yaw if available) lets the beams swing naturally
-    // when the user turns their head, without ever angling far from
-    // horizontal.
+    // Beam direction: BOTH beams point in the head-yaw direction with a
+    // small per-eye splay so they don't fully overlap. Previously the
+    // per-eye sign(ex-fcx) dominated and beams always diverged left/right
+    // even when the user was clearly looking to one side; the user wanted
+    // the lasers to FOLLOW the gaze when the head turns.
+    //
+    // Convention: in the selfie-mirrored frame, FaceTracker negates the
+    // raw matrix yaw; the value reported here is positive when the user
+    // looks to the SCREEN-LEFT and negative when they look SCREEN-RIGHT
+    // (verified empirically: user turned right → yaw ≈ -0.46). To make
+    // both beams point in the gaze direction we therefore use
+    // `headDirX = -sin(yaw)` so positive headDirX = pointing right.
     const sign = ex < fcx ? -1 : 1;
     const yaw = face.pose?.yaw ?? 0;
-    // Add a small horizontal swing from yaw (max ±0.4) so beams track
-    // gaze direction. We also fold in a tiny vertical follow from pitch
-    // (clamped) so chin-up tilts the beams up just a touch.
     const pitch = face.pose?.pitch ?? 0;
-    let rfx = sign + Math.sin(yaw) * 0.4 * sign;
-    let rfy = -Math.sin(pitch) * 0.25; // gentle pitch follow, no resting bias
+    const headDirX = -Math.sin(yaw); // +1 ≈ user looking screen-right
+    const SPLAY = 0.3;               // per-eye divergence, small
+    let rfx = headDirX + sign * SPLAY;
+    let rfy = -Math.sin(pitch) * 0.25;
     const mag = Math.hypot(rfx, rfy) || 1;
     rfx /= mag;
     rfy /= mag;
