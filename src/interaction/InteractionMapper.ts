@@ -570,12 +570,14 @@ export class InteractionMapperImpl implements InteractionMapper {
     );
     this.pushMusicInput();
 
-    // Throttle param push to every other frame (AudioEngine ramps internally).
-    this.frameTick = (this.frameTick + 1) & 1;
-    if (this.frameTick === 0 || this.handsBackFade) {
-      this.audio?.setParams(target);
-      this.lastParamSnapshot = target;
-    }
+    // Push every frame. The previous every-other-frame throttle saved a
+    // small amount of CPU but introduced a perceptible "hesitation" between
+    // a fast hand movement and the audio response — user-reported as
+    // sluggish. AudioEngine.setParams uses rampTo internally so back-to-
+    // back sets are smoothed at the audio level; no zipper risk.
+    this.audio?.setParams(target);
+    this.lastParamSnapshot = target;
+    void this.frameTick;
 
     // If we just left drone mode, this update path is fine — clear the flag.
     if (this.inDroneMode) {

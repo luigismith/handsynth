@@ -82,7 +82,11 @@ interface SmoothingSlot {
 function makeSlot(): SmoothingSlot {
   const landmarks: OneEuroVec3[] = [];
   for (let i = 0; i < NUM_LANDMARKS; i += 1) {
-    landmarks.push(new OneEuroVec3({ mincutoff: 1.0, beta: 0.007 }));
+    // Higher beta (0.02 vs original 0.007) makes the filter more reactive
+    // to fast hand movements — less laggy for snappy gestures, with One
+    // Euro's adaptive cutoff still suppressing micro-jitter at rest. Was
+    // user-reported as "sluggish response to movement".
+    landmarks.push(new OneEuroVec3({ mincutoff: 1.0, beta: 0.02 }));
   }
   return {
     landmarks,
