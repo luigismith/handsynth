@@ -164,8 +164,12 @@ function resetSlot(slot: FaceFilterSlot): void {
 }
 
 /** Calibration: average eye openness at rest. Above this peg `eyesWide`
- * begins to climb; below this it stays at 0 (so blinks don't fire lasers). */
-const EYE_REST = 0.5;
+ * begins to climb; below this it stays at 0 (so blinks don't fire lasers).
+ * User reports normal/relaxed eyes still triggered the lasers; the EAR
+ * fallback + blendshape noise can pull mean-eye-openness up to ~0.7 even
+ * when the user isn't deliberately widening. Raise the floor so only a
+ * deliberate "spalanca" pegs eyesWide. */
+const EYE_REST = 0.75;
 
 // ---------------------------------------------------------------------------
 // Helpers

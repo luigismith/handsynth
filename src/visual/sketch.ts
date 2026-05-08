@@ -937,30 +937,25 @@ export function drawEyeLasers(
     if (!eye.lm) continue;
     const [ex, ey] = landmarkToScreen(eye.lm.x, eye.lm.y, width, height, cover);
 
-    // Outward direction = vector FROM face center TO this eye, normalized.
-    // Eyes sit above + outward of the face center, so the unit vector
-    // already points naturally up-and-outward (left eye up-left, right
-    // eye up-right) — no extra bias needed. The earlier `- height * 0.18`
-    // additive lift, applied BEFORE normalization, was ~218 px on a
-    // 1215-tall canvas while ey-fcy is only ~50–60 px in magnitude;
-    // the bias dominated and lasers always shot straight up. Remove it.
-    let rfx = ex - fcx;
-    let rfy = ey - fcy;
-    const mag = Math.hypot(rfx, rfy);
-    if (mag < 1e-6) {
-      // Degenerate (eye coincides with face center). Pick a sensible
-      // default — outward & slightly up.
-      rfx = 1;
-      rfy = -0.3;
-      const m2 = Math.hypot(rfx, rfy);
-      rfx /= m2;
-      rfy /= m2;
-    } else {
-      rfx /= mag;
-      rfy /= mag;
-    }
-    // Clamp the y component if the user happens to look severely DOWN
-    // (head tilted forward) — prevents lasers angling into the floor.
+    // Beam direction: PURE HORIZONTAL outward (Superman style), away from
+    // the face's vertical axis. Eye-to-face-center had an unwanted upward
+    // component because eyes sit above the face center; user wants the
+    // beams to shoot sideways out of the eyes, not skyward. We just take
+    // the sign of (ex - fcx) and zero the y component. A tiny pose-driven
+    // lift (cos/sin face yaw if available) lets the beams swing naturally
+    // when the user turns their head, without ever angling far from
+    // horizontal.
+    const sign = ex < fcx ? -1 : 1;
+    const yaw = face.pose?.yaw ?? 0;
+    // Add a small horizontal swing from yaw (max ±0.4) so beams track
+    // gaze direction. We also fold in a tiny vertical follow from pitch
+    // (clamped) so chin-up tilts the beams up just a touch.
+    const pitch = face.pose?.pitch ?? 0;
+    let rfx = sign + Math.sin(yaw) * 0.4 * sign;
+    let rfy = -Math.sin(pitch) * 0.25; // gentle pitch follow, no resting bias
+    const mag = Math.hypot(rfx, rfy) || 1;
+    rfx /= mag;
+    rfy /= mag;
     if (rfy > EYES_LASER_MAX_DOWN) {
       rfy = EYES_LASER_MAX_DOWN;
       const m2 = Math.hypot(rfx, rfy) || 1;

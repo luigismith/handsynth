@@ -91,19 +91,21 @@ interface SmoothingSlot {
 function makeSlot(): SmoothingSlot {
   const landmarks: OneEuroVec3[] = [];
   for (let i = 0; i < NUM_LANDMARKS; i += 1) {
-    // Higher beta (0.02 vs original 0.007) makes the filter more reactive
-    // to fast hand movements — less laggy for snappy gestures, with One
-    // Euro's adaptive cutoff still suppressing micro-jitter at rest. Was
-    // user-reported as "sluggish response to movement".
-    landmarks.push(new OneEuroVec3({ mincutoff: 1.0, beta: 0.02 }));
+    // beta=0.04 — bumped further (was 0.02, originally 0.007) per user
+    // request for more sensitivity. One Euro's adaptive cutoff at higher
+    // beta is much more reactive at speed, while mincutoff=1.0 still
+    // suppresses jitter at rest. Tradeoff: occasional landmark micro-
+    // overshoots on very fast snaps; mitigated by the scalar filters
+    // (openness/pinch) which use beta=0.04 too downstream.
+    landmarks.push(new OneEuroVec3({ mincutoff: 1.0, beta: 0.04 }));
   }
   return {
     landmarks,
-    opennessF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
-    pinchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
-    depthF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
-    rollF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
-    pitchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
+    opennessF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
+    pinchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
+    depthF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
+    rollF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
+    pitchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
     lastSeenMs: 0,
   };
 }
@@ -118,15 +120,15 @@ function resetSlot(slot: SmoothingSlot): void {
 }
 
 function makeHandsDistanceFilter(): OneEuroFilter {
-  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 });
+  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 });
 }
 
 function makeMeanHeightFilter(): OneEuroFilter {
-  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 });
+  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 });
 }
 
 function makeScalarFilter(): OneEuroFilter {
-  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 });
+  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 });
 }
 
 // ---------------------------------------------------------------------------
