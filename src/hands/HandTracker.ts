@@ -426,7 +426,12 @@ export class HandTrackerImpl implements HandTracker {
 
       const slot = this.getOrCreateSlot(side, nowMs);
 
-      // Smooth landmarks per axis.
+      // Smooth landmarks per axis. Also x-mirror in place so all consumer
+      // coordinates (visualizer skeleton, gesture distance, palmCenter) live
+      // in the same "selfie-mirrored" frame as the visible <video> (which is
+      // CSS-flipped). MediaPipe sees the un-mirrored pixel stream; we only
+      // mirror the *output*. The handedness swap above is still correct
+      // for un-mirrored MediaPipe input.
       const smoothed: HandLandmark[] = new Array(NUM_LANDMARKS);
       for (let k = 0; k < NUM_LANDMARKS; k += 1) {
         const p = raw[k];
@@ -435,10 +440,11 @@ export class HandTrackerImpl implements HandTracker {
           continue;
         }
         const filterVec = slot.landmarks[k]!;
-        smoothed[k] = filterVec.filter(
+        const filtered = filterVec.filter(
           { x: p.x, y: p.y, z: p.z },
           tSec,
         );
+        smoothed[k] = { x: 1 - filtered.x, y: filtered.y, z: filtered.z };
       }
 
       // Provisional Hand for derivation calls.

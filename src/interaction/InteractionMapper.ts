@@ -146,8 +146,13 @@ export class InteractionMapperImpl implements InteractionMapper {
   private moodSamples: MoodSample[] = [];
   private peakDwellStartMs: number | null = null;
 
-  /** Gestures processed via this mapper (real or autopilot). */
-  private currentInputIntensity = 0;
+  /**
+   * Gestures processed via this mapper (real or autopilot). Seed at 0.5 so
+   * that even before any GestureState arrives (e.g., the user hasn't put
+   * their hands in frame yet), the MusicBrain runs at meaningful density
+   * instead of degenerating to sparse single hits.
+   */
+  private currentInputIntensity = 0.5;
 
   /** Last raw gesture state — used by the no-hands → hands-back crossfade. */
   private lastSeenState: GestureState | null = null;
@@ -288,6 +293,28 @@ export class InteractionMapperImpl implements InteractionMapper {
     return this.currentMood;
   }
 
+  /** Read-only snapshot for the debug panel. */
+  getCurrentIntensity(): number {
+    return this.currentInputIntensity;
+  }
+
+  /**
+   * Manually pin intensity (debug-panel slider). Pass `null` to release the
+   * override and let gestures drive the value again.
+   */
+  setManualIntensity(v: number | null): void {
+    if (v === null) {
+      this.manualIntensity = null;
+      return;
+    }
+    this.manualIntensity = clamp01(v);
+    this.currentInputIntensity = this.manualIntensity;
+    this.pushMusicInput();
+  }
+
+  /** Internal: when set, gesture-driven updates ignore meanHeight intensity. */
+  private manualIntensity: number | null = null;
+
   /**
    * Drive the mapper from a synthetic gesture stream when no webcam is
    * available. Slow sinusoidal wandering on meanHeight + handsDistance, with
@@ -405,7 +432,10 @@ export class InteractionMapperImpl implements InteractionMapper {
     this.updateMood(state.meanHeight);
 
     // Push intensity / mood to MusicBrain whenever it changes meaningfully.
-    this.currentInputIntensity = intensity;
+    // If a manual override is active (debug panel slider), it wins over the
+    // gesture-derived value.
+    this.currentInputIntensity =
+      this.manualIntensity !== null ? this.manualIntensity : intensity;
     this.pushMusicInput();
 
     // Throttle param push to every other frame (AudioEngine ramps internally).

@@ -218,16 +218,10 @@ export class VisualizerImpl implements Visualizer {
     // and resize handler are already wired, and unmount() will clean them up.
     try {
       this.sketch = createSketch(p5, parent, this.state);
-      // Selfie-mirror the freshly-created canvas inline. CSS rules in
-      // index.html should also catch it via `#app canvas`, but inline
-      // wins regardless of cascade ordering or bundler quirks.
-      const created = parent.querySelector(
-        'canvas:not([style*="display: none"])',
-      ) as HTMLCanvasElement | null;
-      if (created) {
-        created.style.transform = 'scaleX(-1)';
-        created.style.transformOrigin = '50% 50%';
-      }
+      // No CSS mirror on the canvas: HandTracker x-mirrors landmarks on
+      // output, so the skeleton coordinates already live in the same
+      // selfie-mirrored frame as the (CSS-flipped) <video>. Drawing them on
+      // an un-flipped canvas keeps the overlay aligned.
     } catch (err) {
       console.warn('[Visualizer] p5 sketch failed to boot:', err);
       this.sketch = null;

@@ -63,13 +63,12 @@
         z-index: 2;
       }
       /*
-       * Mirror EVERY canvas inside #app (p5 in instance mode replaces the
-       * placeholder with a freshly-created canvas that doesn't inherit the
-       * #visualizer id). The selector is broad on purpose.
+       * NOTE on mirroring: only the <video> is CSS-flipped. The HandTracker
+       * x-mirrors landmarks on output, so every downstream consumer
+       * (visualizer skeleton, gesture distance, palmCenter) already lives in
+       * the same selfie-mirrored frame as the visible video. Flipping the
+       * canvas too would double-mirror.
        */
-      #app canvas {
-        transform: scaleX(-1);
-      }
       #ui-layer {
         position: absolute;
         inset: 0;

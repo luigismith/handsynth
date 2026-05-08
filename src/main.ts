@@ -29,6 +29,7 @@ import type { VibeId } from '@contracts/contracts';
 import { OnboardingImpl } from '@ui/Onboarding';
 import { VibeSelectorImpl } from '@ui/VibeSelector';
 import { ErrorOverlayImpl } from '@ui/ErrorOverlay';
+import { DebugPanelImpl } from '@ui/DebugPanel';
 import { injectStyles } from '@ui/styles';
 
 function $(id: string): HTMLElement {
@@ -104,6 +105,36 @@ async function bootstrap(): Promise<void> {
   });
   vibeHost.removeAttribute('hidden');
 
+  // Phase 3.5: debug / mouse-control panel. Toggleable with `?`.
+  const uiLayer = $('ui-layer');
+  const debugPanel = new DebugPanelImpl();
+  debugPanel.mount(uiLayer, {
+    audio,
+    music,
+    getMapperState: () => ({
+      intensity: mapper.getCurrentIntensity(),
+      mood: mapper.getCurrentMood(),
+    }),
+    setManualIntensity: (v) => mapper.setManualIntensity(v),
+    setVibe: (id) => {
+      mapper.setVibe(VIBES[id]);
+      vibeSelector.setActive(id);
+    },
+  });
+
+  // Periodic context-resume tick. Some browsers (especially Safari) silently
+  // suspend the AudioContext after a few seconds of low activity. The
+  // visibilitychange listener catches the obvious case; this catches the
+  // subtler ones. Cheap (no-op when context is already running).
+  const resumeTimer = window.setInterval(() => {
+    const ctx = Tone.getContext();
+    if (ctx.state !== 'running') {
+      void ctx.resume().then(() => {
+        console.info('[heartbeat] context resumed (was', ctx.state, ')');
+      });
+    }
+  }, 1500);
+
   // Phase 4: visibility + cleanup.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -131,6 +162,12 @@ async function bootstrap(): Promise<void> {
     } catch {
       /* noop */
     }
+    try {
+      debugPanel.unmount();
+    } catch {
+      /* noop */
+    }
+    clearInterval(resumeTimer);
   });
 }
 
