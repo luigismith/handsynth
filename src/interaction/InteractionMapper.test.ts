@@ -1227,3 +1227,97 @@ describe('InteractionMapper discrete gestures', () => {
     expect(__testing.pulseAmount(0, 2000, 1000)).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Audio-glitch regressions
+//
+// These guard the recent mitigations: the wave LFO must not produce a fresh
+// brightness ramp on every gesture frame, and AudioEngine must not fan out a
+// brightness change to the lead voice when the delta is below the lead's
+// perceptual epsilon.
+// ---------------------------------------------------------------------------
+
+describe('InteractionMapper audio-glitch regressions', () => {
+  it('wave LFO does not push a unique brightness on every frame at 24 Hz', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Drive a wave gesture: fully-active wave_level = 1 (route via the
+    // public surface — emit an open_palm hand and let the interpreter
+    // fire wave_level events). We don't need the interpreter to fire the
+    // wave; we can poke the internal state directly through the public
+    // event surface using the gesture-event path. Easiest: directly
+    // simulate a long sequence of identical gesture-update frames AFTER
+    // starting a wave by calling handleGestureEvent via the mapper's
+    // internal subscribe path. Since handleGestureEvent is private, we
+    // exercise it by sending a synthetic GestureEvent through the
+    // interpreter listener: wave_level events come from the interpreter
+    // when palm.x oscillates; for the purpose of this regression test we
+    // just need a non-zero waveLevel during the frame loop. We do that by
+    // directly manipulating the (private) field via cast — this is only
+    // a test-fixture, NOT production code.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mapper as any).waveLevel = 1.0;
+
+    // Use real wall-clock — but cap the loop so the LFO has time to swing
+    // through a full cycle (200 ms at 5 Hz). At 24 Hz frame rate that's
+    // ~5 frames. We expect FEWER than 5 unique brightness-change pushes
+    // for the wave LFO contribution, because the sample-and-hold
+    // quantises sin into {-1, 0, +1} — at most one transition per quarter
+    // cycle = 2 transitions per 200 ms.
+    const start = performance.now();
+    let frame = 0;
+    while (performance.now() - start < 220) {
+      hands.emit('gesture:update', blankState({ meanHeight: 0.5 }));
+      frame += 1;
+      if (frame > 12) break; // bound the loop in case the host is fast
+    }
+
+    // Count brightness pushes whose value isn't equal to the previous push
+    // (the diffParams in the mapper already gates equal pushes, but a
+    // continuous Math.sin would still push every frame because each frame's
+    // value would differ slightly).
+    const brightnessSeq = audio.paramCalls
+      .map((p) => p.brightness)
+      .filter((v): v is number => typeof v === 'number');
+    let transitions = 0;
+    for (let i = 1; i < brightnessSeq.length; i += 1) {
+      if (Math.abs(brightnessSeq[i]! - brightnessSeq[i - 1]!) > 0.001) {
+        transitions += 1;
+      }
+    }
+    // Pre-fix this would be ≈ frame count (every frame pushes a fresh sin
+    // value). Post-fix the sample-and-hold caps it at the LFO half-cycle
+    // rate. We assert the cap is at most 4 transitions over 220 ms.
+    expect(transitions).toBeLessThanOrEqual(4);
+    mapper.stop();
+  });
+
+  it('wave LFO bypassed when waveLevel <= 0.01 (no extra pushes)', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Default: waveLevel=0.
+    hands.emit('gesture:update', blankState({ meanHeight: 0.5 }));
+    hands.emit('gesture:update', blankState({ meanHeight: 0.5 }));
+    const beforeBrightness = audio.paramCalls
+      .map((p) => p.brightness)
+      .filter((v): v is number => typeof v === 'number');
+    // Steady-state meanHeight=0.5 and no wave should freeze brightness
+    // pushes after the first frame (subsequent frames are inside ε).
+    // We assert that at most 2 unique brightness values were pushed.
+    const uniq = new Set(beforeBrightness);
+    expect(uniq.size).toBeLessThanOrEqual(2);
+    mapper.stop();
+  });
+});

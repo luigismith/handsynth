@@ -127,4 +127,47 @@ describe('AudioEngineImpl (smoke)', () => {
       expect(() => eng.applyVoiceShape(p.voice)).not.toThrow();
     }
   });
+
+  // Regression: brightness fan-out to the lead voice is gated by a wider
+  // epsilon than the master ε. Without this gate, every gesture frame that
+  // moves the master brightness by ≥0.005 also reschedules the lead's
+  // filterEnvelope and bp.frequency.rampTo — adding two scheduler entries
+  // per frame for sub-perceptual lead deltas. The fix lets sub-0.02 deltas
+  // reach the master only.
+  it('setParams: lead.setBrightness is NOT called for sub-ε deltas', () => {
+    const eng = new AudioEngineImpl();
+    const leadCalls: number[] = [];
+    const masterParams: Array<Record<string, number>> = [];
+    // Inject minimal stand-ins for lead + master so setParams runs through
+    // the brightness gate without booting Tone.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).lead = {
+      setBrightness: (v: number) => {
+        leadCalls.push(v);
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).master = {
+      setParams: (p: Record<string, number>) => {
+        masterParams.push({ ...p });
+      },
+    };
+
+    // First call always lands.
+    eng.setParams({ brightness: 0.5 });
+    // Tiny nudge — master should still see it (gated upstream by mapper),
+    // but lead should NOT.
+    eng.setParams({ brightness: 0.505 });
+    eng.setParams({ brightness: 0.51 });
+    eng.setParams({ brightness: 0.515 });
+    // A clearly audible jump (>0.02) should reach the lead.
+    eng.setParams({ brightness: 0.6 });
+
+    expect(leadCalls).toEqual([0.5, 0.6]);
+    // Master sees every brightness push (its own ε is the mapper's job).
+    const masterBrights = masterParams
+      .map((m) => m.brightness)
+      .filter((v): v is number => typeof v === 'number');
+    expect(masterBrights.length).toBe(5);
+  });
 });

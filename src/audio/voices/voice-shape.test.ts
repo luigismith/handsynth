@@ -84,6 +84,22 @@ vi.mock('tone', () => {
     dispose(): void {}
   }
   class Gain {
+    // Expose a Tone.Param-shaped `.gain` so applyVoiceShape's fade-out
+    // around the oscillator swap (rampTo + cancelScheduledValues) works
+    // through the mock. The recorded ramp targets are visible to tests
+    // via the `.rampToCalls` array on the Gain's `gain` field.
+    public gain = {
+      _value: 0.7,
+      rampToCalls: [] as Array<{ value: number; time?: number }>,
+      cancelCalls: 0,
+      rampTo(value: number, time?: number): void {
+        this._value = value;
+        this.rampToCalls.push({ value, time });
+      },
+      cancelScheduledValues(_t: number): void {
+        this.cancelCalls += 1;
+      },
+    };
     constructor(_v?: unknown) {}
     connect(_: unknown): void {}
     dispose(): void {}
@@ -338,3 +354,81 @@ const _shapeProbe: VoiceShape = {
   bass: { waveform: 'sine', subLevel: 0.5 },
 };
 void _shapeProbe;
+
+// ---------------------------------------------------------------------------
+// Click-suppression — applyVoiceShape must fade the engine output to 0
+// around an oscillator-type swap, then back up. Without this fade, sustaining
+// notes snap mid-cycle when a preset chip is clicked → audible click.
+// ---------------------------------------------------------------------------
+
+interface GainSpy {
+  rampToCalls: Array<{ value: number; time?: number }>;
+  cancelCalls: number;
+}
+
+describe('applyVoiceShape click suppression', () => {
+  it('PadEngine fades out and back when waveform changes', () => {
+    const pad = new PadEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gain = (pad as any).out.gain as GainSpy;
+    const before = gain.rampToCalls.length;
+    pad.applyVoiceShape({ waveform: 'fmsine' });
+    const ramps = gain.rampToCalls.slice(before).map((r) => r.value);
+    // Expect a ramp DOWN to 0 followed by a ramp back UP (≈ 0.7 nominal).
+    expect(ramps).toContain(0);
+    const upRamp = ramps.find((v) => v > 0);
+    expect(upRamp).toBeGreaterThan(0);
+    expect(gain.cancelCalls).toBeGreaterThan(0);
+  });
+
+  it('PadEngine does NOT fade when only envelope changes (no swap)', () => {
+    const pad = new PadEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gain = (pad as any).out.gain as GainSpy;
+    const before = gain.rampToCalls.length;
+    pad.applyVoiceShape({ attack: 1.5, release: 4 });
+    expect(gain.rampToCalls.length).toBe(before); // no extra ramps
+  });
+
+  it('LeadEngine fades out and back when oscType changes', () => {
+    const lead = new LeadEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gain = (lead as any).out.gain as GainSpy;
+    const before = gain.rampToCalls.length;
+    lead.applyVoiceShape({ oscType: 'fmsawtooth' });
+    const ramps = gain.rampToCalls.slice(before).map((r) => r.value);
+    expect(ramps).toContain(0);
+    const upRamp = ramps.find((v) => v > 0);
+    expect(upRamp).toBeGreaterThan(0);
+  });
+
+  it('LeadEngine does NOT fade when only modIndex changes', () => {
+    const lead = new LeadEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gain = (lead as any).out.gain as GainSpy;
+    const before = gain.rampToCalls.length;
+    lead.applyVoiceShape({ modIndex: 4, harmonicity: 1.5 });
+    expect(gain.rampToCalls.length).toBe(before);
+  });
+
+  it('BassEngine fades out and back when waveform changes', () => {
+    const bass = new BassEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gain = (bass as any).out.gain as GainSpy;
+    const before = gain.rampToCalls.length;
+    bass.applyVoiceShape({ waveform: 'fatsawtooth' });
+    const ramps = gain.rampToCalls.slice(before).map((r) => r.value);
+    expect(ramps).toContain(0);
+    const upRamp = ramps.find((v) => v > 0);
+    expect(upRamp).toBeGreaterThan(0);
+  });
+
+  it('BassEngine does NOT fade when only subLevel changes', () => {
+    const bass = new BassEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gain = (bass as any).out.gain as GainSpy;
+    const before = gain.rampToCalls.length;
+    bass.applyVoiceShape({ subLevel: 0.7 });
+    expect(gain.rampToCalls.length).toBe(before);
+  });
+});

@@ -144,6 +144,15 @@ export class BassEngine {
    */
   applyVoiceShape(shape: VoiceShape['bass'] | undefined): void {
     if (!shape) return;
+    // GLITCH MITIGATION: same as Pad/Lead — OmniOscillator type swap
+    // produces a click on sustaining bass notes. 30 ms fade-out around
+    // the swap hides it. subLevel changes (sub.volume.rampTo) already
+    // smooth themselves; only the main waveform swap needs the gate.
+    const willSwapType = !!shape.waveform;
+    if (willSwapType) {
+      this.out.gain.cancelScheduledValues(0);
+      this.out.gain.rampTo(0, 0.03);
+    }
     if (shape.waveform) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.main.set({ oscillator: { type: shape.waveform as any } });
@@ -155,6 +164,10 @@ export class BassEngine {
       // 24*log10(s); guard the s=0 case explicitly.
       const db = s > 0 ? 24 * Math.log10(s) : -Infinity;
       this.sub.volume.rampTo(db, 0.1);
+    }
+    if (willSwapType) {
+      // Restore nominal bass level (0.9, matching the constructor default).
+      this.out.gain.rampTo(0.9, 0.03);
     }
   }
 

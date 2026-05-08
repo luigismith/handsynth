@@ -216,6 +216,46 @@ describe('FaceTrackerImpl event surface', () => {
     expect(arg.message).toMatch(/before init/);
   });
 
+  // Regression: expression scalars (smile / frown / surprise / anger) MUST
+  // be filtered through One-Euro before they reach the FaceState. Without
+  // smoothing the 8 Hz face-tracker output is noisy enough to spam the
+  // mapper's setParams loop (each scalar feeds an additive face contribution
+  // into brightness / cutoff / drive / Q, all of which fan into the audio
+  // engine). This test feeds an alternating noisy signal and asserts the
+  // emitted scalars are smoother than the raw input.
+  it('expression scalars (smile/frown/surprise/anger) go through One-Euro filter', () => {
+    const t = new FaceTrackerImpl();
+    // Alternate raw smile blendshape between 0 and 1 each frame. A raw
+    // pass-through would oscillate the output through the same range; a
+    // smoothed signal converges toward the mean (≈0.5) within a few frames.
+    const noisySmile: number[] = [];
+    const filteredSmile: number[] = [];
+    for (let i = 0; i < 16; i += 1) {
+      const raw = i % 2 === 0 ? 0 : 1;
+      noisySmile.push(raw);
+      const r = neutralResult({
+        blendshapes: [
+          { name: 'mouthSmileLeft', score: raw },
+          { name: 'mouthSmileRight', score: raw },
+        ],
+      });
+      const s = t.deriveStateFromResult(r, 1000 + i * 125, 0.125);
+      filteredSmile.push(s.smile);
+    }
+    // Raw signal range: 1.0 (0 → 1). Filtered signal range MUST be smaller —
+    // proving One-Euro is in the path. (Range comparison ignores the first
+    // frame where the filter has no history.)
+    const filteredTail = filteredSmile.slice(4);
+    const filteredRange =
+      Math.max(...filteredTail) - Math.min(...filteredTail);
+    expect(filteredRange).toBeLessThan(1.0);
+    // And NO frame in the filtered tail should hit the raw extremes ({0,1}).
+    for (const v of filteredTail) {
+      expect(v).toBeGreaterThan(0);
+      expect(v).toBeLessThan(1);
+    }
+  });
+
   it('stop() is idempotent and resets internal accumulators', () => {
     const t = new FaceTrackerImpl();
     // Drive a not-detected derivation so noFaceDuration grows, then stop().

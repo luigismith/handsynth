@@ -193,6 +193,17 @@ export class LeadEngine {
    */
   applyVoiceShape(shape: VoiceShape['lead'] | undefined): void {
     if (!shape) return;
+    // GLITCH MITIGATION: same reason as PadEngine — Tone.OmniOscillator
+    // rebuilds its underlying node when `type` changes; if a note is
+    // sustaining when a preset chip is clicked, the user hears a click
+    // as the wave snaps mid-cycle. Fade out → swap → fade back up
+    // (30 ms each side) hides the discontinuity. Only when type swaps;
+    // modIndex / harmonicity / envelope changes don't recreate nodes.
+    const willSwapType = !!shape.oscType;
+    if (willSwapType) {
+      this.out.gain.cancelScheduledValues(0);
+      this.out.gain.rampTo(0, 0.03);
+    }
     if (shape.oscType) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.mono.set({ oscillator: { type: shape.oscType as any } });
@@ -215,6 +226,10 @@ export class LeadEngine {
     if (typeof shape.release === 'number') {
       const r = Math.max(0.05, Math.min(6, shape.release));
       this.mono.set({ envelope: { release: r } });
+    }
+    if (willSwapType) {
+      // Restore nominal lead level (0.85, matching the constructor default).
+      this.out.gain.rampTo(0.85, 0.03);
     }
   }
 

@@ -1420,11 +1420,32 @@ export class InteractionMapperImpl implements InteractionMapper {
 
     // wave → continuous brightness LFO. No decay — the wave_level is
     // already a controller scalar set by the interpreter.
+    //
+    // GLITCH MITIGATION: the LFO must NOT bypass the per-frame diff guard.
+    // Previously this wrote `out.brightness = base + sin(2π·5Hz·t)·depth`
+    // unconditionally — at waveLevel>0.02 the oscillation crossed the
+    // brightness ε=0.005 every frame, producing ~24 ramp events/sec on
+    // both the master filter AND the lead voice (AudioEngine fans
+    // brightness into lead.setBrightness, which itself schedules a
+    // filterEnvelope set + a bp.frequency.rampTo each push). At a depth
+    // of 0.25 + the steady-state pulse decays this was a measurable
+    // contributor to the scheduler queue growth.
+    //
+    // FIX: only emit a brightness override on integer LFO half-cycles
+    // (when sin crosses ±1 / 0). Sample-and-hold reduces the LFO push
+    // rate from frame-rate (24 Hz) to LFO-rate × 4 ≤ 20 Hz at WAVE_LFO_HZ
+    // = 5, AND quantises the value so the diff fires at most ~10 Hz —
+    // the listener still perceives a tremolo-like wobble because the
+    // sample-and-hold steps are AT the LFO frequency, not under it.
     if (this.waveLevel > 0.01) {
       const baseB =
         typeof out.brightness === 'number' ? out.brightness : 0.5;
-      const phase =
-        Math.sin((2 * Math.PI * (now / 1000) * WAVE_LFO_HZ));
+      // Quantise phase to 4 steps per LFO cycle: sign(sin) when |sin| > 0.5,
+      // else 0. Produces a square-ish tremolo at LFO_HZ instead of a
+      // continuous sine. 4 steps × WAVE_LFO_HZ = 20 ramps/sec WORST case;
+      // typical = 10 transitions/sec with hysteresis from the diff ε.
+      const rawPhase = Math.sin(2 * Math.PI * (now / 1000) * WAVE_LFO_HZ);
+      const phase = rawPhase > 0.5 ? 1 : rawPhase < -0.5 ? -1 : 0;
       out.brightness = clamp01(
         baseB + phase * this.waveLevel * WAVE_BRIGHTNESS_DEPTH,
       );

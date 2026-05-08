@@ -39,6 +39,17 @@ export class AudioEngineImpl implements AudioEngine {
   private ready = false;
   private initPromise: Promise<void> | null = null;
   private currentVibe: VibePreset | null = null;
+  /**
+   * Last brightness value forwarded to the lead voice. The InteractionMapper
+   * already throttles its setParams pushes via diffParams (ε=0.005 on
+   * brightness), but EVERY brightness push fans out into lead.setBrightness
+   * which itself schedules TWO operations (filterEnvelope set + bp.rampTo).
+   * Using a wider ε here (0.02) means a wave-LFO wobble or a slowly-decaying
+   * gesture pulse no longer triggers a fresh filter-env reschedule on the
+   * lead per frame — the master filter still rides every change but the
+   * lead voice is updated only when the brightness moves audibly on it.
+   */
+  private lastLeadBrightness: number | null = null;
 
   /**
    * Idempotent. Awaits Tone.start() (user-gesture context unlock), builds
@@ -202,7 +213,20 @@ export class AudioEngineImpl implements AudioEngine {
       const b = clamp(partial.brightness, 0, 1);
       mapped.brightness = b;
       // Lead voice gets brightness too — it modulates filter env octaves.
-      this.lead?.setBrightness(b);
+      // GLITCH MITIGATION: gate the lead.setBrightness fan-out behind a
+      // wider ε (0.02) than the master ε (0.005). lead.setBrightness
+      // schedules a filterEnvelope.set + a bp.frequency.rampTo per call;
+      // when the wave LFO or a decaying gesture pulse nudges brightness
+      // by ~0.005/frame the master can ramp inaudibly, but the lead's
+      // dual-op reschedule is comparatively expensive and audibly
+      // identical between deltas <0.02. Master still gets every frame.
+      if (
+        this.lastLeadBrightness === null ||
+        Math.abs(b - this.lastLeadBrightness) >= 0.02
+      ) {
+        this.lead?.setBrightness(b);
+        this.lastLeadBrightness = b;
+      }
     }
     if (typeof partial.masterDuck === 'number')
       mapped.duck = clamp(partial.masterDuck, 0, 1);
