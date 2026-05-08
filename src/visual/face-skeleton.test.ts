@@ -110,6 +110,9 @@ function makeHand(side: 'left' | 'right'): Hand {
     openness: 0.5,
     pinch: 0.5,
     isClosed: false,
+    depth: 0,
+    roll: 0,
+    pitch: 0,
   };
 }
 

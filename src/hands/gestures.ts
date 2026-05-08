@@ -59,6 +59,12 @@ function clamp01(v: number): number {
   return v;
 }
 
+function clamp(v: number, lo: number, hi: number): number {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
 function distance3D(a: HandLandmark, b: HandLandmark): number {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -174,6 +180,67 @@ function pinchFromLandmarks(landmarks: HandLandmark[]): number {
 /** Backwards-compat. */
 export function pinch(landmarks: HandLandmark[]): number {
   return pinchFromLandmarks(landmarks);
+}
+
+// ---------------------------------------------------------------------------
+// 3D palm pose: depth, roll, pitch
+// ---------------------------------------------------------------------------
+
+/**
+ * Mean Z of the five palm landmarks {0, 5, 9, 13, 17}. MediaPipe returns
+ * Z relative to the wrist (origin); typical hand poses span roughly ±0.1.
+ * Output is the raw mean — caller normalizes to a useful range.
+ */
+export function computePalmDepth(landmarks: HandLandmark[]): number {
+  let s = 0;
+  let n = 0;
+  for (const i of PALM_INDICES) {
+    const p = safeLandmark(landmarks, i);
+    if (!p) continue;
+    s += p.z;
+    n += 1;
+  }
+  if (n === 0) return 0;
+  return s / n;
+}
+
+/**
+ * Palm roll in the image plane, computed from the line
+ * index_MCP (5) → pinky_MCP (17). Returns an angle in radians wrapped to
+ * [-π/2, π/2] — the palm-orientation axis only carries 180° of meaning, so
+ * a hand rotated by π is the same orientation as 0 from this signal's POV.
+ *
+ * 0 ≈ palm aligned with x-axis (horizontal); +π/2 ≈ vertical (palm rotated
+ * such that pinky_MCP sits above index_MCP in image space).
+ */
+export function computePalmRoll(landmarks: HandLandmark[]): number {
+  const a = safeLandmark(landmarks, INDEX_MCP);
+  const b = safeLandmark(landmarks, PINKY_MCP);
+  if (!a || !b) return 0;
+  let theta = Math.atan2(b.y - a.y, b.x - a.x);
+  // Wrap into [-π/2, π/2]: roll is direction-agnostic.
+  if (theta > Math.PI / 2) theta -= Math.PI;
+  else if (theta < -Math.PI / 2) theta += Math.PI;
+  return theta;
+}
+
+/**
+ * Palm pitch (forward/back tilt) approximated from the Z separation
+ * between the wrist (lm 0) and the middle MCP (lm 9):
+ *   asin(clamp((lm9.z − lm0.z) / handSize3D, −1, 1))
+ *
+ * Positive when fingers point AWAY from camera (palm up / facing camera
+ * with fingers extended forward — middle MCP further from camera than
+ * wrist). Negative when fingers point toward the camera. Radians.
+ */
+export function computePalmPitch(landmarks: HandLandmark[]): number {
+  const wrist = safeLandmark(landmarks, WRIST);
+  const mid = safeLandmark(landmarks, MIDDLE_MCP);
+  if (!wrist || !mid) return 0;
+  const size = handSize(landmarks);
+  if (size <= 1e-6) return 0;
+  const ratio = clamp((mid.z - wrist.z) / size, -1, 1);
+  return Math.asin(ratio);
 }
 
 /**
@@ -294,6 +361,37 @@ export function buildGestureState(
       ? Math.max(0, (prevState?.noHandsDuration ?? 0) + dt)
       : 0;
 
+  // ---- 3D additions --------------------------------------------------------
+  // Depth normalization — MediaPipe z values for typical hand poses span
+  // roughly ±0.1 around the wrist. Map [-DEPTH_RANGE, +DEPTH_RANGE] →
+  // [1 (close), 0 (far)].
+  const rightDepth = right ? normDepth(right.depth) : 0;
+  const leftDepth = left ? normDepth(left.depth) : 0;
+  const meanDepth =
+    hands.length === 2
+      ? (rightDepth + leftDepth) / 2
+      : hands.length === 1
+        ? rightDepth + leftDepth // exactly one of these is nonzero
+        : 0;
+
+  const rollLimit = Math.PI / 2;
+  const rightRoll = right ? clamp(right.roll, -rollLimit, rollLimit) / rollLimit : 0;
+  const leftRoll = left ? clamp(left.roll, -rollLimit, rollLimit) / rollLimit : 0;
+
+  const pitchLimit = Math.PI / 3;
+  let meanPitchRaw = 0;
+  if (hands.length > 0) {
+    let s = 0;
+    for (const h of hands) s += h.pitch;
+    meanPitchRaw = s / hands.length;
+  }
+  const meanPitch = clamp(meanPitchRaw, -pitchLimit, pitchLimit) / pitchLimit;
+
+  const handsDistance3D =
+    right && left
+      ? clamp01(distance3D(right.palmCenter, left.palmCenter))
+      : 0;
+
   return {
     hands,
     bothHandsDetected: hands.length === 2,
@@ -307,5 +405,22 @@ export function buildGestureState(
     bothAboveHead,
     fingerCount,
     noHandsDuration,
+    meanDepth,
+    rightRoll,
+    leftRoll,
+    handsDistance3D,
+    meanPitch,
   };
+}
+
+/** Empirically — MediaPipe z values for typical hand poses span ~±0.1. */
+const DEPTH_RANGE = 0.1;
+
+/**
+ * Map raw MediaPipe palm-Z (relative to wrist; small/negative when closer)
+ * to a 0..1 depth signal where 1 = close to camera, 0 = far. The simple
+ * linear remap clamps to the useful empirical range.
+ */
+function normDepth(z: number): number {
+  return clamp01((DEPTH_RANGE - z) / (2 * DEPTH_RANGE));
 }

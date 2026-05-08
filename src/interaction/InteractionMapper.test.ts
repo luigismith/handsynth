@@ -213,6 +213,15 @@ function blankState(over: Partial<GestureState> = {}): GestureState {
     bothAboveHead: false,
     fingerCount: 8,
     noHandsDuration: 0,
+    // Default 3D fields chosen so they are "neutral" (zero contribution to
+    // the additive 3D mappings): meanDepth=1 makes the masterDuck contribution
+    // 0; the rolls/pitch are zero by definition. handsDistance3D mirrors the
+    // 2D handsDistance default so cutoff math is consistent.
+    meanDepth: 1,
+    rightRoll: 0,
+    leftRoll: 0,
+    handsDistance3D: 0.5,
+    meanPitch: 0,
     ...over,
   };
 }
@@ -542,6 +551,102 @@ describe('InteractionMapper face integration', () => {
       .filter((v): v is number => typeof v === 'number');
     expect(ducks.length).toBeGreaterThan(0);
     expect(ducks[ducks.length - 1]!).toBeGreaterThan(0.1);
+    mapper.stop();
+  });
+
+  // -------------------------------------------------------------------------
+  // 3D gesture additions: depth → masterDuck, rolls → brightness/drive, pitch
+  // → delayFeedback, handsDistance3D → cutoff. These are additive on top of
+  // the hand-XY mapping, applied BEFORE face modulation.
+  // -------------------------------------------------------------------------
+
+  it('meanDepth=1 (close) produces target.masterDuck≈0', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({ meanDepth: 1 }));
+    hands.emit('gesture:update', blankState({ meanDepth: 1 }));
+
+    const ducks = audio.paramCalls
+      .map((p) => p.masterDuck)
+      .filter((v): v is number => typeof v === 'number');
+    expect(ducks.length).toBeGreaterThan(0);
+    expect(ducks[ducks.length - 1]!).toBeCloseTo(0, 5);
+    mapper.stop();
+  });
+
+  it('meanDepth=0 (far) produces target.masterDuck≈0.4', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({ meanDepth: 0 }));
+    hands.emit('gesture:update', blankState({ meanDepth: 0 }));
+
+    const ducks = audio.paramCalls
+      .map((p) => p.masterDuck)
+      .filter((v): v is number => typeof v === 'number');
+    expect(ducks.length).toBeGreaterThan(0);
+    expect(ducks[ducks.length - 1]!).toBeCloseTo(0.4, 5);
+    mapper.stop();
+  });
+
+  it('rightRoll=1 shifts brightness up by HAND_3D_BRIGHTNESS_GAIN (0.15)', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // meanHeight=0.5 → baseline brightness=0.5; rightRoll=1 → +0.15 → 0.65.
+    hands.emit('gesture:update', blankState({ meanHeight: 0.5, rightRoll: 1 }));
+    hands.emit('gesture:update', blankState({ meanHeight: 0.5, rightRoll: 1 }));
+
+    const brights = audio.paramCalls
+      .map((p) => p.brightness)
+      .filter((v): v is number => typeof v === 'number');
+    expect(brights.length).toBeGreaterThan(0);
+    expect(brights[brights.length - 1]!).toBeCloseTo(0.65, 5);
+    mapper.stop();
+  });
+
+  it('handsDistance3D drives filterCutoff (not handsDistance)', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Pin handsDistance to 0 (would map to ~200 Hz) and handsDistance3D to 1
+    // (maps to ~12000 Hz). If 3D is the one that feeds cutoff, we should see
+    // the high-end value, not the low-end.
+    hands.emit(
+      'gesture:update',
+      blankState({ handsDistance: 0, handsDistance3D: 1 }),
+    );
+    hands.emit(
+      'gesture:update',
+      blankState({ handsDistance: 0, handsDistance3D: 1 }),
+    );
+
+    const cutoffs = audio.paramCalls
+      .map((p) => p.filterCutoff)
+      .filter((v): v is number => typeof v === 'number');
+    expect(cutoffs.length).toBeGreaterThan(0);
+    expect(cutoffs[cutoffs.length - 1]!).toBeGreaterThan(8000);
     mapper.stop();
   });
 

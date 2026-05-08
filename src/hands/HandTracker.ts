@@ -27,6 +27,9 @@ import {
   buildGestureState,
   computeOpenness,
   computePalmCenter,
+  computePalmDepth,
+  computePalmPitch,
+  computePalmRoll,
   computePinch,
   isFist,
 } from './gestures';
@@ -75,6 +78,12 @@ interface SmoothingSlot {
   opennessF: OneEuroFilter;
   /** Filter for derived pinch scalar. */
   pinchF: OneEuroFilter;
+  /** Filter for derived palm depth (mean palm-landmark Z). */
+  depthF: OneEuroFilter;
+  /** Filter for palm roll (radians). */
+  rollF: OneEuroFilter;
+  /** Filter for palm pitch (radians). */
+  pitchF: OneEuroFilter;
   /** Last time (ms) this slot was updated — used to detect re-entry gaps. */
   lastSeenMs: number;
 }
@@ -92,6 +101,9 @@ function makeSlot(): SmoothingSlot {
     landmarks,
     opennessF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
     pinchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
+    depthF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
+    rollF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
+    pitchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 }),
     lastSeenMs: 0,
   };
 }
@@ -100,6 +112,9 @@ function resetSlot(slot: SmoothingSlot): void {
   for (const f of slot.landmarks) f.reset();
   slot.opennessF.reset();
   slot.pinchF.reset();
+  slot.depthF.reset();
+  slot.rollF.reset();
+  slot.pitchF.reset();
 }
 
 function makeHandsDistanceFilter(): OneEuroFilter {
@@ -107,6 +122,10 @@ function makeHandsDistanceFilter(): OneEuroFilter {
 }
 
 function makeMeanHeightFilter(): OneEuroFilter {
+  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 });
+}
+
+function makeScalarFilter(): OneEuroFilter {
   return new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 });
 }
 
@@ -176,6 +195,9 @@ export class HandTrackerImpl implements HandTracker {
   private slotByHand = new Map<'left' | 'right', SmoothingSlot>();
   private handsDistanceF = makeHandsDistanceFilter();
   private meanHeightF = makeMeanHeightFilter();
+  private handsDistance3DF = makeScalarFilter();
+  private meanDepthF = makeScalarFilter();
+  private meanPitchF = makeScalarFilter();
 
   // Edge / state tracking.
   private prevState: GestureState | null = null;
@@ -324,6 +346,9 @@ export class HandTrackerImpl implements HandTracker {
     this.slotByHand.clear();
     this.handsDistanceF.reset();
     this.meanHeightF.reset();
+    this.handsDistance3DF.reset();
+    this.meanDepthF.reset();
+    this.meanPitchF.reset();
   }
 
   on<K extends keyof HandTrackerEvents>(evt: K, cb: HandTrackerEvents[K]): void {
@@ -403,23 +428,41 @@ export class HandTrackerImpl implements HandTracker {
 
     // Apply derived-metric smoothing on top of landmark smoothing.
     let smoothedHandsDistance = 0;
+    let smoothedHandsDistance3D = 0;
     if (hands.length === 2) {
       smoothedHandsDistance = this.handsDistanceF.filter(
         state.handsDistance,
         tSec,
       );
+      smoothedHandsDistance3D = this.handsDistance3DF.filter(
+        state.handsDistance3D,
+        tSec,
+      );
     } else {
       this.handsDistanceF.reset();
+      this.handsDistance3DF.reset();
     }
     const smoothedMeanHeight =
       hands.length > 0
         ? this.meanHeightF.filter(state.meanHeight, tSec)
         : state.meanHeight;
+    let smoothedMeanDepth = state.meanDepth;
+    let smoothedMeanPitch = state.meanPitch;
+    if (hands.length > 0) {
+      smoothedMeanDepth = this.meanDepthF.filter(state.meanDepth, tSec);
+      smoothedMeanPitch = this.meanPitchF.filter(state.meanPitch, tSec);
+    } else {
+      this.meanDepthF.reset();
+      this.meanPitchF.reset();
+    }
 
     const finalState: GestureState = {
       ...state,
       handsDistance: smoothedHandsDistance,
+      handsDistance3D: smoothedHandsDistance3D,
       meanHeight: smoothedMeanHeight,
+      meanDepth: smoothedMeanDepth,
+      meanPitch: smoothedMeanPitch,
     };
 
     this.emitEdges(finalState);
@@ -495,6 +538,9 @@ export class HandTrackerImpl implements HandTracker {
         openness: 0,
         pinch: 1,
         isClosed: false,
+        depth: 0,
+        roll: 0,
+        pitch: 0,
       };
 
       // Smoothed scalar derivations.
@@ -503,6 +549,15 @@ export class HandTrackerImpl implements HandTracker {
       const opn = clamp01(slot.opennessF.filter(opnRaw, tSec));
       const pin = clamp01(slot.pinchF.filter(pinRaw, tSec));
 
+      // 3D pose derivations: depth, roll, pitch — each with its own One Euro
+      // filter to suppress jitter while staying responsive to fast moves.
+      const depthRaw = computePalmDepth(smoothed);
+      const rollRaw = computePalmRoll(smoothed);
+      const pitchRaw = computePalmPitch(smoothed);
+      const depth = slot.depthF.filter(depthRaw, tSec);
+      const roll = slot.rollF.filter(rollRaw, tSec);
+      const pitch = slot.pitchF.filter(pitchRaw, tSec);
+
       const hand: Hand = {
         side,
         landmarks: smoothed,
@@ -510,6 +565,9 @@ export class HandTrackerImpl implements HandTracker {
         openness: opn,
         pinch: pin,
         isClosed: false,
+        depth,
+        roll,
+        pitch,
       };
       hand.isClosed = isFist(hand);
 

@@ -3,7 +3,9 @@
 // Glue layer: subscribes to HandTracker events, derives audio params + music
 // inputs, applies them. Owns the gesture→param mapping table:
 //
+// 2D mappings (XY-only, original):
 //     handsDistance    -> filterCutoff       (200..12000 Hz, exp/log curve)
+//                         (NOTE: now superseded by handsDistance3D — see below)
 //     meanHeight       -> intensity (0..1)   AND  brightness (0..1)
 //     rightOpenness    -> reverbWet (0.1..0.85) AND delayFeedback (0.1..0.7)
 //     leftOpenness     -> saturatorDrive (0.8..2.6) AND filterResonance (0.5..14)
@@ -13,6 +15,18 @@
 //     bothAboveHead    -> audio.triggerDrop(true while held)
 //     meanHeight series-> mood ('calm'|'rising'|'peak'|'release')
 //     noHandsDuration  -> drone-mode fallback (low intensity, quiet pad)
+//
+// 3D mappings (depth + palm rotation, additive on top of the hand-XY target):
+//     meanDepth        -> masterDuck (inverse, 0.4 far → 0 close — hands closer
+//                         = louder; pulls listener IN as user moves toward cam)
+//     rightRoll        -> brightness fine-tune (±HAND_3D_BRIGHTNESS_GAIN)
+//     leftRoll         -> saturatorDrive fine-tune (±HAND_3D_DRIVE_GAIN)
+//     handsDistance3D  -> filterCutoff (replaces 2D handsDistance for cutoff;
+//                         responds to in/out-of-camera depth, not just sideways)
+//     meanPitch        -> delayFeedback fine-tune (±HAND_3D_DELAY_FB_GAIN)
+//
+// Application order: hand-XY → target → hand-3D additions → face modulators →
+// push.
 //
 // See ARCHITECTURE.md "Gesture mapping" section.
 
@@ -114,6 +128,22 @@ const FACE_MOUTH_STAB_DEBOUNCE_MS = 200;
 const FACE_LOST_DUCK_AFTER_SEC = 1.5;
 /** Additive masterDuck while face is lost. */
 const FACE_LOST_DUCK = 0.15;
+
+// ---------------------------------------------------------------------------
+// Hand 3D additive modulation constants. The hand 3D contributions are
+// applied on top of the hand-XY-derived target object, BEFORE the face
+// modulators are composed (so the face overlay still gets the last word
+// where it overrides).
+// ---------------------------------------------------------------------------
+
+/** rightRoll modulates brightness by ±HAND_3D_BRIGHTNESS_GAIN. */
+const HAND_3D_BRIGHTNESS_GAIN = 0.15;
+/** leftRoll modulates saturatorDrive by ±HAND_3D_DRIVE_GAIN. */
+const HAND_3D_DRIVE_GAIN = 0.4;
+/** meanPitch modulates delayFeedback by ±HAND_3D_DELAY_FB_GAIN. */
+const HAND_3D_DELAY_FB_GAIN = 0.15;
+/** masterDuck when hands are at meanDepth=0 (far). 0 when meanDepth=1 (close). */
+const HAND_3D_DUCK_FAR = 0.4;
 
 /**
  * Mouth-open is the FOURTH continuous controller (beside hand distance,
@@ -471,6 +501,11 @@ export class InteractionMapperImpl implements InteractionMapper {
         bothAboveHead: false,
         fingerCount: 8,
         noHandsDuration: 0,
+        meanDepth: 0.5,
+        rightRoll: 0,
+        leftRoll: 0,
+        handsDistance3D: handsDistance,
+        meanPitch: 0,
       };
 
       this.handleGestureUpdate(synthState);
@@ -519,7 +554,12 @@ export class InteractionMapperImpl implements InteractionMapper {
     }
 
     // Continuous mappings.
-    const cutoff = mapDistanceToCutoff(state.handsDistance);
+    // Cutoff now responds to 3D hand-to-hand distance (was 2D handsDistance).
+    // This means the filter sweep also tracks the user's hands moving in/out
+    // of camera depth, not just sideways spread. The 2D handsDistance field
+    // is preserved on GestureState for any downstream consumer that wants
+    // the pure-image-plane signal.
+    const cutoff = mapDistanceToCutoff(state.handsDistance3D);
     // Intensity floor: even with hands resting at chest level the music
     // should feel rich, not skeletal. Re-map [0, 1] → [INTENSITY_FLOOR, 1]
     // so users can still raise hands for density but never hit the dead
@@ -542,6 +582,12 @@ export class InteractionMapperImpl implements InteractionMapper {
       filterResonance,
       masterDuck: 0,
     };
+
+    // Hand 3D additive modulation. meanDepth → masterDuck (close=loud),
+    // rightRoll → brightness offset, leftRoll → saturatorDrive offset,
+    // meanPitch → delayFeedback offset. Applied BEFORE face modulation so
+    // the face layer still wins where it composes on top.
+    target = this.applyHand3DModulation(target, state);
 
     // Face additive modulation. Only contributes when a FaceTracker is
     // attached AND has emitted at least one detected state. All branches are
@@ -747,6 +793,61 @@ export class InteractionMapperImpl implements InteractionMapper {
       // mouth open we get a fresh rising edge.
       this.mouthOpenHigh = false;
     }
+  }
+
+  /**
+   * Hand 3D additive modulation — applied on top of the hand-XY-derived
+   * `target`, BEFORE face modulators run. Each contribution is bounded and
+   * tolerant of zero-hand frames (where the smoothed signals carry their
+   * default 0 / 0.5).
+   *
+   *   meanDepth (0=far, 1=close) → masterDuck = lerp(HAND_3D_DUCK_FAR, 0, depth)
+   *     ⇒ closer hands = louder. Pulls the listener IN as the user moves
+   *     toward the camera.
+   *   rightRoll (−1..1) → brightness += roll * HAND_3D_BRIGHTNESS_GAIN
+   *   leftRoll  (−1..1) → saturatorDrive += roll * HAND_3D_DRIVE_GAIN
+   *   meanPitch (−1..1) → delayFeedback += pitch * HAND_3D_DELAY_FB_GAIN
+   */
+  private applyHand3DModulation(
+    target: Partial<AudioEngineParams>,
+    state: GestureState,
+  ): Partial<AudioEngineParams> {
+    const out: Partial<AudioEngineParams> = { ...target };
+
+    // Depth → masterDuck. Far (depth=0) ducks the master by HAND_3D_DUCK_FAR;
+    // close (depth=1) leaves the master un-ducked. Additive on whatever
+    // baseline target.masterDuck the upstream hand-XY mapping set.
+    const depth = clamp01(state.meanDepth);
+    const handDuck = typeof out.masterDuck === 'number' ? out.masterDuck : 0;
+    out.masterDuck = clamp01(handDuck + lerp(HAND_3D_DUCK_FAR, 0, depth));
+
+    // Right-hand roll → brightness fine-tune.
+    const rRoll = clamp(state.rightRoll, -1, 1);
+    const baseBright =
+      typeof out.brightness === 'number' ? out.brightness : 0.5;
+    out.brightness = clamp01(baseBright + rRoll * HAND_3D_BRIGHTNESS_GAIN);
+
+    // Left-hand roll → saturatorDrive fine-tune.
+    const lRoll = clamp(state.leftRoll, -1, 1);
+    const baseDrive =
+      typeof out.saturatorDrive === 'number' ? out.saturatorDrive : DRIVE_MIN;
+    out.saturatorDrive = clamp(
+      baseDrive + lRoll * HAND_3D_DRIVE_GAIN,
+      DRIVE_MIN,
+      DRIVE_MAX,
+    );
+
+    // Mean pitch → delayFeedback fine-tune.
+    const mPitch = clamp(state.meanPitch, -1, 1);
+    const baseFb =
+      typeof out.delayFeedback === 'number' ? out.delayFeedback : DELAY_FB_MIN;
+    out.delayFeedback = clamp(
+      baseFb + mPitch * HAND_3D_DELAY_FB_GAIN,
+      DELAY_FB_MIN,
+      DELAY_FB_MAX,
+    );
+
+    return out;
   }
 
   /**

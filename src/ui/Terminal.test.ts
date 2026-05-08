@@ -96,6 +96,11 @@ function fullState(over: Partial<GestureState> = {}): GestureState {
     bothAboveHead: false,
     fingerCount: 0,
     noHandsDuration: 0,
+    meanDepth: 1,
+    rightRoll: 0,
+    leftRoll: 0,
+    handsDistance3D: 0.4,
+    meanPitch: 0,
     ...over,
   };
 }

@@ -149,6 +149,11 @@ function blankState(over: Partial<GestureState> = {}): GestureState {
     bothAboveHead: false,
     fingerCount: 8,
     noHandsDuration: 0,
+    meanDepth: 1,
+    rightRoll: 0,
+    leftRoll: 0,
+    handsDistance3D: 0.5,
+    meanPitch: 0,
     ...over,
   };
 }

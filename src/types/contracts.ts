@@ -215,6 +215,25 @@ export interface Hand {
   pinch: number;
   /** True when openness < threshold (fist). */
   isClosed: boolean;
+  /**
+   * Mean Z of palm landmarks (5,9,13,17,0). MediaPipe Z is "depth from
+   * camera": 0 at the wrist, negative is closer to camera, positive is
+   * farther. After One-Euro smoothing this gives a stable depth signal.
+   */
+  depth: number;
+  /**
+   * Palm roll angle in radians, computed in the image plane from the
+   * line index_MCP (5) → pinky_MCP (17). 0 means palm aligned with the
+   * x-axis (horizontal); π/2 means vertical (palm rotated up).
+   */
+  roll: number;
+  /**
+   * Palm pitch (forward/back tilt) derived from the Z separation
+   * between the wrist (landmark 0) and the middle MCP (landmark 9).
+   * Positive when fingers point AWAY from camera (palm up), negative
+   * when pointing toward the camera. Radians, ~±π/3 useful range.
+   */
+  pitch: number;
 }
 
 /** Aggregate frame-level gesture state, emitted at `gesture:update`. */
@@ -243,6 +262,22 @@ export interface GestureState {
   fingerCount: number;
   /** Seconds since the last frame with at least one detected hand. */
   noHandsDuration: number;
+  /**
+   * Mean of left+right palm depth, normalized 0..1 (1 = closest to
+   * camera within useful range).
+   */
+  meanDepth: number;
+  /** Right-hand palm roll, normalized −1..1 (full clockwise → +1). */
+  rightRoll: number;
+  /** Left-hand palm roll. */
+  leftRoll: number;
+  /**
+   * Hand-to-hand distance in **3D** (was 2D in handsDistance).
+   * 0..1 normalized. Falls back to 0 if either hand is missing.
+   */
+  handsDistance3D: number;
+  /** Mean palm pitch normalized −1..1 (palm-toward-camera → +1). */
+  meanPitch: number;
 }
 
 /**
