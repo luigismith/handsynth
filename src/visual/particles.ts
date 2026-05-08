@@ -63,7 +63,11 @@ export interface ParticleField {
   emitFromMouth(mx: number, my: number, intensity: number): void;
 }
 
-const MAX_PARTICLES = 120;
+// PERF: was 120. Each particle is one triangle() draw + one update step.
+// The visualizer also renders skeletons + face mesh + scanlines + hex grid
+// + bloom (when enabled). 80 leaves enough density to feel alive while
+// freeing ~33% of the particle-loop cost.
+const MAX_PARTICLES = 80;
 const BASE_SIZE = 4;
 
 // Cyberpunk palette stops (HSB triples). All particles live in the

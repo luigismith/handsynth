@@ -247,7 +247,13 @@ export function createSketch(
       // visually indistinguishable.
       s.pixelDensity(0.5);
       s.colorMode(s.HSB, 360, 100, 100, 1);
-      s.frameRate(60);
+      // PERF: cap visualizer draw at 30 fps (was 60). The visualizer
+      // mostly shows slow soft-glow content and a hand/face skeleton that
+      // moves at human speed; 30 fps reads as "smooth enough" for this
+      // material. Halving the draw rate halves the main-thread time spent
+      // in p5's hot loop, leaving the audio scheduler enough headroom to
+      // post sample-accurate triggers without underruns.
+      s.frameRate(30);
 
       particles = createParticleField(w, h);
       particles.setReducedMotion(state.reducedMotion);
