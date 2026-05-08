@@ -358,11 +358,21 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
   visual.mount(canvasEl, { audio, hands, music, face: faceLive ? face : undefined });
 
   // DEV-ONLY: expose subsystems on window so DevTools / Claude Preview can
-  // probe live state. Also instrument MusicBrain to bump a counter each
-  // emit so we can verify the brain is ticking from outside.
+  // probe live state. HMR safety: if we already subscribed in a previous
+  // module load, OFF the old subscription before adding a new one — without
+  // this, every HMR reload of main.ts piles another counter subscriber on
+  // MusicBrain's Set, and after a few minutes the per-event fanout starts
+  // burning real CPU. The dev exposure stays idempotent.
   if (import.meta.env?.DEV) {
+    interface DebugWindow {
+      __hs?: Record<string, unknown> & { _counterSubscription?: object };
+    }
+    const w = window as unknown as DebugWindow;
+    if (w.__hs?._counterSubscription) {
+      try { music.off(w.__hs._counterSubscription as never); } catch { /* noop */ }
+    }
     const counters = { lead: 0, bass: 0, chord: 0, kick: 0, hat: 0, perc: 0, beat: 0 };
-    music.on({
+    const counterSub = {
       onLead: () => { counters.lead += 1; },
       onBass: () => { counters.bass += 1; },
       onChord: () => { counters.chord += 1; },
@@ -370,12 +380,9 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
       onHat: () => { counters.hat += 1; },
       onPerc: () => { counters.perc += 1; },
       onBeat: () => { counters.beat += 1; },
-    });
-    interface DebugWindow {
-      __hs?: Record<string, unknown>;
-    }
-    const w = window as unknown as DebugWindow;
-    w.__hs = { audio, music, hands, mapper, visual, Tone, counters };
+    };
+    music.on(counterSub);
+    w.__hs = { audio, music, hands, mapper, visual, face, Tone, counters, _counterSubscription: counterSub };
   }
 
   // 6. Smoke test — schedule a quiet pad chord 200ms in so the user gets

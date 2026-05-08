@@ -122,9 +122,9 @@ describe('face landmark index sets', () => {
     expect(FACE_RIGHT_EYE.length).toBe(16);
     expect(FACE_LIPS_OUTER.length).toBe(20);
     expect(FACE_LIPS_INNER.length).toBe(20);
-    expect(FACE_NOSE_BRIDGE.length).toBe(3);
-    expect(FACE_LEFT_BROW.length).toBe(5);
-    expect(FACE_RIGHT_BROW.length).toBe(5);
+    expect(FACE_NOSE_BRIDGE.length).toBe(8);
+    expect(FACE_LEFT_BROW.length).toBe(10);
+    expect(FACE_RIGHT_BROW.length).toBe(10);
   });
 
   it('all referenced indices are within the 478-point mesh', () => {

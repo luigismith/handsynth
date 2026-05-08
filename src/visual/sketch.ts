@@ -41,6 +41,25 @@ import { createEnvelope, type Envelope } from './envelope';
 // Shared state — the Visualizer mutates these fields between frames.
 // ---------------------------------------------------------------------------
 
+/**
+ * Cover-fit transform from MediaPipe normalized (0..1 of video frame) coords
+ * to canvas-normalized (0..1 of canvas) coords. The webcam is rendered with
+ * CSS `object-fit: cover` so the video is scaled to fill the canvas
+ * without distortion; this means part of the video may be cropped at top/
+ * bottom or left/right depending on aspect ratios. To make the skeleton
+ * overlay land on the user's actual face, we compute the visible video
+ * rectangle and remap landmark y (and x) accordingly. When this is null
+ * the visualizer falls back to identity (lm.x*width, lm.y*height) which
+ * is correct only when video and canvas aspect ratios match exactly.
+ */
+export interface VideoCoverTransform {
+  /** Normalized horizontal scale: lm.x * scaleX + offsetX = canvas-normalized x */
+  scaleX: number;
+  scaleY: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 export interface SketchState {
   /** Current frame's detected hands (already smoothed by HandTracker). */
   hands: Hand[];
@@ -49,6 +68,8 @@ export interface SketchState {
    * emitted yet. Sketch only renders if `face?.detected && face.landmarks`.
    */
   face: FaceState | null;
+  /** Video-to-canvas cover transform (see VideoCoverTransform). */
+  videoCover: VideoCoverTransform | null;
   /**
    * Beat pulse, set to 1.0 on each beat by the Visualizer. The sketch
    * forwards this into the beat envelope and resets it back to 0 each frame
@@ -119,27 +140,46 @@ export const FACE_LIPS_INNER: readonly number[] = [
   78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13,
   82, 81, 80, 191,
 ];
-export const FACE_NOSE_BRIDGE: readonly number[] = [1, 5, 4];
-export const FACE_LEFT_BROW: readonly number[] = [70, 63, 105, 66, 107];
-export const FACE_RIGHT_BROW: readonly number[] = [336, 296, 334, 293, 300];
+export const FACE_NOSE_BRIDGE: readonly number[] = [168, 6, 197, 195, 5, 4, 1, 19];
+export const FACE_NOSE_TIP_RING: readonly number[] = [
+  4, 45, 220, 115, 48, 64, 98, 97, 2, 326, 327, 294, 278, 344, 440, 275,
+];
+export const FACE_LEFT_BROW: readonly number[] = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46];
+export const FACE_RIGHT_BROW: readonly number[] = [336, 296, 334, 293, 300, 285, 295, 282, 283, 276];
+/** Iris ring (left). Available when MediaPipe FaceLandmarker is loaded with refine_landmarks. */
+export const FACE_LEFT_IRIS: readonly number[] = [468, 469, 470, 471, 472];
+export const FACE_RIGHT_IRIS: readonly number[] = [473, 474, 475, 476, 477];
+/** Cheek/jaw curves to give the face more presence. */
+export const FACE_LEFT_JAW: readonly number[] = [127, 234, 93, 132, 58, 172, 136, 150, 149, 176, 148, 152];
+export const FACE_RIGHT_JAW: readonly number[] = [356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152];
+/** Cupid's bow / philtrum hint. */
+export const FACE_PHILTRUM: readonly number[] = [164, 0, 11, 12, 13];
 
 const FACE_CHIN_LANDMARK = 152;
 const HAND_WRIST_LANDMARK = 0;
 
-// HandTracker already mirrors landmark x at its output boundary (when
-// mirrorEnabled=true) so the coordinates handed to the visualizer live in
-// the same selfie-mirrored frame as the CSS-flipped <video>. The visualizer
-// must NOT apply its own additional flip — that would double-mirror and
-// land the skeleton on the opposite side from the visible hand. The
-// FaceTracker uses the same convention, so face landmarks also need NO
-// extra flip.
+// HandTracker / FaceTracker already mirror landmark x at the output (when
+// mirrorEnabled=true) so the coords handed to the visualizer live in the
+// same selfie-mirrored frame as the CSS-flipped <video>. The visualizer
+// does NOT re-flip x.
+//
+// Y-mapping accounts for the video's `object-fit: cover` rendering: when
+// canvas and video aspect ratios differ, parts of the video are cropped
+// from the canvas viewport. Without correction, landmark y * canvasHeight
+// places the skeleton at the WRONG vertical position relative to the
+// visible face. The Visualizer computes a cover transform on mount and
+// resize and stores it in SketchState.videoCover.
 function landmarkToScreen(
   lx: number,
   ly: number,
   width: number,
   height: number,
+  cover: VideoCoverTransform | null = null,
 ): [number, number] {
-  return [lx * width, ly * height];
+  if (!cover) return [lx * width, ly * height];
+  const nx = lx * cover.scaleX + cover.offsetX;
+  const ny = ly * cover.scaleY + cover.offsetY;
+  return [nx * width, ny * height];
 }
 
 export interface SketchHandle {
@@ -339,8 +379,24 @@ export function createSketch(
       if (state.face?.detected && state.face.landmarks) {
         s.push();
         s.blendMode(s.ADD);
-        drawFaceSkeleton(s, state.face, s.width, s.height, beatV);
+        drawFaceSkeleton(s, state.face, s.width, s.height, beatV, state.videoCover);
         s.pop();
+
+        // Mouth-driven particle emitter — spawn breath from the user's
+        // mouth with rate + size scaling on `mouthOpen`. The mouth center
+        // is computed from the inner lip landmarks; cover transform is
+        // applied so the spawn position matches the visible mouth.
+        if (particles && state.face.mouthOpen > 0.05) {
+          const lms = state.face.landmarks;
+          const top = lms[13];
+          const bot = lms[14];
+          if (top && bot) {
+            const lx = (top.x + bot.x) / 2;
+            const ly = (top.y + bot.y) / 2;
+            const [mx, my] = landmarkToScreen(lx, ly, s.width, s.height, state.videoCover);
+            particles.emitFromMouth(mx, my, state.face.mouthOpen);
+          }
+        }
 
         // Fake arms — face chin → each hand wrist.
         if (state.hands.length > 0) {
@@ -543,6 +599,7 @@ export function drawFaceSkeleton(
   width: number,
   height: number,
   beatV: number,
+  cover: VideoCoverTransform | null = null,
 ): void {
   const lms = face.landmarks;
   if (!lms || lms.length < 478) return;
@@ -554,8 +611,9 @@ export function drawFaceSkeleton(
   for (const idx of FACE_OVAL) {
     const lm = lms[idx];
     if (!lm) continue;
-    cx += lm.x * width;
-    cy += lm.y * height;
+    const [px, py] = landmarkToScreen(lm.x, lm.y, width, height, cover);
+    cx += px;
+    cy += py;
     n += 1;
   }
   if (n === 0) return;
@@ -572,21 +630,47 @@ export function drawFaceSkeleton(
   void cx; void cy;
 
   s.noFill();
-  s.strokeWeight(1.2);
+  s.strokeWeight(1.0);
 
-  // Closed loops (oval, eyes, lips outer/inner).
+  // Outer face oval — slightly thicker.
+  s.strokeWeight(1.4);
   s.stroke(220, 35, 95, 0.55 + beatV * 0.05);
-  drawClosedLoop(s, lms, FACE_OVAL, width, height);
-  drawClosedLoop(s, lms, FACE_LEFT_EYE, width, height);
-  drawClosedLoop(s, lms, FACE_RIGHT_EYE, width, height);
+  drawClosedLoop(s, lms, FACE_OVAL, width, height, false, cover);
+  s.strokeWeight(1.0);
 
-  // Nose bridge (polyline).
-  drawPolyline(s, lms, FACE_NOSE_BRIDGE, width, height);
+  // Jawlines (polylines) — adds chin definition.
+  s.stroke(220, 28, 92, 0.30);
+  drawPolyline(s, lms, FACE_LEFT_JAW, width, height, cover);
+  drawPolyline(s, lms, FACE_RIGHT_JAW, width, height, cover);
 
-  // Eyebrows (polyline). Slightly dimmer.
-  s.stroke(220, 30, 90, 0.40);
-  drawPolyline(s, lms, FACE_LEFT_BROW, width, height);
-  drawPolyline(s, lms, FACE_RIGHT_BROW, width, height);
+  // Eyes (closed loops).
+  s.stroke(195, 45, 100, 0.65 + beatV * 0.05);
+  drawClosedLoop(s, lms, FACE_LEFT_EYE, width, height, false, cover);
+  drawClosedLoop(s, lms, FACE_RIGHT_EYE, width, height, false, cover);
+
+  // Iris rings — only render if landmarks include them (refine_landmarks).
+  // FaceLandmarker emits 478 points when iris is on; we draw if available.
+  if (lms.length >= 478) {
+    s.strokeWeight(0.8);
+    s.stroke(195, 60, 100, 0.55);
+    drawClosedLoop(s, lms, FACE_LEFT_IRIS, width, height, false, cover);
+    drawClosedLoop(s, lms, FACE_RIGHT_IRIS, width, height, false, cover);
+    s.strokeWeight(1.0);
+  }
+
+  // Eyebrows.
+  s.stroke(220, 30, 90, 0.45);
+  drawPolyline(s, lms, FACE_LEFT_BROW, width, height, cover);
+  drawPolyline(s, lms, FACE_RIGHT_BROW, width, height, cover);
+
+  // Nose bridge (polyline) + nostril ring.
+  s.stroke(220, 25, 88, 0.40);
+  drawPolyline(s, lms, FACE_NOSE_BRIDGE, width, height, cover);
+  drawClosedLoop(s, lms, FACE_NOSE_TIP_RING, width, height, false, cover);
+
+  // Philtrum / cupid's bow.
+  s.stroke(220, 30, 92, 0.30);
+  drawPolyline(s, lms, FACE_PHILTRUM, width, height, cover);
 
   // Lips: outer + inner. Mouth-open scales stroke and adds a faint warm fill.
   const mo = face.mouthOpen;
@@ -601,45 +685,49 @@ export function drawFaceSkeleton(
   if (mo > 0.1) {
     // Faint warm tint inside the lips when speaking.
     s.fill(20, 45, 100, mo * 0.18);
-    drawClosedLoop(s, lms, FACE_LIPS_INNER, width, height, /* fill */ true);
+    drawClosedLoop(s, lms, FACE_LIPS_INNER, width, height, /* fill */ true, cover);
     s.noFill();
   } else {
-    drawClosedLoop(s, lms, FACE_LIPS_INNER, width, height);
+    drawClosedLoop(s, lms, FACE_LIPS_INNER, width, height, false, cover);
   }
-  drawClosedLoop(s, lms, FACE_LIPS_OUTER, width, height);
+  drawClosedLoop(s, lms, FACE_LIPS_OUTER, width, height, false, cover);
 
   s.pop();
 }
 
 function drawClosedLoop(
-  s: p5,
+  s: p5 | p5.Graphics,
   lms: readonly FaceLandmark[],
   indices: readonly number[],
   w: number,
   h: number,
   withFill = false,
+  cover: VideoCoverTransform | null = null,
 ): void {
   s.beginShape();
   for (const idx of indices) {
     const lm = lms[idx];
     if (!lm) continue;
-    s.vertex(lm.x * w, lm.y * h);
+    const [px, py] = landmarkToScreen(lm.x, lm.y, w, h, cover);
+    s.vertex(px, py);
   }
   s.endShape(withFill ? s.CLOSE : s.CLOSE);
 }
 
 function drawPolyline(
-  s: p5,
+  s: p5 | p5.Graphics,
   lms: readonly FaceLandmark[],
   indices: readonly number[],
   w: number,
   h: number,
+  cover: VideoCoverTransform | null = null,
 ): void {
   s.beginShape();
   for (const idx of indices) {
     const lm = lms[idx];
     if (!lm) continue;
-    s.vertex(lm.x * w, lm.y * h);
+    const [px, py] = landmarkToScreen(lm.x, lm.y, w, h, cover);
+    s.vertex(px, py);
   }
   s.endShape();
 }

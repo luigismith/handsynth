@@ -50,6 +50,14 @@ export interface ParticleField {
   reset(width: number, height: number): void;
   /** Toggle reduced-motion. Must be cheap; called rarely. */
   setReducedMotion(reduced: boolean): void;
+  /**
+   * Emit particles from the mouth at (mx, my) screen coords. `intensity` is
+   * the mouthOpen value 0..1 — drives both the rate and the average particle
+   * size. The visualizer calls this from drawFaceSkeleton each frame; we
+   * cap our own emission rate internally so very-open mouths don't drain
+   * the pool in one frame.
+   */
+  emitFromMouth(mx: number, my: number, intensity: number): void;
 }
 
 const MAX_PARTICLES = 120;
@@ -130,17 +138,24 @@ export function createParticleField(width: number, height: number): ParticleFiel
     palette: { hue: number; sat: number },
     life: number,
     speedScale: number,
+    sizeBoost = 1,
+    angleBias?: { angle: number; spread: number },
   ): void {
     const slot = pool.find((p) => !p.alive);
     if (!slot) return;
     slot.alive = true;
     slot.x = cx;
     slot.y = cy;
-    const angle = Math.random() * Math.PI * 2;
+    let angle: number;
+    if (angleBias) {
+      angle = angleBias.angle + (Math.random() - 0.5) * angleBias.spread;
+    } else {
+      angle = Math.random() * Math.PI * 2;
+    }
     const speed = (20 + Math.random() * 60) * speedScale;
     slot.vx = Math.cos(angle) * speed;
     slot.vy = Math.sin(angle) * speed;
-    slot.size = 0.6 + Math.random() * 0.8;
+    slot.size = (0.6 + Math.random() * 0.8) * sizeBoost;
     // Slight per-particle hue jitter so the palette feels organic, not banded.
     slot.hue = palette.hue + (Math.random() - 0.5) * 12;
     slot.sat = palette.sat + (Math.random() - 0.5) * 10;
@@ -148,9 +163,62 @@ export function createParticleField(width: number, height: number): ParticleFiel
     slot.life0 = life;
   }
 
+  // Frame-rate-independent emission accumulator. Each call adds to a
+  // running quota; we spawn floor(quota) particles and keep the fractional
+  // remainder for the next frame. Prevents bursts on dropped frames.
+  let mouthQuota = 0;
+  let mouthLastFrameMs = performance.now();
+
   return {
     setReducedMotion(reduced: boolean): void {
       reducedMotion = reduced;
+    },
+
+    emitFromMouth(mx: number, my: number, intensity: number): void {
+      const i = Math.max(0, Math.min(1, intensity));
+      if (i < 0.05) {
+        mouthQuota = 0;
+        mouthLastFrameMs = performance.now();
+        return;
+      }
+      const now = performance.now();
+      const dt = Math.min(0.1, (now - mouthLastFrameMs) / 1000);
+      mouthLastFrameMs = now;
+
+      // Spawn rate scales as intensity^1.5: a small mouth open gives a
+      // gentle stream, a wide-open mouth a fountain. Cap at 60/sec so we
+      // can't drain the pool.
+      const baseRate = reducedMotion ? 12 : 28;
+      const rate = baseRate * Math.pow(i, 1.4);
+      mouthQuota += rate * dt;
+      let toSpawn = Math.floor(mouthQuota);
+      if (toSpawn <= 0) return;
+      mouthQuota -= toSpawn;
+
+      // Cap to remaining live-slot capacity so we don't loop forever.
+      let aliveCount = 0;
+      for (const p of pool) if (p.alive) aliveCount += 1;
+      const room = MAX_PARTICLES - aliveCount;
+      if (toSpawn > room) toSpawn = room;
+      if (toSpawn <= 0) return;
+
+      // Emit roughly downward (mouth → chin) with a wide spread, so the
+      // particles fall like vocal "smoke". The angle 90° is straight down
+      // in p5/canvas coords (y grows downward).
+      const angle = Math.PI / 2;
+      const spread = Math.PI * 0.8; // ±72°
+      // Bigger mouths → bigger particles. Map intensity to size boost
+      // 0.8..2.4 and life 1.2..2.4s.
+      const sizeBoost = 0.8 + i * 1.6;
+      const life = 1.2 + i * 1.2;
+      // Warm palette tied to mouth — feels vocal/breath-like.
+      const palette = { hue: 28 + (Math.random() - 0.5) * 20, sat: 60 };
+      // Mouth emits from a small jittered region (lip span).
+      for (let k = 0; k < toSpawn; k += 1) {
+        const jx = mx + (Math.random() - 0.5) * 18;
+        const jy = my + (Math.random() - 0.5) * 6;
+        spawn(jx, jy, palette, life, 1 + i * 0.8, sizeBoost, { angle, spread });
+      }
     },
 
     reset(width: number, height: number): void {
@@ -168,48 +236,32 @@ export function createParticleField(width: number, height: number): ParticleFiel
       const mid = bandEnergy(fft, MID_BAND_START, MID_BAND_END);
       const high = bandEnergy(fft, HIGH_BAND_START, HIGH_BAND_END);
 
+      const speedScale = reducedMotion ? 0.5 : 1;
       const cx = width * 0.5;
       const cy = height * 0.5;
-      const speedScale = reducedMotion ? 0.5 : 1;
-      const emitMax = reducedMotion ? MAX_PARTICLES * 0.4 : MAX_PARTICLES;
-
-      // Live count check used both for cap and for ambient top-up.
+      // Live count check used for ambient top-up below.
       let aliveCount = 0;
       for (const p of pool) if (p.alive) aliveCount += 1;
 
-      // High-band sparkle: probabilistic emission from center. Color depends
-      // on which band is loudest — gives the field a "follows the music"
-      // texture instead of one constant blue cloud.
-      if (aliveCount < emitMax) {
-        const sparkleP = high * 0.9;
-        const emits = Math.floor(sparkleP * 3 + Math.random() * sparkleP * 2);
-        for (let i = 0; i < emits; i += 1) {
-          // 80% violet, 20% rare warm accent (skip warm in reduced-motion).
-          const palette =
-            !reducedMotion && Math.random() < 0.2
-              ? PALETTE_HIGH_WARM
-              : PALETTE_HIGH_VIOLET;
-          spawn(cx, cy, palette, 1.2 + Math.random() * 0.8, speedScale);
-        }
-      }
+      // The center "high-band sparkle" emission was removed — the only
+      // *new* particle emitter is now `emitFromMouth` (called from the
+      // sketch when the user's mouth opens). The previous spawning from
+      // (width/2, height/2) felt arbitrary visually. The FFT bands
+      // (low/mid/high) still drive the per-particle size pulse + outward
+      // push below.
 
       // Update each live particle.
       const lowPulse = 1 + low * 1.5; // size multiplier
-      const midPush = mid * (reducedMotion ? 80 : 200); // outward acceleration scale
       const drag = Math.exp(-dt * 0.6); // velocity drag
+      // mid-band radial push removed — it was making particles fountain
+      // outward from the canvas center on every drum hit, reading as
+      // "particles spawning from the middle of the screen". The low-band
+      // size pulse stays.
+      void mid;
 
       for (let i = 0; i < pool.length; i += 1) {
         const p = pool[i]!;
         if (!p.alive) continue;
-
-        // Mid-band radial push outward from center.
-        if (midPush > 0.1) {
-          const dx = p.x - cx;
-          const dy = p.y - cy;
-          const d = Math.hypot(dx, dy) || 1;
-          p.vx += (dx / d) * midPush * dt;
-          p.vy += (dy / d) * midPush * dt;
-        }
 
         // Integrate.
         p.x += p.vx * dt;
@@ -235,14 +287,14 @@ export function createParticleField(width: number, height: number): ParticleFiel
         p.size = p.size * 0.9 + (0.7 + lowPulse * 0.3) * 0.1;
       }
 
-      // Top up to keep ambient density alive (slow trickle). Color picked from
-      // dominant band so ambient particles also feel reactive.
-      if (aliveCount < MAX_PARTICLES * 0.4 && Math.random() < 0.3) {
-        const angle = Math.random() * Math.PI * 2;
-        const r = Math.min(cw, ch) * 0.4;
-        const sx = cx + Math.cos(angle) * r * Math.random();
-        const sy = cy + Math.sin(angle) * r * Math.random();
-        // Ambient particles bias toward low/mid (foundation), not high-energy.
+      // Top up to keep ambient density alive (slow trickle). Color picked
+      // from dominant band so ambient particles feel reactive. Spawn at
+      // RANDOM canvas positions (not concentrated near center) so the
+      // field feels like a starfield, not an emitter.
+      void cx; void cy;
+      if (aliveCount < MAX_PARTICLES * 0.4 && Math.random() < 0.2) {
+        const sx = Math.random() * cw;
+        const sy = Math.random() * ch;
         const palette = low > mid ? PALETTE_LOW : PALETTE_MID;
         spawn(sx, sy, palette, 1.5, speedScale);
       }

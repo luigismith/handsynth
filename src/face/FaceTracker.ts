@@ -43,15 +43,13 @@ const NUM_FACE_LANDMARKS = 478;
 const FACE_LOST_EDGE_SECONDS = 1.5;
 
 /**
- * Defensive update throttle (Hz). Face inference is expensive (~10–15ms per
- * call on a CPU/GPU mid-tier laptop) and runs on the main thread alongside
- * HandLandmarker. Two MediaPipe inferences at 60Hz starve the audio
- * scheduler and produce stutter. Face changes slowly relative to hands, so
- * 20Hz is musically and perceptually plenty (one update per 50ms) while
- * leaving the main thread headroom for the audio worker, the visualizer,
- * and the hand inference at full rate.
+ * Defensive update throttle (Hz). Face inference is expensive and runs on
+ * the main thread alongside HandLandmarker. The user's audio kept
+ * stuttering at 20 Hz — even after capping. Drop to 12 Hz: head poses
+ * move slowly, the mouth-open value smooths through One Euro filter,
+ * and the visualizer tolerates stale face state for 80 ms.
  */
-const MAX_UPDATE_HZ = 20;
+const MAX_UPDATE_HZ = 12;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 /** Filter resets after this re-entry gap. */
@@ -414,13 +412,21 @@ export class FaceTrackerImpl implements FaceTracker {
     this.noFaceAccumSec = 0;
 
     // Convert NormalizedLandmark[] -> FaceLandmark[] (strip visibility/presence)
-    // for downstream helpers. Allocate fresh; 478 small objects per frame is
-    // affordable and keeps the data flow simple. We could share a buffer in a
-    // future optimisation pass.
+    // for downstream helpers. ALSO apply selfie x-mirror in place when
+    // mirrorEnabled is true, so the visualizer's face skeleton lives in the
+    // same selfie-mirrored frame as the CSS-flipped <video> element. This
+    // matches the convention used by HandTracker. Without this flip, the
+    // face skeleton tracks the user's actual head movement but appears on
+    // the OPPOSITE side of the screen — same kind of bug we fixed for hands.
+    const mirror = this.mirrorEnabled;
     const lms: FaceLandmark[] = new Array(rawLandmarks!.length);
     for (let i = 0; i < rawLandmarks!.length; i += 1) {
       const p = rawLandmarks![i]!;
-      lms[i] = { x: p.x, y: p.y, z: p.z };
+      lms[i] = {
+        x: mirror ? 1 - p.x : p.x,
+        y: p.y,
+        z: p.z,
+      };
     }
 
     // Pose from facialTransformationMatrix (if available).
@@ -437,9 +443,11 @@ export class FaceTrackerImpl implements FaceTracker {
       depth = e.depth;
     }
 
-    // Face center; apply selfie x-mirror only when the toggle is on.
+    // Face center is computed from the (already-mirrored when applicable)
+    // lms, so pass through. The earlier double-flip was wrong now that
+    // landmarks are mirrored at population.
     const rawCenter = faceCenter(lms);
-    const mirroredCenterX = this.mirrorEnabled ? 1 - rawCenter.x : rawCenter.x;
+    const mirroredCenterX = rawCenter.x;
 
     // Apparent size (depth proxy).
     const rawWidth = apparentFaceWidth(lms);

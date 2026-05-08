@@ -73,11 +73,53 @@ export class VisualizerImpl implements Visualizer {
   private state: SketchState = {
     hands: [],
     face: null,
+    videoCover: null,
     pulse: 0,
     fftBins: this.fftBins,
     hasAnalyser: false,
     reducedMotion: false,
   };
+
+  /**
+   * Compute the video-to-canvas cover transform from the <video>'s intrinsic
+   * dimensions (videoWidth, videoHeight) and the current canvas size. The
+   * <video> uses CSS `object-fit: cover` which scales the video to fill the
+   * canvas without distortion, cropping whichever dimension is over-scaled.
+   * To make the face skeleton land on the visible face we need to undo
+   * that cover crop when mapping landmark y (and x) to canvas-normalized
+   * coords.
+   */
+  private updateVideoCover(): void {
+    const v = document.getElementById('webcam') as HTMLVideoElement | null;
+    if (!v || !v.videoWidth || !v.videoHeight) {
+      this.state.videoCover = null;
+      return;
+    }
+    const cw = window.innerWidth;
+    const ch = window.innerHeight;
+    if (cw <= 0 || ch <= 0) {
+      this.state.videoCover = null;
+      return;
+    }
+    const videoAspect = v.videoWidth / v.videoHeight;
+    const canvasAspect = cw / ch;
+    let dispW: number;
+    let dispH: number;
+    if (videoAspect > canvasAspect) {
+      // Video is wider than canvas → height fills, width overflows.
+      dispH = ch;
+      dispW = ch * videoAspect;
+    } else {
+      // Video is taller than canvas → width fills, height overflows.
+      dispW = cw;
+      dispH = cw / videoAspect;
+    }
+    const offsetX = (cw - dispW) / 2 / cw;
+    const offsetY = (ch - dispH) / 2 / ch;
+    const scaleX = dispW / cw;
+    const scaleY = dispH / ch;
+    this.state.videoCover = { scaleX, scaleY, offsetX, offsetY };
+  }
 
   // OS-level reduced-motion preference query and listener (kept so we can
   // remove the listener on unmount).
@@ -229,8 +271,17 @@ export class VisualizerImpl implements Visualizer {
       const w = parent.clientWidth || window.innerWidth;
       const h = parent.clientHeight || window.innerHeight;
       this.sketch.resize(w, h);
+      this.updateVideoCover();
     };
     window.addEventListener('resize', this.resizeHandler);
+
+    // Initial cover compute (videoWidth may be 0 until loadedmetadata fires).
+    this.updateVideoCover();
+    const v = document.getElementById('webcam') as HTMLVideoElement | null;
+    if (v) {
+      v.addEventListener('loadedmetadata', () => this.updateVideoCover(), { once: true });
+      v.addEventListener('resize', () => this.updateVideoCover());
+    }
 
     // Pull FFT data each animation frame. We use rAF here (not p5's draw
     // hook) so the pull is decoupled from the render loop — if the canvas
