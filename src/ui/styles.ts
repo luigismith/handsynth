@@ -649,22 +649,31 @@ export const UI_STYLES = `
 
 .hs-terminal {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 30vh;
+  left: 12px;
+  top: 70px;
+  bottom: 80px;
+  width: 320px;
   z-index: 12;
-  background: rgba(10, 10, 12, 0.85);
+  /* Translucent overlay — meant to be readable but never block what's
+   * happening on the canvas behind it. Was a 0.85-alpha bottom strip;
+   * now a 0.32-alpha left column. */
+  background: rgba(10, 10, 12, 0.32);
   color: var(--hs-text);
-  font: 12px var(--hs-mono);
+  font: 11px var(--hs-mono);
   line-height: 1.45;
   padding: 0;
-  pointer-events: auto;
-  border-top: 1px solid var(--hs-orange);
+  /* Don't intercept clicks/drags — the user's gestures and the gear
+   * button must reach the canvas / settings panel through the terminal. */
+  pointer-events: none;
+  border-left: 1px solid rgba(255, 106, 20, 0.35);
+  border-radius: 2px;
   display: flex;
   flex-direction: column;
-  animation: hs-term-flicker 0.125s steps(2) infinite;
-  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.55);
+  /* Drop the global flicker animation here — at 0.32 alpha the flicker
+   * is distracting noise on top of the visualizer rather than CRT flair. */
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.35);
 }
 .hs-terminal[hidden] { display: none; }
 .hs-terminal::before {
@@ -672,20 +681,23 @@ export const UI_STYLES = `
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Very faint scanline overlay — was 0.025 alpha, now 0.018 to keep
+   * the panel non-invasive. */
   background: repeating-linear-gradient(
     180deg,
-    rgba(255, 140, 74, 0.025) 0 1px,
+    rgba(255, 140, 74, 0.018) 0 1px,
     transparent 1px 3px
   );
 }
 .hs-term-status {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 5px 10px;
-  background: var(--hs-bg-deep);
-  border-bottom: 1px solid var(--hs-grey);
-  font-size: 11px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.22);
+  border-bottom: 1px solid rgba(255, 106, 20, 0.18);
+  font-size: 10px;
   color: var(--hs-text);
   letter-spacing: 0.6px;
   font-variant-numeric: tabular-nums;
@@ -717,6 +729,14 @@ export const UI_STYLES = `
   overflow-y: auto;
   padding: 4px 10px 6px 10px;
   scroll-behavior: smooth;
+  /* Pointer events back ON only inside the body so the user can scroll
+   * the log if they want to read older lines. The outer .hs-terminal
+   * is pointer-events:none so the rest of the panel stays click-through. */
+  pointer-events: auto;
+  /* Subtle fade at the top so newly-arriving lines feel like they
+   * scroll INTO existence rather than popping in mid-air. */
+  mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 6px), transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 6px), transparent 100%);
 }
 .hs-term-line {
   white-space: pre-wrap;
