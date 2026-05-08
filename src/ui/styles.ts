@@ -366,6 +366,46 @@ export const UI_STYLES = `
   letter-spacing: 2px;
   text-transform: uppercase;
 }
+.hs-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.hs-preset-chip {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--hs-grey-2);
+  color: var(--hs-text-dim);
+  font-family: var(--hs-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  height: 20px;
+  min-width: 50px;
+  border-radius: 999px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+.hs-preset-chip:hover {
+  color: var(--hs-text);
+  border-color: var(--hs-orange-glow);
+}
+.hs-preset-chip:focus-visible {
+  outline: 2px solid var(--hs-orange);
+  outline-offset: 2px;
+}
+@keyframes hs-preset-flash {
+  0%   { background: var(--hs-orange); color: #0a0a0c; border-color: var(--hs-orange); }
+  100% { background: transparent;       color: var(--hs-text-dim); border-color: var(--hs-grey-2); }
+}
+.hs-preset-chip.hs-preset-flash {
+  animation: hs-preset-flash 600ms ease-out both;
+}
+
 .hs-settings-section {
   margin-top: 10px;
   padding-top: 8px;
@@ -826,7 +866,8 @@ export const UI_STYLES = `
   .hs-onboard-card::after,
   .hs-onboard-btn,
   .hs-term-status .hs-term-rec,
-  .hs-terminal {
+  .hs-terminal,
+  .hs-preset-chip.hs-preset-flash {
     animation: none !important;
   }
 }

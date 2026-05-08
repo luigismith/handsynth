@@ -16,6 +16,7 @@ import type {
   VibeId,
 } from '@contracts/contracts';
 import { VIBES } from '@presets/vibes';
+import { FACTORY_PRESETS, type FactoryPreset } from '@presets/factory-presets';
 import { injectStyles } from './styles';
 import { Knob, type KnobOpts } from './Knob';
 import {
@@ -110,6 +111,25 @@ export class SettingsPanelImpl {
     sub.textContent = 'EDIT · SAVE · LOAD';
     header.append(title, sub);
     card.appendChild(header);
+
+    // Factory preset chip strip — quick-apply timbre banks above the knobs.
+    // Distinct from the user-saved patch list (below the knobs).
+    const presetRow = document.createElement('div');
+    presetRow.className = 'hs-preset-row';
+    presetRow.setAttribute('role', 'group');
+    presetRow.setAttribute('aria-label', 'Factory presets');
+    for (const preset of FACTORY_PRESETS) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'hs-preset-chip';
+      chip.textContent = preset.name;
+      chip.title = preset.tagline;
+      chip.setAttribute('aria-label', `Apply preset ${preset.name}: ${preset.tagline}`);
+      chip.dataset.presetId = preset.id;
+      chip.addEventListener('click', () => this.applyFactoryPreset(preset, chip));
+      presetRow.appendChild(chip);
+    }
+    card.appendChild(presetRow);
 
     // Sections.
     const initial = deps.getCurrentParams();
@@ -330,6 +350,63 @@ export class SettingsPanelImpl {
       [def.id]: v,
     } as Partial<AudioEngineParams>;
     this.deps.audio.setParams(partial);
+  }
+
+  // ------------------------------------------------------------------------
+  // Factory preset application
+  // ------------------------------------------------------------------------
+
+  /**
+   * Apply a factory preset as a one-shot: push params to the audio engine,
+   * update knob visuals to match, ramp BPM if specified, and flash the
+   * clicked chip briefly to confirm. There's no persistent "active" state —
+   * the user can keep tweaking afterwards.
+   */
+  private applyFactoryPreset(preset: FactoryPreset, chip: HTMLButtonElement): void {
+    if (!this.deps) return;
+
+    // Split out bpm — it isn't an AudioEngineParam, it goes to Tone.Transport.
+    const { bpm, ...audioParams } = preset.params;
+
+    // Push timbral params first so the engine smooths them.
+    if (Object.keys(audioParams).length > 0) {
+      this.deps.audio.setParams(audioParams as Partial<AudioEngineParams>);
+    }
+
+    // Ramp BPM if the preset has a tempo identity.
+    if (typeof bpm === 'number') {
+      this.bpmCurrent = bpm;
+      void import('tone').then((Tone) => {
+        try {
+          const t = Tone.getTransport()?.bpm;
+          if (t && typeof (t as { rampTo?: unknown }).rampTo === 'function') {
+            t.rampTo(bpm, 0.5);
+          }
+        } catch {
+          /* noop — outside the audio context */
+        }
+      });
+    }
+
+    // Mirror knob visuals — fire=false so we don't double-push to audio.
+    for (const def of KNOB_DEFS) {
+      if (def.id === 'intensity') continue;
+      const k = this.knobs.get(def.id);
+      if (!k) continue;
+      const v = (preset.params as Record<string, number | undefined>)[def.id];
+      if (typeof v === 'number') k.setValue(v, false);
+    }
+
+    // Brief flash to confirm — class auto-removes when the animation ends.
+    chip.classList.remove('hs-preset-flash');
+    // Force reflow so re-adding the class restarts the keyframe animation.
+    void chip.offsetWidth;
+    chip.classList.add('hs-preset-flash');
+    const onEnd = (): void => {
+      chip.classList.remove('hs-preset-flash');
+      chip.removeEventListener('animationend', onEnd);
+    };
+    chip.addEventListener('animationend', onEnd);
   }
 
   // ------------------------------------------------------------------------

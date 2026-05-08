@@ -13,6 +13,7 @@ import {
   deletePatch,
   makePatchId,
 } from './patches';
+import { FACTORY_PRESETS } from '@presets/factory-presets';
 import type { AudioEngine, MusicBrain, AudioEngineParams, VibeId } from '@contracts/contracts';
 
 function stubAudio(): AudioEngine & { lastSet: Partial<AudioEngineParams> } {
@@ -274,6 +275,86 @@ describe('SettingsPanelImpl', () => {
     delBtn.click();
     expect(loadPatches()).toEqual([]);
     expect(parent.querySelector('.hs-patches-row')).toBeNull();
+    panel.unmount();
+  });
+
+  it('renders one factory preset chip per FACTORY_PRESETS entry', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const chips = parent.querySelectorAll('.hs-preset-chip');
+    expect(chips.length).toBe(FACTORY_PRESETS.length);
+    const names = Array.from(chips).map((c) => (c.textContent ?? '').trim());
+    expect(names).toEqual(FACTORY_PRESETS.map((p) => p.name));
+    panel.unmount();
+  });
+
+  it('clicking a factory preset chip pushes its params via audio.setParams', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    // Pick a non-INIT preset with a strong identity (DUB) so we can assert on
+    // identifying knob values.
+    const dub = FACTORY_PRESETS.find((p) => p.id === 'dub')!;
+    const chip = parent.querySelector(
+      `.hs-preset-chip[data-preset-id="dub"]`,
+    ) as HTMLButtonElement;
+    expect(chip).not.toBeNull();
+    chip.click();
+    expect(deps.audio.setParams).toHaveBeenCalled();
+    // Last call should not contain bpm (filtered out before forwarding).
+    const setParamsMock = vi.mocked(deps.audio.setParams);
+    const lastCall = setParamsMock.mock.calls.at(-1)?.[0] as
+      | (Partial<AudioEngineParams> & { bpm?: unknown })
+      | undefined;
+    expect(lastCall).toBeDefined();
+    expect((lastCall as { bpm?: unknown }).bpm).toBeUndefined();
+    expect(lastCall?.delayFeedback).toBe(dub.params.delayFeedback);
+    expect(lastCall?.reverbWet).toBe(dub.params.reverbWet);
+    panel.unmount();
+  });
+
+  it('clicking a factory preset chip updates each knob to the preset value', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const acid = FACTORY_PRESETS.find((p) => p.id === 'acid')!;
+    const chip = parent.querySelector(
+      `.hs-preset-chip[data-preset-id="acid"]`,
+    ) as HTMLButtonElement;
+    chip.click();
+    // Map knob aria labels back to ids via the KNOB_DEFS labels we know about.
+    const dials = parent.querySelectorAll('.hs-knob-dial');
+    const byLabel = new Map<string, Element>();
+    for (const d of Array.from(dials)) {
+      byLabel.set(d.getAttribute('aria-label') ?? '', d);
+    }
+    // Cutoff is logarithmic + snapped to step 1 so it round-trips exactly.
+    const cutoff = byLabel.get('Cutoff');
+    expect(cutoff?.getAttribute('aria-valuenow')).toBe(String(acid.params.filterCutoff));
+    const q = byLabel.get('Q');
+    expect(q?.getAttribute('aria-valuenow')).toBe(String(acid.params.filterResonance));
+    // Brightness uses step 0.01 — snap arithmetic produces float drift, so
+    // assert numerically-close rather than string-equal.
+    const bright = byLabel.get('Bright');
+    expect(Number(bright?.getAttribute('aria-valuenow'))).toBeCloseTo(
+      acid.params.brightness as number,
+      6,
+    );
+    panel.unmount();
+  });
+
+  it('a factory preset without a bpm leaves bpm-knob untouched', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const bpmDial = Array.from(parent.querySelectorAll('.hs-knob-dial')).find(
+      (d) => d.getAttribute('aria-label') === 'BPM',
+    );
+    const before = bpmDial?.getAttribute('aria-valuenow');
+    // ACID has no bpm field.
+    const chip = parent.querySelector(
+      `.hs-preset-chip[data-preset-id="acid"]`,
+    ) as HTMLButtonElement;
+    chip.click();
+    expect(bpmDial?.getAttribute('aria-valuenow')).toBe(before);
     panel.unmount();
   });
 
