@@ -120,6 +120,29 @@ describe('HelpPanelImpl', () => {
     expect(overlay?.classList.contains('hs-collapsed')).toBe(true);
   });
 
+  it('responds to letter "h" by toggling visibility (international-layout safe)', () => {
+    panel.mount(parent);
+    expect(panel.isVisible()).toBe(false);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' }));
+    expect(panel.isVisible()).toBe(true);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' }));
+    const overlay = parent.querySelector('.hs-help-overlay');
+    expect(overlay?.classList.contains('hs-collapsed')).toBe(true);
+  });
+
+  it('also responds to capital "H" (Caps Lock or Shift)', () => {
+    panel.mount(parent);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'H' }));
+    expect(panel.isVisible()).toBe(true);
+  });
+
+  it('does NOT respond to "?" anymore (the layout-dependent symbol was removed)', () => {
+    panel.mount(parent);
+    expect(panel.isVisible()).toBe(false);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    expect(panel.isVisible()).toBe(false);
+  });
+
   it('Escape closes the panel when visible (no-op when hidden)', () => {
     panel.mount(parent);
     panel.setVisible(true);

@@ -214,13 +214,17 @@ button clears the stored override.
 
 ## Keyboard shortcuts
 
+All shortcuts are letter keys or function/control keys, so they stay in the
+same physical position on every international keyboard layout (US, IT, FR,
+DE, etc.). No symbol-key dependencies.
+
 | Key | Action |
 |---|---|
-| `` ` `` (backtick) | Toggle the live event terminal (left side) |
+| `t` | Toggle the live event terminal (left side) |
 | `p` | Toggle the PATCH editor |
+| `h` or `F1` | Toggle this help panel |
 | `m` | Flip the selfie mirror |
 | `Escape` | Mute / unmute the audio (STOP) |
-| `F1` or `?` | Toggle this help panel |
 
 When the help panel or the patch editor is open, `Escape` closes the panel
 first; press it again to mute.

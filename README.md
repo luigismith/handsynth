@@ -127,11 +127,13 @@ for the full cheat sheet.
 
 | Key | Action |
 |---|---|
-| `` ` `` | Toggle the live event terminal (left side) |
+| `t` | Toggle the live event terminal (left side) |
 | `p` | Toggle the PATCH editor |
+| `h` or `F1` | Toggle the in-app manual (also exposed as the bottom-right help icon) |
 | `m` | Flip the selfie mirror (only if your webcam stream is already pre-mirrored) |
 | `Escape` | Mute / unmute the audio (also exposed as the bottom-right STOP icon) |
-| `F1` or `?` | Toggle the in-app manual (also exposed as the bottom-right help icon) |
+
+All shortcuts use letter or function/control keys so they remain reachable on every international keyboard layout (no symbol-key dependencies).
 
 A small bottom-right HUD strip surfaces these as three tiny icon buttons (STOP / TERMINAL / HELP) for users who prefer a click. See [`USER_MANUAL.md`](./USER_MANUAL.md) for the long-form user guide.
 

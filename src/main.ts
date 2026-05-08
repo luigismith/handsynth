@@ -162,7 +162,9 @@ async function bootstrap(): Promise<void> {
   // Phase 3.7: in-app manual + bottom-right HUD controls. Help panel renders
   // USER_MANUAL.md (imported via Vite ?raw); the HUD strip surfaces three
   // tiny icons for STOP / TERMINAL / HELP that mirror the keyboard
-  // shortcuts (Esc / ` / F1).
+  // shortcuts (Esc / t / h | F1). All shortcut keys are letters or
+  // function/control keys so they remain reachable on every international
+  // keyboard layout (no symbol keys whose position varies per layout).
   const helpHost = $('help-host');
   const hudHost = $('hud-controls-host');
 
@@ -172,7 +174,7 @@ async function bootstrap(): Promise<void> {
   // Track terminal visibility locally so the HUD's terminal button can flip
   // it. The Terminal owns the actual visibility state — we just remember
   // what we last asked for so the icon's click toggles correctly even when
-  // the user used the backtick key in between.
+  // the user used the 't' key in between.
   let terminalVisible = false;
 
   // Track mute state locally (AudioEngine doesn't emit mute events). HUD
@@ -189,7 +191,7 @@ async function bootstrap(): Promise<void> {
     toggleHelp: () => help.setVisible(!help.isVisible()),
   });
 
-  // Global key bindings for the new icons. The HelpPanel handles F1 / ? /
+  // Global key bindings for the new icons. The HelpPanel handles F1 / h /
   // Esc-while-open itself; we only intercept Escape-as-mute (when help is
   // closed) here.
   window.addEventListener('keydown', (e) => {
@@ -203,13 +205,13 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  // Sync HUD's terminal-visibility tracking with the user's backtick key
+  // Sync HUD's terminal-visibility tracking with the user's 't' key
   // toggles by listening on the same key. We only flip our cached boolean;
   // the Terminal already toggled itself in response to the same event.
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
     if (isTypingTarget(e.target)) return;
-    if (e.key === '`') {
+    if (e.key.toLowerCase() === 't') {
       terminalVisible = !terminalVisible;
     }
   });
@@ -230,7 +232,7 @@ async function bootstrap(): Promise<void> {
     console.info('[mirror] selfie mirror =', on);
   };
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'm' && !isTypingTarget(e.target)) {
+    if (e.key.toLowerCase() === 'm' && !isTypingTarget(e.target)) {
       applyMirror(!mirrorOn);
       e.preventDefault();
     }

@@ -54,7 +54,7 @@ export class HudControlsImpl {
 
     this.termBtn = this.makeBtn(
       'hs-hud-terminal',
-      'Toggle terminal (`)',
+      'Toggle terminal (T)',
       // "Not" sign — reads as a corner of a console; cheap & monospace-safe.
       '⌐',
       () => deps.toggleTerminal(),
@@ -62,7 +62,7 @@ export class HudControlsImpl {
 
     this.helpBtn = this.makeBtn(
       'hs-hud-help',
-      'Help / manual (F1)',
+      'Help / manual (H or F1)',
       '?',
       () => deps.toggleHelp(),
     );

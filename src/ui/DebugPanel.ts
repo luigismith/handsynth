@@ -27,7 +27,9 @@ export interface DebugPanelDeps {
   setVibe: (id: VibeId) => void;
 }
 
-const KEY = '?';
+// 'd' for debug — letter keys are reachable on every international layout
+// (the original '?' requires Shift+/ on US but moves elsewhere on IT/FR/DE).
+const KEY = 'd';
 
 interface SliderDef {
   id: keyof AudioEngineParams | 'bpm' | 'intensity';
@@ -189,7 +191,7 @@ export class DebugPanelImpl implements DebugPanelApi {
     toggle.addEventListener('click', () => this.setVisible(card.hidden));
 
     this.keydownHandler = (e: KeyboardEvent): void => {
-      if (e.key === KEY && !this.isTypingTarget(e.target)) {
+      if (e.key.toLowerCase() === KEY && !this.isTypingTarget(e.target)) {
         this.setVisible(this.cardEl?.hidden ?? true);
         e.preventDefault();
       }

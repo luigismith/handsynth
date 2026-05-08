@@ -29,7 +29,10 @@ export interface TerminalDeps {
   getMapperState: () => { intensity: number; mood: string; bpm: number };
 }
 
-const TOGGLE_KEY = '`';
+// 't' for terminal — letter keys stay reachable on every international layout
+// (backtick `` ` `` was the original choice but moves position on IT/FR/DE
+// keyboards or requires a dead-key combo).
+const TOGGLE_KEY = 't';
 const BUFFER_CAP = 60;
 const GESTURE_THROTTLE_MS = 250;
 
@@ -161,7 +164,7 @@ export class TerminalImpl {
 
     // Toggle key.
     this.keydownHandler = (e: KeyboardEvent) => {
-      if (e.key === TOGGLE_KEY && !this.isTypingTarget(e.target)) {
+      if (e.key.toLowerCase() === TOGGLE_KEY && !this.isTypingTarget(e.target)) {
         this.setVisible(this.root?.hidden ?? false);
         e.preventDefault();
       }
@@ -170,7 +173,7 @@ export class TerminalImpl {
 
     this.appendLine(
       'info',
-      'handsynth terminal ready · ` toggle · esc mute · F1 help',
+      'handsynth terminal ready · t toggle · esc mute · h help',
     );
   }
 

@@ -172,7 +172,7 @@ export class SettingsPanelImpl {
     title.textContent = 'PATCH';
     const sub = document.createElement('span');
     sub.className = 'hs-settings-sub';
-    sub.textContent = 'P · ESC MUTE · F1 HELP';
+    sub.textContent = 'P · ESC MUTE · H HELP';
     header.append(title, sub);
     card.appendChild(header);
 
@@ -328,7 +328,7 @@ export class SettingsPanelImpl {
 
     // Keybinding.
     this.keydownHandler = (e: KeyboardEvent) => {
-      if (e.key === TOGGLE_KEY && !this.isTypingTarget(e.target)) {
+      if (e.key.toLowerCase() === TOGGLE_KEY && !this.isTypingTarget(e.target)) {
         this.setVisible(!this.isVisible());
         e.preventDefault();
       }

@@ -203,7 +203,10 @@ function renderTable(header: string[], body: string[][]): string {
 // HelpPanelImpl
 // ---------------------------------------------------------------------------
 
-const TOGGLE_KEYS = new Set(['F1', '?']);
+// F1 stays (function keys are layout-independent). Symbol-key '?' was the
+// original alternate but its position varies per international keyboard
+// layout — switched to letter 'h' (help) which is universal.
+const TOGGLE_KEYS = new Set(['F1', 'h', 'H']);
 
 export class HelpPanelImpl {
   private mounted = false;
@@ -236,7 +239,7 @@ export class HelpPanelImpl {
     title.textContent = 'MANUAL';
     const sub = document.createElement('span');
     sub.className = 'hs-help-sub';
-    sub.textContent = 'PRESS ESC OR F1 TO CLOSE';
+    sub.textContent = 'PRESS ESC OR H TO CLOSE';
     header.append(title, sub);
     card.appendChild(header);
 
@@ -265,8 +268,8 @@ export class HelpPanelImpl {
     };
     root.addEventListener('click', this.clickOutsideHandler);
 
-    // Global Esc / F1 / ? handling. The HudControls help button is the
-    // alternate path. F1 / ? toggle visibility; Esc only closes.
+    // Global Esc / F1 / H handling. The HudControls help button is the
+    // alternate path. F1 / H toggle visibility; Esc only closes.
     this.keydownHandler = (e: KeyboardEvent) => {
       if (this.isTypingTarget(e.target)) return;
       if (e.key === 'Escape' && this.isVisible()) {
