@@ -163,8 +163,22 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
   const initialVibe = VIBES[DEFAULT_VIBE];
 
   // 1. Audio (must run inside user-gesture stack)
+  console.info('[boot] starting audio…');
   await audio.init();
+  // Belt-and-suspenders: explicit resume() in case the context started
+  // suspended despite the user-gesture context (some Safari builds).
+  try {
+    await Tone.getContext().resume();
+  } catch (e) {
+    console.warn('[boot] context.resume() failed', e);
+  }
   audio.loadVibe(initialVibe);
+  console.info(
+    '[boot] audio ready · context state:',
+    Tone.getContext().state,
+    '· isReady:',
+    audio.isReady(),
+  );
 
   // 2. Mapper attach — required before start() per its contract.
   mapper.attach({ audio, music, hands });
@@ -176,13 +190,26 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
     await hands.init(videoEl);
     hands.start();
     handsLive = true;
+    console.info('[boot] hand tracking live');
   } catch (err) {
-    console.warn('[main] hand tracking unavailable, falling back to autopilot:', err);
+    console.warn(
+      '[boot] hand tracking unavailable, falling back to autopilot:',
+      err,
+    );
   }
 
-  // 4. Music + mapper run regardless.
-  music.start();
+  // 4. Wire mapper → music BEFORE music starts emitting events. This
+  //    ensures the very first scheduled chord (fired inside music.start())
+  //    reaches AudioEngine via the InteractionMapper subscription instead
+  //    of being lost to the console-log fallback.
   mapper.start();
+  music.start();
+  console.info(
+    '[boot] music + mapper running · transport bpm:',
+    Tone.getTransport().bpm.value,
+    '· transport state:',
+    Tone.getTransport().state,
+  );
 
   if (!handsLive) {
     mapper.startAutopilot();
@@ -193,6 +220,21 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
 
   // 5. Visualizer mounts last so analyser tap is hot.
   visual.mount(canvasEl, { audio, hands, music });
+
+  // 6. Smoke test — schedule a quiet pad chord 200ms in so the user gets
+  //    immediate audible feedback even before MusicBrain's first beat.
+  setTimeout(() => {
+    try {
+      audio.triggerChord({
+        notes: ['C4', 'E4', 'G4'],
+        duration: '2n',
+        time: '+0.05',
+      });
+      console.info('[boot] test chord fired');
+    } catch (e) {
+      console.warn('[boot] test chord failed', e);
+    }
+  }, 200);
 }
 
 void bootstrap();

@@ -37,12 +37,14 @@
         inset: 0;
       }
       /*
-       * Webcam: subtle backdrop. UX caveat — we deliberately do NOT mirror via
-       * `transform: scaleX(-1)` here, because the Visualizer overlays
-       * landmark-derived graphics that share the un-mirrored MediaPipe
-       * coordinate space. Flipping CSS would desync the overlay. Low opacity
-       * keeps the un-mirrored video unobtrusive. TODO: revisit by adding a
-       * mirror flag to the Visualizer once landmark overlays land.
+       * Webcam + visualizer are BOTH CSS-mirrored (selfie style). MediaPipe
+       * reads the raw pixel data of the <video> element, which is unaffected
+       * by CSS transforms — so MediaPipe still computes landmarks in the
+       * un-mirrored frame, but they're DRAWN on a flipped canvas, which
+       * lands them on top of the flipped video where the user expects to
+       * see their own hand. The HandTracker already swaps MediaPipe's
+       * handedness labels for the un-mirrored input, so right/left mappings
+       * are correct.
        */
       #webcam {
         position: absolute;
@@ -53,11 +55,20 @@
         opacity: 0.18;
         z-index: 1;
         pointer-events: none;
+        transform: scaleX(-1);
       }
       #visualizer {
         position: absolute;
         inset: 0;
         z-index: 2;
+      }
+      /*
+       * Mirror EVERY canvas inside #app (p5 in instance mode replaces the
+       * placeholder with a freshly-created canvas that doesn't inherit the
+       * #visualizer id). The selector is broad on purpose.
+       */
+      #app canvas {
+        transform: scaleX(-1);
       }
       #ui-layer {
         position: absolute;
