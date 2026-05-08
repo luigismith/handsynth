@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Camera access for MediaPipe hand/face tracking via getUserMedia. -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+
+    <!-- V8 / WebAssembly JIT under hardened runtime. Required so the renderer
+         can execute jitted JS and the MediaPipe WASM blob. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- Required for Electron 20+ on hardened runtime; unmaps protected memory
+         which V8 needs at startup. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Allow loading of unsigned dylibs that ship inside the .app bundle
+         (Electron's Framework). -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

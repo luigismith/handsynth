@@ -6,6 +6,14 @@ node_modules/
 dist/
 .vite/
 
+# Electron / electron-builder packaged installers
+release/
+
+# Platform-native icons are generated locally from electron/icons/icon.png
+# (see electron/icons/README.md). The committed PNG is the source of truth.
+electron/icons/icon.ico
+electron/icons/icon.icns
+
 # Test / coverage
 coverage/
 *.lcov
