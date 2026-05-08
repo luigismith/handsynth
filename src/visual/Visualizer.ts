@@ -136,6 +136,17 @@ export class VisualizerImpl implements Visualizer {
   private hiddenPlaceholder: HTMLCanvasElement | null = null;
   private placeholderPrevDisplay: string | null = null;
 
+  // LEAK FIX: keep refs to the <video> resize/loadedmetadata handlers so
+  // unmount() can detach them. Without this, an HMR re-mount stacks
+  // resize listeners on the same <video> node — every webcam-resolution
+  // change then re-runs updateVideoCover() once per stale instance, and
+  // the closures retain `this` (the previous Visualizer) keeping the old
+  // sketch alive. Not the freeze cause in production (mount runs once),
+  // but free correctness now that we're audit-passing the file.
+  private videoEl: HTMLVideoElement | null = null;
+  private videoLoadedMetaHandler: (() => void) | null = null;
+  private videoResizeHandler: (() => void) | null = null;
+
   // Wraps the FFT pull so we can substitute it during tests.
   private rafHandle: number | null = null;
 
@@ -279,8 +290,15 @@ export class VisualizerImpl implements Visualizer {
     this.updateVideoCover();
     const v = document.getElementById('webcam') as HTMLVideoElement | null;
     if (v) {
-      v.addEventListener('loadedmetadata', () => this.updateVideoCover(), { once: true });
-      v.addEventListener('resize', () => this.updateVideoCover());
+      // LEAK FIX: store handler refs so unmount() can detach. The
+      // loadedmetadata listener uses {once:true} so it self-cleans, but the
+      // resize listener is long-lived and previously stayed attached to the
+      // <video> across HMR remounts.
+      this.videoEl = v;
+      this.videoLoadedMetaHandler = (): void => this.updateVideoCover();
+      this.videoResizeHandler = (): void => this.updateVideoCover();
+      v.addEventListener('loadedmetadata', this.videoLoadedMetaHandler, { once: true });
+      v.addEventListener('resize', this.videoResizeHandler);
     }
 
     // Pull FFT data each animation frame. We use rAF here (not p5's draw
@@ -372,6 +390,19 @@ export class VisualizerImpl implements Visualizer {
       window.removeEventListener('resize', this.resizeHandler);
       this.resizeHandler = null;
     }
+
+    // LEAK FIX: detach <video> listeners we attached in mount().
+    if (this.videoEl) {
+      if (this.videoLoadedMetaHandler) {
+        this.videoEl.removeEventListener('loadedmetadata', this.videoLoadedMetaHandler);
+      }
+      if (this.videoResizeHandler) {
+        this.videoEl.removeEventListener('resize', this.videoResizeHandler);
+      }
+    }
+    this.videoEl = null;
+    this.videoLoadedMetaHandler = null;
+    this.videoResizeHandler = null;
 
     // Detach reduced-motion listener.
     if (this.reducedMotionMql && this.reducedMotionListener) {

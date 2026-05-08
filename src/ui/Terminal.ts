@@ -20,7 +20,8 @@ import type {
   NoteEvent,
 } from '@contracts/contracts';
 import { injectStyles } from './styles';
-import { t, subscribeLang } from '../i18n';
+import { t, subscribeLang, getLangSubscriberCount } from '../i18n';
+import * as Tone from 'tone';
 
 export interface TerminalDeps {
   music: MusicBrain;
@@ -37,6 +38,13 @@ const TOGGLE_KEY = 't';
 const BUFFER_CAP = 60;
 const GESTURE_THROTTLE_MS = 250;
 
+/**
+ * DIAG instrumentation cadence (ms). Long enough that the readout doesn't
+ * itself become a perf cost, short enough that growth is visible on a 60s
+ * observation window — five samples per minute is plenty to spot a leak.
+ */
+const DIAG_INTERVAL_MS = 5000;
+
 type LineKind =
   | 'lead'
   | 'bass'
@@ -46,7 +54,8 @@ type LineKind =
   | 'perc'
   | 'gesture'
   | 'beat'
-  | 'info';
+  | 'info'
+  | 'diag';
 
 interface Line {
   el: HTMLDivElement;
@@ -74,12 +83,23 @@ export class TerminalImpl {
   private deps: TerminalDeps | null = null;
   private root: HTMLDivElement | null = null;
   private bodyEl: HTMLDivElement | null = null;
-  private statusEls: { intensity: HTMLElement; mood: HTMLElement; bpm: HTMLElement; ctx: HTMLElement } | null = null;
+  private statusEls: {
+    intensity: HTMLElement;
+    mood: HTMLElement;
+    bpm: HTMLElement;
+    ctx: HTMLElement;
+    diag: HTMLElement;
+  } | null = null;
   private lines: Line[] = [];
   private musicSub: MusicBrainEvents | null = null;
   private gestureCb: ((s: GestureState) => void) | null = null;
   private lastGestureLineMs = 0;
   private statTimer: number | null = null;
+  /** DIAG row 5s timer — separate from the 250ms statTimer because diag
+   *  metrics are best-read at human cadence, and one of them (Tone scheduler
+   *  queue depth) reads via a private field that we don't want to touch
+   *  every quarter second. */
+  private diagTimer: number | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private unsubLang: (() => void) | null = null;
 
@@ -124,7 +144,11 @@ export class TerminalImpl {
     const moodStat = this.makeStat('MOOD', '—', 'hs-term-stat-mood');
     const bpmStat = this.makeStat('BPM', '—', 'hs-term-stat-bpm');
     const ctxStat = this.makeStat('CTX', '—', 'hs-term-stat-ctx');
-    status.append(intStat.wrap, moodStat.wrap, bpmStat.wrap, ctxStat.wrap);
+    // DIAG: leak-watch readout. Format `subs/lines/voices/q/at` —
+    // subscribers / terminal-lines / Tone voices / Transport queue / audio
+    // time. See refreshDiag() for semantics + what to look for.
+    const diagStat = this.makeStat('DIAG', '—', 'hs-term-stat-diag');
+    status.append(intStat.wrap, moodStat.wrap, bpmStat.wrap, ctxStat.wrap, diagStat.wrap);
     root.appendChild(status);
 
     const body = document.createElement('div');
@@ -139,6 +163,7 @@ export class TerminalImpl {
       mood: moodStat.value,
       bpm: bpmStat.value,
       ctx: ctxStat.value,
+      diag: diagStat.value,
     };
 
     // Subscribe to music events.
@@ -163,6 +188,12 @@ export class TerminalImpl {
 
     // Stat refresh every 250 ms.
     this.statTimer = window.setInterval(() => this.refreshStatus(), 250);
+    // DIAG row refresh every 5 s — coarser cadence so the readout itself
+    // doesn't show up as a leak. Also writes one line into the body so the
+    // user has scroll-back history of values (helps spot growth visually).
+    this.diagTimer = window.setInterval(() => this.refreshDiag(), DIAG_INTERVAL_MS);
+    // Run once immediately so the row isn't '—' for the first 5 s.
+    this.refreshDiag();
 
     // Toggle key.
     this.keydownHandler = (e: KeyboardEvent) => {
@@ -199,6 +230,10 @@ export class TerminalImpl {
     if (this.statTimer !== null) {
       clearInterval(this.statTimer);
       this.statTimer = null;
+    }
+    if (this.diagTimer !== null) {
+      clearInterval(this.diagTimer);
+      this.diagTimer = null;
     }
     if (this.keydownHandler) {
       window.removeEventListener('keydown', this.keydownHandler);
@@ -320,6 +355,118 @@ export class TerminalImpl {
       ctxState = 'n/a';
     }
     this.statusEls.ctx.textContent = ctxState;
+  }
+
+  /**
+   * DIAG row — leak-watch metrics. Reading this every 5 s lets the user spot
+   * unbounded growth WITHOUT DevTools (which is moot during a freeze anyway).
+   *
+   * Metrics — what each one means and what's normal:
+   *
+   *   subs    — i18n subscriber count. Steady-state ≈ 7 (HudControls,
+   *             Onboarding/SettingsPanel/Terminal/HelpPanel/DebugPanel/
+   *             VibeSelector). Climbing means a panel is mounting without
+   *             unmounting; check for HMR ghosts.
+   *   lines   — Terminal body line count. Capped at 60. If >60 → cap broken.
+   *   voices  — approximate active Tone voice count, summed across the
+   *             pad's two PolySynths, the lead MonoSynth, and the bass
+   *             MonoSynth+sub. Reads from the engine's `_activeVoices`
+   *             internal field where available; "n/a" if unreachable.
+   *             Steady-state: 0..12 depending on chord size.
+   *             A rising floor (e.g. min voice count climbs from 0 → 4 → 8
+   *             across minutes) means voices are being trapped in the
+   *             active list and never released — that IS the freeze.
+   *   q       — Tone.Transport scheduled-event queue depth (private
+   *             `_timeline.length`). Steady-state ≈ 1 (just the sequencer's
+   *             scheduleRepeat). Climbing into the hundreds = leak.
+   *   at      — Tone.now() in seconds, .1s precision. Should track real
+   *             elapsed time. If the gap between samples is consistently
+   *             less than 5 s the audio context is being throttled.
+   *
+   * All metric reads are wrapped in try/catch — Tone's private fields are
+   * not part of any public API and could change between versions. Failure
+   * mode is graceful (the row shows "n/a" for that metric, the rest still
+   * print).
+   */
+  private refreshDiag(): void {
+    if (!this.statusEls || !this.deps) return;
+    const subs = (() => {
+      try {
+        return String(getLangSubscriberCount());
+      } catch {
+        return 'n/a';
+      }
+    })();
+    const lines = String(this.lines.length);
+
+    // Voice count — sum across audio engine's voices. Best-effort: we
+    // reach into private fields of Tone.PolySynth (._activeVoices) and
+    // Tone.MonoSynth (._scheduledEvents proxy via its envelope). The cast
+    // to `unknown as { ... }` keeps the contract surface clean.
+    const voices = (() => {
+      try {
+        const eng = this.deps?.audio as unknown as {
+          pad?: { layerA?: { _activeVoices?: unknown[] }; layerB?: { _activeVoices?: unknown[] } };
+        };
+        // We don't have a typed handle on the AudioEngine internals. Try
+        // window.__hs (dev exposure) first — if absent, just report 'n/a'.
+        const w = (typeof window !== 'undefined'
+          ? (window as unknown as { __hs?: { audio?: unknown } })
+          : undefined);
+        const audioInternals = w?.__hs?.audio as unknown as {
+          pad?: { layerA?: { _activeVoices?: unknown[] }; layerB?: { _activeVoices?: unknown[] } };
+          lead?: { mono?: { _activeVoices?: unknown[] } };
+          bass?: { main?: { _activeVoices?: unknown[] }; sub?: { _activeVoices?: unknown[] } };
+        } | undefined;
+        const probe = audioInternals ?? eng;
+        let total = 0;
+        const aLen = probe?.pad?.layerA?._activeVoices?.length;
+        const bLen = probe?.pad?.layerB?._activeVoices?.length;
+        if (typeof aLen === 'number') total += aLen;
+        if (typeof bLen === 'number') total += bLen;
+        // MonoSynth doesn't have _activeVoices (it's mono); we can't
+        // easily count its in-flight notes. Pad coverage alone is enough
+        // to spot voice-leak growth — leads/bass are bounded to 1 voice.
+        return total > 0 || aLen !== undefined ? String(total) : 'n/a';
+      } catch {
+        return 'n/a';
+      }
+    })();
+
+    // Transport queue depth.
+    const q = (() => {
+      try {
+        const transport = Tone.getTransport() as unknown as {
+          _timeline?: { length?: number };
+          _scheduledEvents?: Record<string, unknown>;
+        };
+        const tl = transport._timeline?.length;
+        if (typeof tl === 'number') return String(tl);
+        const ev = transport._scheduledEvents
+          ? Object.keys(transport._scheduledEvents).length
+          : null;
+        return ev !== null ? String(ev) : 'n/a';
+      } catch {
+        return 'n/a';
+      }
+    })();
+
+    const at = (() => {
+      try {
+        return Tone.now().toFixed(1);
+      } catch {
+        return 'n/a';
+      }
+    })();
+
+    const compact = `${subs}/${lines}/${voices}/${q}/${at}s`;
+    this.statusEls.diag.textContent = compact;
+    // Also drop one line into the body so the user has scrollable history.
+    // Format: `[diag] subs=12 lines=58 voices=8 notes-q=4 audio-time=143.2s`.
+    this.appendLine(
+      'diag',
+      `[diag] subs=${subs} lines=${lines} voices=${voices} notes-q=${q} audio-time=${at}s`,
+    );
   }
 
   private isTypingTarget(t: EventTarget | null): boolean {

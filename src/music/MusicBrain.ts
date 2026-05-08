@@ -130,6 +130,19 @@ export class MusicBrainImpl implements MusicBrain {
     this.isStarted = false;
     this.sequencer.stop();
     this.currentChordIndex = 0;
+    // LEAK FIX: Belt-and-suspenders. The sequencer.stop() already clears
+    // the single scheduleRepeat we register, but if a future change adds
+    // additional Transport.schedule(...) calls without paired clear()s the
+    // queue would otherwise accumulate across vibe / scale changes. A
+    // global cancel(0) on stop() makes the cleanup contract explicit:
+    // "after stop(), the Transport timeline owes us nothing".
+    try {
+      Tone.getTransport().cancel(0);
+    } catch (e) {
+      // Transport may not be initialised in test harnesses without a
+      // running AudioContext. Non-fatal — silently ignore.
+      void e;
+    }
   }
 
   setInput(input: MusicBrainInput): void {

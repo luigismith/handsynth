@@ -448,13 +448,21 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
   // this, every HMR reload of main.ts piles another counter subscriber on
   // MusicBrain's Set, and after a few minutes the per-event fanout starts
   // burning real CPU. The dev exposure stays idempotent.
+  //
+  // Note: a slim subset (audio + Tone) is also exposed in prod so the
+  // Terminal HUD's DIAG row can count active Tone voices and the Transport
+  // queue depth. The contract surface is unchanged (we don't widen any
+  // public type) — we just stash references on `window.__hs` for the DIAG
+  // probe to read at runtime. This is the same trick the in-browser
+  // Claude Preview already uses; making it prod-safe lets users SEE leak
+  // growth without DevTools.
+  interface DebugWindow {
+    __hs?: Record<string, unknown> & { _counterSubscription?: object };
+  }
+  const debugWin = window as unknown as DebugWindow;
   if (import.meta.env?.DEV) {
-    interface DebugWindow {
-      __hs?: Record<string, unknown> & { _counterSubscription?: object };
-    }
-    const w = window as unknown as DebugWindow;
-    if (w.__hs?._counterSubscription) {
-      try { music.off(w.__hs._counterSubscription as never); } catch { /* noop */ }
+    if (debugWin.__hs?._counterSubscription) {
+      try { music.off(debugWin.__hs._counterSubscription as never); } catch { /* noop */ }
     }
     const counters = { lead: 0, bass: 0, chord: 0, kick: 0, hat: 0, perc: 0, beat: 0 };
     const counterSub = {
@@ -467,7 +475,11 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
       onBeat: () => { counters.beat += 1; },
     };
     music.on(counterSub);
-    w.__hs = { audio, music, hands, mapper, visual, face, Tone, counters, _counterSubscription: counterSub };
+    debugWin.__hs = { audio, music, hands, mapper, visual, face, Tone, counters, _counterSubscription: counterSub };
+  } else {
+    // PROD: only the bits the DIAG row reads. No counter subscription, no
+    // mapper/visual exposure — keeps the surface tiny.
+    debugWin.__hs = { audio, Tone };
   }
 
   // 6. Smoke test — schedule a quiet pad chord 200ms in so the user gets

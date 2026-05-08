@@ -251,4 +251,36 @@ describe('TerminalImpl', () => {
     expect(music.__sub).toBeNull();
     expect(hands.__cb).toBeNull();
   });
+
+  it('renders the DIAG status row and updates it on mount', () => {
+    // The DIAG row is the leak-watch readout. We assert two things:
+    //   1. The label "DIAG" appears in the status bar.
+    //   2. The row's value is non-empty after mount (refreshDiag runs once
+    //      synchronously at the end of mount()).
+    const term = new TerminalImpl();
+    term.mount(parent, makeDeps());
+    const diagRow = parent.querySelector('.hs-term-stat-diag') as HTMLElement;
+    expect(diagRow).not.toBeNull();
+    const labelEl = diagRow.querySelector('.hs-term-stat-label') as HTMLElement;
+    expect(labelEl?.textContent).toBe('DIAG');
+    const valueEl = diagRow.querySelector('span:last-child') as HTMLElement;
+    expect(valueEl).not.toBeNull();
+    // The format is `subs/lines/voices/q/at`. We don't pin exact values
+    // (Tone may not be initialised in tests) — just that something
+    // slash-separated landed there, not the placeholder dash.
+    expect(valueEl.textContent ?? '').not.toBe('—');
+    expect((valueEl.textContent ?? '')).toContain('/');
+    term.unmount();
+  });
+
+  it('writes a [diag] line into the body on each refresh', () => {
+    // refreshDiag also drops a body line so the user has scroll-back
+    // history. After mount() (which runs refreshDiag once) at least one
+    // line with data-kind="diag" should exist.
+    const term = new TerminalImpl();
+    term.mount(parent, makeDeps());
+    const diagLines = parent.querySelectorAll('.hs-term-line[data-kind="diag"]');
+    expect(diagLines.length).toBeGreaterThanOrEqual(1);
+    term.unmount();
+  });
 });

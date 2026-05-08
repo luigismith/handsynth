@@ -71,6 +71,20 @@ export function subscribeLang(cb: (lang: Lang) => void): () => void {
 }
 
 /**
+ * DIAG INSTRUMENTATION: number of currently-registered lang subscribers.
+ *
+ * Exported as a function (not the Set itself) so callers can't mutate the
+ * registry from outside. The Terminal HUD reads this every 5s and prints
+ * it on the DIAG row — a monotonic climb signals a panel mounting without
+ * unmounting (HMR cycles or a future bug). Steady-state: one subscriber per
+ * mounted panel that re-localises (today: HudControls + Onboarding +
+ * SettingsPanel + Terminal + HelpPanel + DebugPanel + VibeSelector ≈ 7).
+ */
+export function getLangSubscriberCount(): number {
+  return subscribers.size;
+}
+
+/**
  * Look up a key in the active dictionary. Falls back to English when the
  * key is missing in the current dict (defence against an out-of-band IT
  * dict), and finally to the key itself when even English is missing

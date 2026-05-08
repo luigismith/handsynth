@@ -788,6 +788,12 @@ export const UI_STYLES = `
 .hs-term-status .hs-term-stat-mood > span:last-child { color: var(--hs-amber); }
 .hs-term-status .hs-term-stat-bpm  > span:last-child { color: var(--hs-orange); }
 .hs-term-status .hs-term-stat-ctx  > span:last-child { color: var(--hs-orange); }
+/* DIAG row — leak-watch readout. Dim grey so it doesn't shout, but
+ * monospace alignment is preserved by the parent. */
+.hs-term-status .hs-term-stat-diag > span:last-child {
+  color: var(--hs-text-dim);
+  font-variant-numeric: tabular-nums;
+}
 .hs-term-body {
   flex: 1 1 auto;
   overflow-y: auto;
