@@ -430,15 +430,15 @@ export class HandTrackerImpl implements HandTracker {
       const raw = rawLandmarks[i];
       if (!raw || raw.length < NUM_LANDMARKS) continue;
 
-      // MediaPipe handedness assumes a SELFIE-mirrored input. With un-
-      // mirrored input (mirrorEnabled=true case), the labels arrive
-      // reversed and we swap them to user's POV: 'Left' → user's right.
-      // With pre-mirrored input (mirrorEnabled=false), MediaPipe's labels
-      // are already correct and we pass them through unchanged.
+      // Recent versions of MediaPipe FaceLandmarker / HandLandmarker
+      // determine handedness from the hand's pose / shape (thumb position
+      // relative to the rest), not from screen position. The reported
+      // 'Left'/'Right' is therefore the user's actual handedness regardless
+      // of whether the input was mirrored. Empirically verified in real
+      // Chrome with the user's webcam: MP says 'Right' when the user
+      // raises their physical right hand. So we pass through, don't swap.
       const cat = handedness[i]?.[0]?.categoryName ?? 'Right';
-      const side: 'left' | 'right' = this.mirrorEnabled
-        ? (cat === 'Left' ? 'right' : 'left')
-        : (cat === 'Left' ? 'left' : 'right');
+      const side: 'left' | 'right' = cat === 'Left' ? 'left' : 'right';
 
       // If two detections claim the same side, keep the first.
       if (seen.has(side)) continue;

@@ -79,19 +79,18 @@ const FINGERTIP_INDICES = [4, 8, 12, 16, 20] as const;
 // Palm landmarks used to compute hand center / radius.
 const PALM_INDICES = [0, 5, 9, 13, 17] as const;
 
-// MediaPipe x is in [0,1] from the camera POV (mirrored by webcam CSS). The
-// HandTracker comments note "x as already mirrored" because handedness has
-// been remapped, but the *coordinates* themselves come straight from
-// MediaPipe (camera POV). Since the on-screen webcam preview is flipped via
-// CSS `transform: scaleX(-1)`, the visualizer should mirror x as well so
-// the silhouette aligns with the user's actual hand position.
+// HandTracker already mirrors landmark x at its output boundary (when
+// mirrorEnabled=true) so the coordinates handed to the visualizer live in
+// the same selfie-mirrored frame as the CSS-flipped <video>. The visualizer
+// must NOT apply its own additional flip — that would double-mirror and
+// land the skeleton on the opposite side from the visible hand.
 function landmarkToScreen(
   lx: number,
   ly: number,
   width: number,
   height: number,
 ): [number, number] {
-  return [(1 - lx) * width, ly * height];
+  return [lx * width, ly * height];
 }
 
 export interface SketchHandle {
