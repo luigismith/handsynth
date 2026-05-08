@@ -51,8 +51,32 @@ export class AudioEngineImpl implements AudioEngine {
   }
 
   private async doInit(): Promise<void> {
-    // Tone.start() must run in a user-gesture handler. The caller (UI button)
-    // is responsible for that; we just await it.
+    // Audio robustness against main-thread stalls.
+    //
+    // The default Tone.js context targets low latency ('interactive',
+    // ~0.1s lookahead) which is fine when the main thread is healthy.
+    // On this app the main thread is busy with MediaPipe + p5; if it
+    // stalls > 100ms the scheduler can't post events in time and the
+    // listener hears a glitch / cutout. So we build the AudioContext
+    // ourselves with `latencyHint: 'playback'` (longer output buffer,
+    // glitch-resilient at the cost of ~150ms latency) and tell Tone to
+    // use it via setContext() BEFORE the first audio operation.
+    // latencyHint can ONLY be set at construction time on the underlying
+    // AudioContext — assigning it later silently no-ops. We also bump
+    // Tone's own lookahead to 0.3s so scheduled triggers are queued
+    // well ahead of when they need to fire.
+    try {
+      const raw = new AudioContext({ latencyHint: 'playback' });
+      const tuned = new Tone.Context(raw);
+      tuned.lookAhead = 0.3;
+      Tone.setContext(tuned);
+    } catch (e) {
+      console.warn('[AudioEngine] context construction failed, falling back to defaults', e);
+    }
+
+    // Tone.start() must run in a user-gesture handler. The caller (UI
+    // button) is responsible for that; we just await it. With our custom
+    // context already installed, .start() simply resumes it.
     await Tone.start();
 
     this.master = await createMasterChain();
