@@ -630,18 +630,20 @@ export class InteractionMapperImpl implements InteractionMapper {
     );
     this.pushMusicInput();
 
-    // Throttle param push to every other gesture frame. The previous
-    // 'every-frame' version made movement feel snappier, but pushing 24
-    // hand-tracker frames/sec × 6 params = ~144 rampTo commands/sec
-    // accumulated in Tone's scheduler at high lookahead (0.6s) and
-    // eventually triggered Chrome's 'page-is-unresponsive' watchdog.
-    // 12Hz param push is still smooth thanks to One Euro filtering on
-    // the input + Tone's own ~50 ms ramp interpolation.
-    this.frameTick = (this.frameTick + 1) & 1;
-    if (this.frameTick === 0 || this.handsBackFade) {
-      this.audio?.setParams(target);
+    // Push params, but ONLY the keys whose value changed meaningfully
+    // since the last frame. Two wins:
+    //   1) Gestures that move are reflected immediately (every-other-frame
+    //      throttle removed — fixes "audio sensitivity to movement").
+    //   2) Static gestures don't re-fire ramps every frame, so Tone's
+    //      scheduler queue stays bounded even with hands+mouth+eyes all
+    //      driving setParams (fixes the freeze regression that the
+    //      throttle was originally added to mitigate).
+    const diff = diffParams(this.lastParamSnapshot, target);
+    if (diff || this.handsBackFade) {
+      this.audio?.setParams(diff ?? target);
       this.lastParamSnapshot = target;
     }
+    void this.frameTick;
 
     // If we just left drone mode, this update path is fine — clear the flag.
     if (this.inDroneMode) {
@@ -993,6 +995,50 @@ export class InteractionMapperImpl implements InteractionMapper {
     };
     this.audio.triggerLead(event);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Utility: minimum-change thresholds for setParams diff (per-param ε). Below
+// these deltas a param is considered unchanged and not re-pushed. Tuned so
+// audio-imperceptible differences don't queue ramp events — the listener
+// still hears every meaningful change but the scheduler queue stays small.
+// ---------------------------------------------------------------------------
+
+const PARAM_EPS: Partial<Record<keyof AudioEngineParams, number>> = {
+  filterCutoff: 8,         // Hz — sub-perceptual at any cutoff
+  filterResonance: 0.05,   // Q
+  saturatorDrive: 0.01,
+  reverbWet: 0.005,
+  delayFeedback: 0.005,
+  delayWet: 0.005,
+  brightness: 0.005,
+  masterDuck: 0.005,
+};
+
+/**
+ * Return a Partial<AudioEngineParams> containing only the keys in `to`
+ * whose value differs from `from` by more than the per-param epsilon, or
+ * `null` if no key changed enough to push. The first call (no `from`)
+ * always returns a copy of `to`.
+ */
+function diffParams(
+  from: Partial<AudioEngineParams> | null,
+  to: Partial<AudioEngineParams>,
+): Partial<AudioEngineParams> | null {
+  if (!from) return { ...to };
+  const out: Partial<AudioEngineParams> = {};
+  let any = false;
+  for (const k of Object.keys(to) as (keyof AudioEngineParams)[]) {
+    const v = to[k];
+    if (typeof v !== 'number') continue;
+    const prev = from[k];
+    const eps = PARAM_EPS[k] ?? 0.005;
+    if (typeof prev !== 'number' || Math.abs(v - prev) > eps) {
+      out[k] = v;
+      any = true;
+    }
+  }
+  return any ? out : null;
 }
 
 // ---------------------------------------------------------------------------
