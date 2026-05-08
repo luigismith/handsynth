@@ -737,6 +737,17 @@ export const UI_STYLES = `
    * scroll INTO existence rather than popping in mid-air. */
   mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 6px), transparent 100%);
   -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 6px), transparent 100%);
+  /* Hide the scrollbar visually but keep scrolling functional. The
+   * terminal auto-scrolls to bottom on each new line; users can still
+   * wheel back to read older entries. */
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;        /* legacy IE / old Edge */
+}
+.hs-term-body::-webkit-scrollbar {
+  /* Chromium / Safari / new Edge */
+  width: 0;
+  height: 0;
+  display: none;
 }
 .hs-term-line {
   white-space: pre-wrap;
