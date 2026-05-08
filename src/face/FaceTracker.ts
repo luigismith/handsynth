@@ -44,12 +44,14 @@ const FACE_LOST_EDGE_SECONDS = 1.5;
 
 /**
  * Defensive update throttle (Hz). Face inference is expensive and runs on
- * the main thread alongside HandLandmarker. The user's audio kept
- * stuttering at 20 Hz — even after capping. Drop to 12 Hz: head poses
- * move slowly, the mouth-open value smooths through One Euro filter,
- * and the visualizer tolerates stale face state for 80 ms.
+ * the main thread alongside HandLandmarker. After a Web Worker offload
+ * attempt failed (Vite + MediaPipe incompatibility), we accept main-
+ * thread face inference but cap it at 8 Hz. Head poses move slowly, the
+ * mouth-open value smooths through One Euro, and the visualizer renders
+ * at the same rate as before — it just sees fresh landmarks every 125 ms
+ * instead of every 80 ms. Inaudibly slower; main-thread freed considerably.
  */
-const MAX_UPDATE_HZ = 12;
+const MAX_UPDATE_HZ = 8;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 /** Filter resets after this re-entry gap. */

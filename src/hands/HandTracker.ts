@@ -51,15 +51,17 @@ const NO_HANDS_EDGE_SECONDS = 2.0;
 
 /** Defensive update throttle (Hz) — rVFC already caps at refresh rate. */
 /**
- * Hand inference cap. Was 60 Hz; that's *too* greedy on the main thread when
- * we're also running FaceLandmarker (and Tone's scheduler, p5, the FFT pull,
- * UI listeners...). At 60 Hz on a mid-tier laptop both inferences combined
- * starved the audio scheduler and eventually triggered Chrome's
- * 'page-is-unresponsive' watchdog. 30 Hz is still buttery for hand
- * gestures (One Euro filter smooths the gaps) and frees ~half the
- * main-thread budget.
+ * Hand inference cap. After repeated user reports of audio stutter even
+ * with face tracking already capped at 12 Hz, the Web Worker offload
+ * attempt failed (Vite + MediaPipe + module-worker incompatibility), so
+ * we accept the main-thread inference and instead drop both rates as
+ * far as still feels responsive. 24 Hz hand inference + 8 Hz face
+ * inference = on average ~15ms/sec total inference vs ~30ms/sec at the
+ * old 30+12 Hz combo. The One Euro filter and the InteractionMapper's
+ * frame-throttled push smooth out the lower temporal density; gestures
+ * still feel snappy.
  */
-const MAX_UPDATE_HZ = 30;
+const MAX_UPDATE_HZ = 24;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 // ---------------------------------------------------------------------------
