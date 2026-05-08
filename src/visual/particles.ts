@@ -277,11 +277,8 @@ export function createParticleField(width: number, height: number): ParticleFiel
       // mid-band radial push removed — it was making particles fountain
       // outward from the canvas center on every drum hit, reading as
       // "particles spawning from the middle of the screen". The low-band
-      // size pulse stays.
-      void mid;
-      // High band still informs which palette ambient top-ups inherit
-      // (rare warm-amber accents instead of plain orange).
-      void high;
+      // size pulse stays. Both `mid` and `high` are still consumed below
+      // by the ambient top-up palette selector.
 
       for (let i = 0; i < pool.length; i += 1) {
         const p = pool[i]!;
@@ -312,19 +309,30 @@ export function createParticleField(width: number, height: number): ParticleFiel
       }
 
       // Top up to keep ambient density alive (slow trickle). Ambient
-      // particles use the GREY_DIM palette so they read like distant data
-      // points rather than competing with the foreground orange. Spawn at
-      // RANDOM canvas positions (not concentrated near center) so the
-      // field feels like a starfield, not an emitter.
+      // particles default to GREY_DIM so they read like distant data
+      // points rather than competing with the foreground orange — but
+      // when an FFT band is energetic the top-up inherits that band's
+      // warm palette, so the field sparkles in time with the music:
+      //   - low band hot   → ORANGE_DARK (subdued, embers)
+      //   - mid band hot   → ORANGE_GLOW (warm middle)
+      //   - high band hot  → ORANGE_HOT  (peak accent), with rare
+      //                       AMBER_BEAT focus accents (~15%)
+      // Spawn at RANDOM canvas positions (not concentrated near center)
+      // so the field feels like a starfield, not an emitter.
       void cx; void cy;
       if (aliveCount < MAX_PARTICLES * 0.4 && Math.random() < 0.2) {
         const sx = Math.random() * cw;
         const sy = Math.random() * ch;
-        // Rare warm-amber accent when high band is loud — the field
-        // sparkles in time with hi-hats / bright synths.
-        const palette = !reducedMotion && high > 0.6 && Math.random() < 0.15
-          ? PALETTE_HIGH_AMBER
-          : PALETTE_AMBIENT;
+        let palette: { hue: number; sat: number; bri: number } = PALETTE_AMBIENT;
+        if (!reducedMotion) {
+          if (high > 0.6) {
+            palette = Math.random() < 0.15 ? PALETTE_HIGH_AMBER : PALETTE_HIGH;
+          } else if (mid > 0.5) {
+            palette = PALETTE_MID;
+          } else if (low > 0.5) {
+            palette = PALETTE_LOW;
+          }
+        }
         spawn(sx, sy, palette, 1.5, speedScale);
       }
     },
