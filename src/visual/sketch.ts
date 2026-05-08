@@ -835,12 +835,12 @@ function drawPolyline(
 // no glow stack, no flicker.
 // ---------------------------------------------------------------------------
 
-/** Below this threshold the lasers don't render. Was 0.15 — that let
- *  resting/relaxed eyes still fire lasers because the EAR fallback +
- *  blendshape noise can pull eyesWide above 0.15 even when the user
- *  isn't trying. 0.45 means the user has to deliberately open their
- *  eyes wide (well past resting) for the lasers to engage. */
-const EYES_LASER_MIN = 0.45;
+/** Below this threshold the lasers don't render. Combined with
+ *  EYE_REST=0.92 in FaceTracker, this means the user has to push
+ *  mean-eye-openness from 0.92 (rest) to ~0.96+ before the lasers
+ *  engage — i.e. a clear deliberate "bang" wide-stare gesture. Normal
+ *  open eyes / casual gaze stays under threshold. */
+const EYES_LASER_MIN = 0.5;
 /** Maximum beam length in pixels (at eyesWide=1). */
 const EYES_LASER_MAX_LEN = 600;
 /** Minimum beam length while above threshold. */

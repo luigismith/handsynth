@@ -348,11 +348,11 @@ describe('drawEyeLasers', () => {
     expect(s.calls.length).toBe(0);
   });
 
-  it('emits at least 6 stroke calls (3 layers x 2 eyes) at eyesWide=0.5', () => {
+  it('emits at least 6 stroke calls (3 layers x 2 eyes) when above threshold', () => {
     const s = createStub();
     drawEyeLasers(
       s as unknown as Parameters<typeof drawEyeLasers>[0],
-      makeFaceWithEyeCorners({ eyesWide: 0.5 }),
+      makeFaceWithEyeCorners({ eyesWide: 0.8 }),
       1280,
       720,
       0,
