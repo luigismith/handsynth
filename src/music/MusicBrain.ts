@@ -72,7 +72,11 @@ const VIBE_VOICING_STYLE: Record<string, VoicingStyle> = {
 };
 
 export class MusicBrainImpl implements MusicBrain {
-  private events: MusicBrainEvents | null = null;
+  // Multi-subscriber emitter. The original single-slot design broke when both
+  // InteractionMapper and Visualizer wanted to listen — Visualizer's
+  // `on(...)` was replacing the audio subscription with no-op stubs and
+  // muting every downstream voice. Fan-out preserves both.
+  private subscribers: Set<MusicBrainEvents> = new Set();
   private sequencer: Sequencer = createSequencer();
   private input: MusicBrainInput | null = null;
   private vibe: VibePreset | null = null;
@@ -103,7 +107,7 @@ export class MusicBrainImpl implements MusicBrain {
     this.sequencer.on({
       onStep: (info) => this.onStep(info),
       onBeat: (beat, time) => {
-        this.events?.onBeat?.(beat);
+        for (const s of this.subscribers) s.onBeat?.(beat);
         void time;
       },
       onBar: (bar) => this.onBar(bar),
@@ -148,11 +152,11 @@ export class MusicBrainImpl implements MusicBrain {
   }
 
   on(events: MusicBrainEvents): void {
-    this.events = events;
+    this.subscribers.add(events);
   }
 
   off(events: MusicBrainEvents): void {
-    if (this.events === events) this.events = null;
+    this.subscribers.delete(events);
   }
 
   /** Test hook: replace the RNG for deterministic generation. */
@@ -321,28 +325,28 @@ export class MusicBrainImpl implements MusicBrain {
   // -------------------------------------------------------------------------
 
   private emitLead(event: NoteEvent): void {
-    if (this.events) this.events.onLead(event);
-    else logEvent('lead', event);
+    if (this.subscribers.size === 0) return logEvent('lead', event);
+    for (const s of this.subscribers) s.onLead(event);
   }
   private emitBass(event: NoteEvent): void {
-    if (this.events) this.events.onBass(event);
-    else logEvent('bass', event);
+    if (this.subscribers.size === 0) return logEvent('bass', event);
+    for (const s of this.subscribers) s.onBass(event);
   }
   private emitChord(event: ChordEvent): void {
-    if (this.events) this.events.onChord(event);
-    else logEvent('chord', event);
+    if (this.subscribers.size === 0) return logEvent('chord', event);
+    for (const s of this.subscribers) s.onChord(event);
   }
   private emitKick(time: number | string): void {
-    if (this.events) this.events.onKick(time);
-    else logEvent('kick', { time });
+    if (this.subscribers.size === 0) return logEvent('kick', { time });
+    for (const s of this.subscribers) s.onKick(time);
   }
   private emitHat(time: number | string): void {
-    if (this.events) this.events.onHat(time);
-    else logEvent('hat', { time });
+    if (this.subscribers.size === 0) return logEvent('hat', { time });
+    for (const s of this.subscribers) s.onHat(time);
   }
   private emitPerc(time: number | string): void {
-    if (this.events) this.events.onPerc(time);
-    else logEvent('perc', { time });
+    if (this.subscribers.size === 0) return logEvent('perc', { time });
+    for (const s of this.subscribers) s.onPerc(time);
   }
 }
 
