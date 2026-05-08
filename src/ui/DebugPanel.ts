@@ -14,6 +14,7 @@
 
 import type { AudioEngine, AudioEngineParams, MusicBrain, VibeId } from '@contracts/contracts';
 import { VIBES } from '@presets/vibes';
+import { injectStyles } from './styles';
 
 export interface DebugPanelDeps {
   audio: AudioEngine;
@@ -50,93 +51,6 @@ const SLIDERS: SliderDef[] = [
   { id: 'bpm', label: 'BPM', min: 60, max: 180, step: 1, initial: 92 },
 ];
 
-const STYLES = `
-.hs-debug-toggle {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 10;
-  background: rgba(10, 14, 44, 0.6);
-  color: #cfd6ff;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font: 12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  cursor: pointer;
-  pointer-events: auto;
-  opacity: 0.45;
-  transition: opacity 120ms ease;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-.hs-debug-toggle:hover { opacity: 1; }
-.hs-debug-card {
-  position: absolute;
-  top: 50px;
-  right: 14px;
-  z-index: 10;
-  width: 320px;
-  background: rgba(8, 12, 36, 0.78);
-  color: #e0e6ff;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 14px 16px 12px 16px;
-  font: 12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  pointer-events: auto;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
-}
-.hs-debug-card[hidden] { display: none; }
-.hs-debug-card h3 {
-  margin: 0 0 10px 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  color: #f3f6ff;
-}
-.hs-debug-row {
-  display: grid;
-  grid-template-columns: 1fr 56px;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.hs-debug-row label {
-  font-size: 11px;
-  color: #b6c0e8;
-  grid-column: 1 / 3;
-  margin-bottom: 2px;
-}
-.hs-debug-row input[type="range"] {
-  width: 100%;
-  accent-color: #6c80ff;
-}
-.hs-debug-row .hs-debug-val {
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  color: #cfd6ff;
-  text-align: right;
-}
-.hs-debug-stat {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 8px;
-  font-size: 11px;
-  color: #9aa6d4;
-  font-variant-numeric: tabular-nums;
-}
-.hs-debug-stat strong { color: #e0e6ff; font-weight: 500; }
-.hs-debug-hint {
-  margin-top: 8px;
-  color: #6f7baa;
-  font-size: 10px;
-}
-`;
-
 export interface DebugPanelApi {
   mount(parent: HTMLElement, deps: DebugPanelDeps): void;
   unmount(): void;
@@ -150,7 +64,6 @@ export class DebugPanelImpl implements DebugPanelApi {
   private toggleEl: HTMLButtonElement | null = null;
   private cardEl: HTMLDivElement | null = null;
   private statEls: { intensity: HTMLElement; mood: HTMLElement; bpm: HTMLElement } | null = null;
-  private styleTagId = 'hs-debug-styles';
   private statTimer: number | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private overrides: Partial<AudioEngineParams> = {};
@@ -162,17 +75,12 @@ export class DebugPanelImpl implements DebugPanelApi {
     this.mounted = true;
     this.deps = deps;
 
-    if (!document.getElementById(this.styleTagId)) {
-      const tag = document.createElement('style');
-      tag.id = this.styleTagId;
-      tag.textContent = STYLES;
-      document.head.appendChild(tag);
-    }
+    injectStyles();
 
     const toggle = document.createElement('button');
     toggle.className = 'hs-debug-toggle';
     toggle.type = 'button';
-    toggle.textContent = 'controls';
+    toggle.textContent = 'CONTROLS';
     toggle.setAttribute('aria-label', 'Show controls panel');
     parent.appendChild(toggle);
     this.toggleEl = toggle;
@@ -180,7 +88,7 @@ export class DebugPanelImpl implements DebugPanelApi {
     const card = document.createElement('div');
     card.className = 'hs-debug-card';
     card.hidden = true;
-    card.innerHTML = `<h3>Controls</h3>`;
+    card.innerHTML = `<h3>CONTROLS</h3>`;
     parent.appendChild(card);
     this.cardEl = card;
 
@@ -236,12 +144,15 @@ export class DebugPanelImpl implements DebugPanelApi {
     vibeRow.appendChild(vibeLbl);
     const vibeSelect = document.createElement('select');
     vibeSelect.style.gridColumn = '1 / 3';
-    vibeSelect.style.background = 'rgba(255,255,255,0.06)';
-    vibeSelect.style.color = '#e0e6ff';
-    vibeSelect.style.border = '1px solid rgba(255,255,255,0.1)';
-    vibeSelect.style.borderRadius = '6px';
-    vibeSelect.style.padding = '4px 6px';
-    vibeSelect.style.fontSize = '12px';
+    vibeSelect.style.background = 'var(--hs-bg-deep)';
+    vibeSelect.style.color = 'var(--hs-text)';
+    vibeSelect.style.border = '1px solid var(--hs-grey-2)';
+    vibeSelect.style.borderRadius = '0';
+    vibeSelect.style.padding = '4px 8px';
+    vibeSelect.style.fontFamily = 'var(--hs-mono)';
+    vibeSelect.style.fontSize = '11px';
+    vibeSelect.style.textTransform = 'uppercase';
+    vibeSelect.style.letterSpacing = '0.6px';
     for (const id of Object.keys(VIBES) as VibeId[]) {
       const opt = document.createElement('option');
       opt.value = id;

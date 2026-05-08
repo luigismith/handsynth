@@ -42,11 +42,11 @@ export class OnboardingImpl implements OnboardingApi {
     const title = document.createElement('h1');
     title.id = 'hs-onboard-title';
     title.className = 'hs-onboard-title';
-    title.textContent = 'HandSynth';
+    title.textContent = 'HANDSYNTH';
 
     const sub = document.createElement('p');
     sub.className = 'hs-onboard-sub';
-    sub.textContent = 'Alza le mani.';
+    sub.textContent = '> Alza le mani — webcam input ready.';
 
     const button = document.createElement('button');
     button.type = 'button';
@@ -57,7 +57,7 @@ export class OnboardingImpl implements OnboardingApi {
 
     const cheats = document.createElement('div');
     cheats.className = 'hs-onboard-cheats';
-    cheats.textContent = '↔ filter · ↑ density · ☝ stab';
+    cheats.textContent = '[ ↔ ] FILTER  [ ↑ ] DENSITY  [ ☞ ] STAB';
 
     const errorEl = document.createElement('div');
     errorEl.className = 'hs-onboard-error';

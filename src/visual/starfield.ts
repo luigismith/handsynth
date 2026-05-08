@@ -5,6 +5,13 @@
 // of "static dots". The drift is driven by elapsed time, NOT by hands —
 // hand-driven parallax adds vestibular fatigue.
 //
+// AESTHETIC (cyberpunk redesign):
+// - Stars use GREY_DIM rather than blue-tinted near-white. They read as
+//   ambient data points on a charcoal panel.
+// - Horizon glow shifts from cool blue/violet to warm orange (ORANGE_DARK
+//   at the bottom edge), forming a faint "city horizon" line beneath the
+//   visualizer.
+//
 // Cost target: <0.1ms per frame. We keep this absurdly cheap by:
 //   - Pre-allocating star positions once.
 //   - Drawing them as plain circles (no glow stacking).
@@ -51,8 +58,9 @@ export function createStarfield(_width: number, _height: number): Starfield {
     },
 
     draw(p: p5, t: number, width: number, height: number): void {
-      // HSB color mode set by sketch. Stars are near-white with a faint
-      // blue tint so they don't fight the cool palette.
+      // HSB color mode set by sketch. Stars render as GREY_DIM (240, 10, 42)
+      // so they fit the charcoal cyberpunk palette without competing with
+      // the foreground orange skeleton.
       p.noStroke();
       for (const s of stars) {
         // Slow horizontal drift, wraps on screen width. Vertical position
@@ -60,7 +68,7 @@ export function createStarfield(_width: number, _height: number): Starfield {
         const driftX = ((t * s.speed * 8) % width + width) % width;
         const x = ((s.x * width + driftX) % width + width) % width;
         const y = s.y * height;
-        p.fill(220, 8, 100, s.alpha);
+        p.fill(240, 10, 42, s.alpha);
         p.circle(x, y, s.r * 2);
       }
     },
@@ -87,17 +95,24 @@ export function createHorizonGlow(p: p5, width: number, height: number): Horizon
     buf.colorMode(p.HSB, 360, 100, 100, 1);
     buf.noStroke();
     // Gradient via stacked thin rects from y = 70%h to y = h.
-    const startY = h * 0.7;
+    // Cyberpunk warm horizon: hue ramps from 18 (ORANGE_DARK) at the
+    // bottom to a faintly warmer-orange middle band. Brightness is kept
+    // low so it reads as a glow at the floor of the scene rather than a
+    // sunset.
+    const startY = h * 0.72;
     const steps = 32;
     const stepH = (h - startY) / steps;
     for (let i = 0; i < steps; i += 1) {
       const t = i / (steps - 1);
-      // Hue 230 (deep blue) → 245 (slight violet at bottom). Brightness ramps
-      // from 8% to 22%. Alpha 0 → ~0.6.
-      const hue = 230 + t * 15;
-      const bri = 8 + t * 14;
-      const alpha = Math.pow(t, 1.4) * 0.6;
-      buf.fill(hue, 70, bri, alpha);
+      // Hue 22 (ORANGE_HOT) → 18 (ORANGE_DARK) at the floor. Saturation
+      // strong; brightness ramps from 6 → 22 so the glow reads as a
+      // gradient toward the bottom edge. Alpha pow(t,1.6) keeps the top
+      // of the glow nearly transparent.
+      const hue = 22 - t * 4;
+      const sat = 90 - t * 10;
+      const bri = 6 + t * 16;
+      const alpha = Math.pow(t, 1.6) * 0.55;
+      buf.fill(hue, sat, bri, alpha);
       buf.rect(0, startY + i * stepH, w, stepH + 1);
     }
   }

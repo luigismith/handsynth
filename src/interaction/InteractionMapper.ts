@@ -116,15 +116,28 @@ const FACE_LOST_DUCK_AFTER_SEC = 1.5;
 const FACE_LOST_DUCK = 0.15;
 
 /**
- * Mouth-open continuous control: how widely opening the mouth maps to a
- * delay-wet boost. The hand-driven base delayWet stays in place; we LERP
- * up toward DELAY_WET_FULL as the mouth opens. This is intentionally
- * audible — the user gets immediate feedback when they open their mouth.
+ * Mouth-open is the FOURTH continuous controller (beside hand distance,
+ * height, and openness). It modulates four audio dimensions simultaneously
+ * so the user gets unmistakable, body-felt feedback when they open their
+ * mouth — a single subtle parameter sweep wasn't perceived over the
+ * baseline groove. Effects, ranked by audibility:
+ *
+ *   1. delayWet  — full sweep from BASE→FULL (huge "echoey" change)
+ *   2. filterCutoff additive lift  — opens up the master filter (bright)
+ *   3. reverbWet additive lift     — adds space / wash
+ *   4. brightness lift             — sweetens lead voice
+ *
+ * The rising-edge stab trigger (one-shot lead chord-tone) is independent
+ * of the continuous controls and still fires on a hard mouth-open.
  */
-const FACE_MOUTH_DELAY_BASE = 0.25;
-const FACE_MOUTH_DELAY_FULL = 0.7;
-/** Mouth shape also adds a brightness lift (gentler than the delay sweep). */
-const FACE_MOUTH_BRIGHTNESS_GAIN = 0.2;
+const FACE_MOUTH_DELAY_BASE = 0.15;
+const FACE_MOUTH_DELAY_FULL = 0.85;
+/** Hz added to filterCutoff when mouth is fully open. */
+const FACE_MOUTH_CUTOFF_LIFT = 6000;
+/** 0..1 added to reverbWet when mouth is fully open. */
+const FACE_MOUTH_REVERB_LIFT = 0.3;
+/** 0..1 added to brightness when mouth is fully open. */
+const FACE_MOUTH_BRIGHTNESS_GAIN = 0.4;
 
 /**
  * Lower bound on the intensity pushed into MusicBrain. Re-maps the gesture's
@@ -773,12 +786,26 @@ export class InteractionMapperImpl implements InteractionMapper {
         Q_MAX,
       );
 
-      // Continuous mouth control: open mouth → more delay wet + brighter
-      // sound. Independent of the rising-edge stab trigger (which still
-      // fires on hard mouth-opens). The two coexist: the stab is a
-      // one-shot, this is the sustained timbre shift.
+      // Mouth as a fourth continuous controller. Modulates four audio
+      // dimensions at once so the sweep is unmistakably audible:
+      //   - delayWet: full LERP BASE→FULL (huge "echoey" change)
+      //   - filterCutoff: additive lift up to FACE_MOUTH_CUTOFF_LIFT Hz
+      //   - reverbWet: additive lift up to FACE_MOUTH_REVERB_LIFT
+      //   - brightness: additive lift up to FACE_MOUTH_BRIGHTNESS_GAIN
+      // All applied AFTER the hand-driven values so the user's hand
+      // gestures remain the primary control surface; mouth is a layer
+      // on top.
       const m = clamp01(f.mouthOpen);
       out.delayWet = lerp(FACE_MOUTH_DELAY_BASE, FACE_MOUTH_DELAY_FULL, m);
+      const handCutoff =
+        typeof out.filterCutoff === 'number' ? out.filterCutoff : 8000;
+      out.filterCutoff = Math.min(
+        16000,
+        handCutoff + m * FACE_MOUTH_CUTOFF_LIFT,
+      );
+      const reverbBefore =
+        typeof out.reverbWet === 'number' ? out.reverbWet : 0.4;
+      out.reverbWet = clamp01(reverbBefore + m * FACE_MOUTH_REVERB_LIFT);
       const handBrightness2 =
         typeof out.brightness === 'number' ? out.brightness : 0.5;
       out.brightness = clamp01(

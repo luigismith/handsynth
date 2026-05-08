@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#0a0e2c" />
+    <meta name="theme-color" content="#0a0a0c" />
     <title>HandSynth</title>
     <meta
       name="description"
@@ -28,9 +28,28 @@
         padding: 0;
         height: 100%;
         overflow: hidden;
-        background: #0a0e2c;
-        color: #cfd6ff;
+        background: #0a0a0c;
+        color: #c8c8d4;
         font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      /* Subtle hex-grid pattern + CRT vignette overlay. */
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='48' viewBox='0 0 28 48'><g fill='none' stroke='%233a3a48' stroke-width='1' stroke-opacity='0.35'><path d='M14 0 L28 8 L28 24 L14 32 L0 24 L0 8 Z'/><path d='M14 16 L28 24 L28 40 L14 48 L0 40 L0 24 Z'/></g></svg>");
+        background-size: 28px 48px;
+        opacity: 0.06;
+      }
+      body::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: 4;
+        pointer-events: none;
+        background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.45) 100%);
       }
       #app {
         position: fixed;

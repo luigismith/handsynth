@@ -7,14 +7,15 @@
 // new particles by re-incarnating dead slots from the pool; mid-frequency
 // energy displaces them outward; low-frequency energy pulses their size.
 //
-// POLISH (round 2):
-// - Explicit palette stops so particles aren't a single hue blur. Each
-//   particle picks a base color at spawn and keeps it for its full life
-//   (no per-frame jittering). Colors are tied to which FFT band emitted
-//   the particle: low → blue, mid → cyan, high → warm accent (rare).
-// - Alpha follows a life curve (fade-in 100ms, hold, fade-out) instead of
-//   a flat linear ramp. Feels more like actual emissive sparks.
-// - Reduced-motion mode: half count, slower velocities, no warm accents.
+// AESTHETIC (cyberpunk low-poly redesign):
+// - Particles draw as small upward-pointing equilateral triangles instead of
+//   stacked circles. The low-poly look matches the rest of the visualizer.
+// - Palette is orange / amber / grey on a charcoal background. The previous
+//   blue/cyan/violet stops are gone.
+// - Mouth-emit particles get the brightest orange accent — they are the
+//   user's voice, so they should pop hardest.
+// - Ambient (background trickle) particles are dim grey: they read as
+//   distant data points rather than space dust.
 
 import type p5 from 'p5';
 
@@ -30,6 +31,8 @@ export interface Particle {
   hue: number;
   /** Saturation 0..100, fixed at spawn. */
   sat: number;
+  /** Brightness 0..100, fixed at spawn. */
+  bri: number;
   /** 0..1, decays each frame. */
   life: number;
   /** Initial life so we can fade alpha from full. */
@@ -63,15 +66,18 @@ export interface ParticleField {
 const MAX_PARTICLES = 120;
 const BASE_SIZE = 4;
 
-// Explicit palette stops as HSB triples so particles have a distinct identity.
-//   - cool blue   (#3a82c8 ≈ HSB 210, 71, 78)
-//   - cyan glow   (#6cf0ff ≈ HSB 188, 58, 100)
-//   - warm accent (#ffd47e ≈ HSB 40,  51, 100) — rare, only on high energy
-//   - violet      (#aa5cff ≈ HSB 268, 64, 100)
-const PALETTE_LOW = { hue: 210, sat: 70 } as const;
-const PALETTE_MID = { hue: 188, sat: 58 } as const;
-const PALETTE_HIGH_WARM = { hue: 40, sat: 55 } as const;
-const PALETTE_HIGH_VIOLET = { hue: 268, sat: 60 } as const;
+// Cyberpunk palette stops (HSB triples). All particles live in the
+// orange/amber/grey family — no cool tones.
+//   - low band   → ORANGE_DARK (subdued, ember)
+//   - mid band   → ORANGE_GLOW (warm middle)
+//   - high band  → ORANGE_HOT  (peak accent)
+//   - high warm  → AMBER_BEAT  (rare focus accent)
+//   - ambient    → GREY_DIM    (distant data points)
+const PALETTE_LOW = { hue: 18, sat: 95, bri: 78 } as const;        // ORANGE_DARK
+const PALETTE_MID = { hue: 28, sat: 75, bri: 100 } as const;       // ORANGE_GLOW
+const PALETTE_HIGH = { hue: 22, sat: 92, bri: 100 } as const;      // ORANGE_HOT
+const PALETTE_HIGH_AMBER = { hue: 35, sat: 75, bri: 100 } as const; // AMBER_BEAT
+const PALETTE_AMBIENT = { hue: 240, sat: 10, bri: 42 } as const;   // GREY_DIM
 
 // FFT band ranges — analyser is 1024 bins by AudioEngine spec, but we read
 // whatever buffer length we're given. Assume a standard 1024-bin layout.
@@ -110,6 +116,14 @@ function lifeEnvelope(lifeFrac: number): number {
   return 1;
 }
 
+// Triangle vertex offsets for a unit upward-pointing equilateral triangle.
+// Pre-computed so we don't recompute the 0.866 sqrt(3)/2 constant per draw.
+const TRI_TOP_DY = -1;
+const TRI_LEFT_DX = -0.866; // -sqrt(3)/2
+const TRI_LEFT_DY = 0.5;
+const TRI_RIGHT_DX = 0.866;
+const TRI_RIGHT_DY = 0.5;
+
 export function createParticleField(width: number, height: number): ParticleField {
   const pool: Particle[] = [];
   for (let i = 0; i < MAX_PARTICLES; i += 1) {
@@ -122,6 +136,7 @@ export function createParticleField(width: number, height: number): ParticleFiel
       size: 1,
       hue: PALETTE_LOW.hue,
       sat: PALETTE_LOW.sat,
+      bri: PALETTE_LOW.bri,
       life: 0,
       life0: 1,
     });
@@ -135,7 +150,7 @@ export function createParticleField(width: number, height: number): ParticleFiel
   function spawn(
     cx: number,
     cy: number,
-    palette: { hue: number; sat: number },
+    palette: { hue: number; sat: number; bri: number },
     life: number,
     speedScale: number,
     sizeBoost = 1,
@@ -159,6 +174,7 @@ export function createParticleField(width: number, height: number): ParticleFiel
     // Slight per-particle hue jitter so the palette feels organic, not banded.
     slot.hue = palette.hue + (Math.random() - 0.5) * 12;
     slot.sat = palette.sat + (Math.random() - 0.5) * 10;
+    slot.bri = palette.bri;
     slot.life = life;
     slot.life0 = life;
   }
@@ -211,8 +227,13 @@ export function createParticleField(width: number, height: number): ParticleFiel
       // 0.8..2.4 and life 1.2..2.4s.
       const sizeBoost = 0.8 + i * 1.6;
       const life = 1.2 + i * 1.2;
-      // Warm palette tied to mouth — feels vocal/breath-like.
-      const palette = { hue: 28 + (Math.random() - 0.5) * 20, sat: 60 };
+      // ORANGE_HOT — voice is the brightest thing on screen. Per-particle
+      // hue jitter ±10 in hue space keeps the stream organic.
+      const palette = {
+        hue: PALETTE_HIGH.hue + (Math.random() - 0.5) * 20,
+        sat: PALETTE_HIGH.sat,
+        bri: PALETTE_HIGH.bri,
+      };
       // Mouth emits from a small jittered region (lip span).
       for (let k = 0; k < toSpawn; k += 1) {
         const jx = mx + (Math.random() - 0.5) * 18;
@@ -258,6 +279,9 @@ export function createParticleField(width: number, height: number): ParticleFiel
       // "particles spawning from the middle of the screen". The low-band
       // size pulse stays.
       void mid;
+      // High band still informs which palette ambient top-ups inherit
+      // (rare warm-amber accents instead of plain orange).
+      void high;
 
       for (let i = 0; i < pool.length; i += 1) {
         const p = pool[i]!;
@@ -287,15 +311,20 @@ export function createParticleField(width: number, height: number): ParticleFiel
         p.size = p.size * 0.9 + (0.7 + lowPulse * 0.3) * 0.1;
       }
 
-      // Top up to keep ambient density alive (slow trickle). Color picked
-      // from dominant band so ambient particles feel reactive. Spawn at
+      // Top up to keep ambient density alive (slow trickle). Ambient
+      // particles use the GREY_DIM palette so they read like distant data
+      // points rather than competing with the foreground orange. Spawn at
       // RANDOM canvas positions (not concentrated near center) so the
       // field feels like a starfield, not an emitter.
       void cx; void cy;
       if (aliveCount < MAX_PARTICLES * 0.4 && Math.random() < 0.2) {
         const sx = Math.random() * cw;
         const sy = Math.random() * ch;
-        const palette = low > mid ? PALETTE_LOW : PALETTE_MID;
+        // Rare warm-amber accent when high band is loud — the field
+        // sparkles in time with hi-hats / bright synths.
+        const palette = !reducedMotion && high > 0.6 && Math.random() < 0.15
+          ? PALETTE_HIGH_AMBER
+          : PALETTE_AMBIENT;
         spawn(sx, sy, palette, 1.5, speedScale);
       }
     },
@@ -309,13 +338,21 @@ export function createParticleField(width: number, height: number): ParticleFiel
         const lifeFrac = Math.max(0, part.life / part.life0);
         const alpha = lifeEnvelope(lifeFrac) * 0.9;
         const r = BASE_SIZE * part.size;
-        // Inner glow + outer halo. Hue and saturation are now per-particle
-        // and consistent across life, so the field feels like distinct
-        // sparks rather than a uniform haze.
-        p.fill(part.hue, part.sat, 100, alpha);
-        p.circle(part.x, part.y, r * 2);
-        p.fill(part.hue, part.sat * 0.5, 100, alpha * 0.4);
-        p.circle(part.x, part.y, r * 4);
+
+        // Low-poly upward-pointing triangle. Single triangle() call per
+        // particle is comparable in cost to the previous two-stack
+        // circle() calls, but reads as faceted geometry rather than a soft
+        // glow blob — which is the cyberpunk look we want.
+        const x = part.x;
+        const y = part.y;
+        const x0 = x;
+        const y0 = y + r * TRI_TOP_DY;
+        const x1 = x + r * TRI_LEFT_DX;
+        const y1 = y + r * TRI_LEFT_DY;
+        const x2 = x + r * TRI_RIGHT_DX;
+        const y2 = y + r * TRI_RIGHT_DY;
+        p.fill(part.hue, part.sat, part.bri, alpha);
+        p.triangle(x0, y0, x1, y1, x2, y2);
       }
     },
   };
@@ -337,11 +374,12 @@ function seedAmbient(
     p.vx = (Math.random() - 0.5) * 20;
     p.vy = (Math.random() - 0.5) * 20;
     p.size = 0.5 + Math.random() * 0.5;
-    // Ambient seed favors the cool blue/cyan palette so the resting-state
-    // field reads as deep-space.
-    const palette = Math.random() < 0.5 ? PALETTE_LOW : PALETTE_MID;
+    // Ambient seed favors dim grey so the resting-state field reads as
+    // distant data points on a charcoal panel, not as space stars.
+    const palette = PALETTE_AMBIENT;
     p.hue = palette.hue + (Math.random() - 0.5) * 12;
-    p.sat = palette.sat + (Math.random() - 0.5) * 10;
+    p.sat = palette.sat + (Math.random() - 0.5) * 6;
+    p.bri = palette.bri + (Math.random() - 0.5) * 10;
     p.life = 1.5 + Math.random();
     p.life0 = p.life;
     placed += 1;

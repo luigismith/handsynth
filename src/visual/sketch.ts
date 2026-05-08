@@ -2,17 +2,21 @@
 //
 // p5 instance-mode sketch factory. Composes the visual layers (drawn in
 // the order listed):
-//   1. Midnight-blue radial background + radial vignette + horizon glow
-//      (top + bottom)
-//   2. Parallax starfield (deep-space depth, slow drift)
-//   3. FFT-reactive particles               [→ also into bloom buffer]
-//   4. Hand silhouettes (skeleton + fingertip blobs + glow ring)
-//   5. Face skeleton (oval, eyes, nose bridge, lips, optional brows)
-//   6. Fake-arm bezier connectors (face chin → each hand wrist)
-//   7. Elastic beat-pulsing strings between adjacent fingers
+//   1. Charcoal background + static hex grid + horizon glow (warm)
+//   2. Vignette (warm-on-beat)
+//   3. Parallax starfield (dim grey, subtle drift)
+//   4. FFT-reactive triangle particles      [→ also into bloom buffer]
+//   5. Hand silhouettes (skeleton + diamond fingertips + hex glow ring)
+//   6. Face skeleton (oval, eyes, nose bridge, lips)
+//   7. Fake-arm bezier connectors (face chin → each hand wrist)
+//   8. Elastic beat-pulsing strings between adjacent fingers
 //                                            [→ also into bloom buffer]
-//   8. Bloom composite (ADD blend, half-rate)
-//   9. Scanlines (subtle CRT pattern, NORMAL blend)
+//   9. Bloom composite (ADD blend, half-rate)
+//   10. Scanlines (subtle CRT pattern + occasional tear flash)
+//
+// AESTHETIC: cyberpunk low-poly, orange / black / grey palette.
+// All colors live in the HSB triples below — no hardcoded magic numbers in
+// the draw helpers (so a future palette tweak is a one-line change).
 //
 // Hot-state lives in a `SketchState` object that the Visualizer owns and
 // mutates from outside (current hands, current face, current beat pulse).
@@ -24,10 +28,12 @@
 //   - 1/16-area bloom buffer + 6px blur every frame
 //   - bg flash + vignette tint allocations every frame
 // Mitigations applied:
-//   - pixelDensity capped at 1.5 for the main canvas
+//   - pixelDensity capped at 0.5 for the main canvas
 //   - bloom buffer 1/64-area + 4px blur, run on alternate frames only
 //   - beat flash limited to vignette pulse (no bg brightness boost)
-//   - radial bg gradient pre-rendered ONCE into a p5.Graphics
+//   - hex grid pre-rendered ONCE into a p5.Graphics (static, no animation)
+//   - hand glow ring is now a hex outline (1 stroke) instead of three
+//     concentric strokes — saves two stroke()+circle() calls per hand
 
 import type p5 from 'p5';
 import type { Hand, FaceLandmark, FaceState } from '@contracts/contracts';
@@ -36,6 +42,23 @@ import { createScanlineLayer, type ScanlineLayer } from './scanlines';
 import { createStarfield, createHorizonGlow, type Starfield, type HorizonGlow } from './starfield';
 import { createBloom, BLOOM_DOWNSCALE, type Bloom } from './bloom';
 import { createEnvelope, type Envelope } from './envelope';
+
+// ---------------------------------------------------------------------------
+// Cyberpunk palette — HSB triples. The sketch uses HSB color mode.
+// ---------------------------------------------------------------------------
+
+// Backgrounds & lines
+const BG_DEEP = { h: 240, s: 12, b: 5 } as const;       // near-black, faint cool tint
+const BG_PANEL = { h: 240, s: 18, b: 9 } as const;      // charcoal
+const GREY_LINE = { h: 240, s: 12, b: 22 } as const;    // neutral grey for line work
+// GREY_DIM kept for reference; consumed inline by starfield/scanlines.
+// const GREY_DIM = { h: 240, s: 10, b: 42 } as const;
+
+// Accents
+const ORANGE_HOT = { h: 22, s: 92, b: 100 } as const;   // primary accent
+const ORANGE_GLOW = { h: 28, s: 75, b: 100 } as const;  // outer glow / softer warm
+const AMBER_BEAT = { h: 35, s: 75, b: 100 } as const;   // beat pulse / focus
+const ORANGE_DARK = { h: 18, s: 95, b: 78 } as const;   // pressed / shadow accent
 
 // ---------------------------------------------------------------------------
 // Shared state — the Visualizer mutates these fields between frames.
@@ -197,7 +220,7 @@ export function createSketch(
   let particles: ParticleField | null = null;
   let scanlines: ScanlineLayer | null = null;
   let vignette: p5.Graphics | null = null;
-  let bgGradient: p5.Graphics | null = null;
+  let hexGrid: p5.Graphics | null = null;
   let starfield: Starfield | null = null;
   let horizon: HorizonGlow | null = null;
   let bloom: Bloom | null = null;
@@ -221,9 +244,7 @@ export function createSketch(
       // fillrate by 4× (a 2560×1215 viewport renders into a 1280×608
       // backing buffer = 780k px instead of 3.1M px). The visualizer is
       // mostly soft glow + scanlines + particles, so the upscale is
-      // visually indistinguishable. p5 supports fractional pixelDensity
-      // since 1.4. This is the single biggest perf lever for high-res
-      // viewports — measured: ~13 fps → 50+ fps on a 2560-wide laptop.
+      // visually indistinguishable.
       s.pixelDensity(0.5);
       s.colorMode(s.HSB, 360, 100, 100, 1);
       s.frameRate(60);
@@ -231,7 +252,7 @@ export function createSketch(
       particles = createParticleField(w, h);
       particles.setReducedMotion(state.reducedMotion);
       scanlines = createScanlineLayer(s, w, h);
-      bgGradient = buildBackgroundGradient(s, w, h);
+      hexGrid = buildHexGrid(s, w, h);
       vignette = buildVignette(s, w, h);
       starfield = createStarfield(w, h);
       horizon = createHorizonGlow(s, w, h);
@@ -262,23 +283,29 @@ export function createSketch(
       particles?.setReducedMotion(state.reducedMotion);
 
       // ---------------------------------------------------------------
-      // Layer 1 — flat bg + horizon glow + vignette
+      // Layer 1 — charcoal background + static hex grid backdrop.
       // ---------------------------------------------------------------
-      // PERF: dropped the pre-rendered radial gradient blit — on large
-      // viewports it was costing ~3M px of full-canvas image() per frame
-      // for negligible visual benefit (the vignette + horizon already
-      // shape the depth). Flat background() is a single GPU clear.
-      s.background(230, 70, 14);
-      void bgGradient;
+      // BG_DEEP — near-black with a faint cool tint. A flat clear is the
+      // cheapest possible "background"; depth comes from the hex grid +
+      // horizon glow + vignette layered on top.
+      s.background(BG_DEEP.h, BG_DEEP.s, BG_DEEP.b);
 
-      // Horizon glow at the bottom — gentle depth cue. Intensity rises
+      // Hex grid backdrop — pre-rendered once. Single image() blit per frame.
+      if (hexGrid) {
+        s.push();
+        s.blendMode(s.BLEND);
+        s.image(hexGrid, 0, 0, s.width, s.height);
+        s.pop();
+      }
+
+      // Horizon glow at the bottom — warm city-floor cue. Intensity rises
       // slightly on beat, capped at 1.2.
       if (horizon) {
         horizon.draw(s, s.width, s.height, 1 + beatV * 0.2);
       }
 
       // ---------------------------------------------------------------
-      // Layer 2 — parallax starfield (BLEND, low alpha)
+      // Layer 2 — parallax starfield (BLEND, low alpha, dim grey)
       // ---------------------------------------------------------------
       if (starfield) {
         s.push();
@@ -294,9 +321,10 @@ export function createSketch(
         if (beatV > 0.01 && !state.reducedMotion) {
           s.push();
           s.blendMode(s.BLEND);
-          // Slight brightness reduction at corners during the pulse —
-          // simulates iris-tightening on the beat.
-          s.tint(0, 0, 100, Math.min(1, 1 + beatV * 0.3));
+          // ORANGE_DARK warm vignette pulse on beat — alpha caps at 0.15.
+          // It's a tactile pulse, not a flash.
+          const pulseAlpha = Math.min(0.15, beatV * 0.15);
+          s.tint(ORANGE_DARK.h, ORANGE_DARK.s, ORANGE_DARK.b, 1 + pulseAlpha);
           s.image(vignette, 0, 0, s.width, s.height);
           s.noTint();
           s.pop();
@@ -339,7 +367,7 @@ export function createSketch(
             buf.scale(1 / BLOOM_DOWNSCALE);
             buf.blendMode(buf.ADD);
 
-            // Particles (re-draw — they're cheap, ~120 circles).
+            // Particles (re-draw — they're cheap, ~120 triangles).
             if (particles) particles.draw(buf);
 
             // Finger strings (with pulse). Re-using the same draw fn.
@@ -364,9 +392,11 @@ export function createSketch(
       // so it sits behind the skeleton.
       // ---------------------------------------------------------------
       if (state.hands.length > 0) {
+        // Yaw influences hex ring rotation when face is detected.
+        const yaw = state.face?.detected ? (state.face.pose.yaw ?? 0) : 0;
         s.push();
         s.blendMode(s.ADD);
-        drawHandRings(s, state.hands, beatV);
+        drawHandRings(s, state.hands, beatV, elapsed, yaw);
         drawHands(s, state.hands, beatV);
         s.pop();
       }
@@ -417,6 +447,7 @@ export function createSketch(
 
       // ---------------------------------------------------------------
       // Layer 9 — scanlines on top, in normal blend mode for subtle darkening.
+      // Also handles the occasional ORANGE_DARK tear-line glitch flash.
       // ---------------------------------------------------------------
       if (scanlines) {
         scanlines.draw(s, s.frameCount * 0.5);
@@ -435,9 +466,9 @@ export function createSketch(
         vignette.remove();
         vignette = buildVignette(instance, width, height);
       }
-      if (bgGradient) {
-        bgGradient.remove();
-        bgGradient = buildBackgroundGradient(instance, width, height);
+      if (hexGrid) {
+        hexGrid.remove();
+        hexGrid = buildHexGrid(instance, width, height);
       }
       if (starfield) starfield.reset(width, height);
       if (horizon) horizon.resize(instance, width, height);
@@ -448,11 +479,18 @@ export function createSketch(
 }
 
 // ---------------------------------------------------------------------------
-// Hand glow ring — soft pulsing ring around each palm.
-// Cheap: 3 circle calls per hand. Total: 6 calls/frame for two hands.
+// Hand glow ring — a single rotating hex outline around each palm.
+// Cheap: 1 polygon (6 line segments) per hand. Total: 12 segments / frame
+// for two hands. Massively cheaper than the previous three-layer wash.
 // ---------------------------------------------------------------------------
 
-function drawHandRings(s: p5, hands: Hand[], beatV: number): void {
+function drawHandRings(
+  s: p5,
+  hands: Hand[],
+  beatV: number,
+  elapsed: number,
+  yaw: number,
+): void {
   const w = s.width;
   const h = s.height;
 
@@ -482,24 +520,27 @@ function drawHandRings(s: p5, hands: Hand[], beatV: number): void {
       rSum += Math.hypot(x - cx, y - cy);
     }
     const baseR = (rSum / count) * 1.6;
-    // Openness scales the ring outward — closed fist is small, splayed is big.
     const openR = baseR * (1 + hand.openness * 0.6);
     const ringR = openR * (1 + beatV * 0.15);
-    const sideHue = hand.side === 'right' ? 200 : 280;
 
+    // Rotation: slow ambient drift, biased by face yaw if available.
+    // 1 full rotation every ~12s at rest.
+    const rot = elapsed * 0.5 + yaw * 0.6;
+
+    s.push();
+    s.translate(cx, cy);
+    s.rotate(rot);
     s.noFill();
-    // Outermost wash — very soft.
-    s.stroke(sideHue, 30, 100, 0.06 + hand.openness * 0.04 + beatV * 0.05);
-    s.strokeWeight(18);
-    s.circle(cx, cy, ringR * 2);
-    // Mid wash.
-    s.stroke(sideHue, 40, 100, 0.10 + hand.openness * 0.06 + beatV * 0.08);
-    s.strokeWeight(8);
-    s.circle(cx, cy, ringR * 2);
-    // Crisp inner edge — very subtle, just enough to read as "hand presence".
-    s.stroke(sideHue, 25, 100, 0.18 + beatV * 0.12);
-    s.strokeWeight(1.4);
-    s.circle(cx, cy, ringR * 2);
+    s.stroke(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, 0.45 + beatV * 0.25);
+    s.strokeWeight(1);
+    // 6-sided polygon (hexagon).
+    s.beginShape();
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2;
+      s.vertex(Math.cos(a) * ringR, Math.sin(a) * ringR);
+    }
+    s.endShape(s.CLOSE);
+    s.pop();
   }
 }
 
@@ -512,12 +553,16 @@ function drawHands(s: p5, hands: Hand[], beatV: number): void {
   const h = s.height;
 
   for (const hand of hands) {
-    const sideHue = hand.side === 'right' ? 200 : 280; // cyan for right, violet for left
+    // Right hand → ORANGE_HOT, left hand → AMBER_BEAT. Tonal split keeps
+    // the user able to tell hands apart without fighting the overall
+    // orange-on-charcoal palette.
+    const sidePalette = hand.side === 'right' ? ORANGE_HOT : AMBER_BEAT;
+    const sideHue = sidePalette.h;
+    const sideSat = sidePalette.s;
 
-    // Skeleton lines. Two-pass with subtle vertical-gradient brightness:
-    // the wrist (lower-y) end is darker, the fingertip end is lighter.
-    // We approximate by reading the average y of each pair and biasing the
-    // brightness/saturation. Cheap and adds depth.
+    // Skeleton lines. Single crisp pass — no glow underlay (saves perf,
+    // looks sharper). Vertical-gradient brightness is preserved: the wrist
+    // (lower-y) end is slightly darker than the fingertip end.
     s.noFill();
     for (const [a, b] of HAND_CONNECTIONS) {
       const la = hand.landmarks[a];
@@ -525,39 +570,42 @@ function drawHands(s: p5, hands: Hand[], beatV: number): void {
       if (!la || !lb) continue;
       const [ax, ay] = landmarkToScreen(la.x, la.y, w, h);
       const [bx, by] = landmarkToScreen(lb.x, lb.y, w, h);
-      // Higher-on-screen end = lighter (lower y in screen space).
-      const meanY = (ay + by) / (h * 2); // 0 (top) .. 1 (bottom)
-      const brightness = 100 - meanY * 18; // 100 at top → 82 at bottom
-      // Outer glow.
-      s.stroke(sideHue, 50, brightness, 0.25);
-      s.strokeWeight(6 + beatV * 2);
-      s.line(ax, ay, bx, by);
-      // Core line.
-      s.stroke(sideHue, 30, brightness, 0.7);
-      s.strokeWeight(1.6);
+      const meanY = (ay + by) / (h * 2);
+      const brightness = 100 - meanY * 12; // 100 at top → 88 at bottom
+      s.stroke(sideHue, sideSat, brightness, 0.85);
+      s.strokeWeight(1.4);
       s.line(ax, ay, bx, by);
     }
 
-    // Fingertip blobs (radial-ish glow via stacked circles).
-    s.noStroke();
+    // Fingertip cores: 1px-stroked diamonds (rotated squares). Diamond
+    // size scales with the beat envelope. The diamond shape reads as
+    // sharp/sharp-edged — fits the low-poly aesthetic better than
+    // soft-glow blobs.
+    const baseR = 6 + beatV * 4;
+    s.noFill();
+    s.stroke(sideHue, sideSat, 100, 0.95);
+    s.strokeWeight(1);
     for (const idx of FINGERTIP_INDICES) {
       const lm = hand.landmarks[idx];
       if (!lm) continue;
       const [x, y] = landmarkToScreen(lm.x, lm.y, w, h);
-      const baseR = 8 + beatV * 6;
-      s.fill(sideHue, 40, 100, 0.5);
-      s.circle(x, y, baseR * 1.0);
-      s.fill(sideHue, 20, 100, 0.25);
-      s.circle(x, y, baseR * 2.2);
-      s.fill(sideHue, 10, 100, 0.12);
-      s.circle(x, y, baseR * 4.0);
+      // Diamond = rotated square. Manually draw 4 edges as a closed shape.
+      s.beginShape();
+      s.vertex(x, y - baseR);
+      s.vertex(x + baseR, y);
+      s.vertex(x, y + baseR);
+      s.vertex(x - baseR, y);
+      s.endShape(s.CLOSE);
     }
   }
 }
 
 /**
  * Just the bright cores of fingertips — used in the bloom pass so we
- * don't double-blur the already-glowing outer halos.
+ * don't double-blur the already-glowing outer halos. Renders the diamond
+ * shape so the bloom blur pass sees the same silhouette as the main
+ * canvas (rather than a circular halo, which would smear over the corners
+ * of the diamond).
  */
 function drawFingertipCores(
   s: p5 | p5.Graphics,
@@ -566,16 +614,23 @@ function drawFingertipCores(
   w: number,
   h: number,
 ): void {
-  s.noStroke();
   for (const hand of hands) {
-    const sideHue = hand.side === 'right' ? 200 : 280;
+    const sidePalette = hand.side === 'right' ? ORANGE_HOT : AMBER_BEAT;
+    const sideHue = sidePalette.h;
+    const sideSat = sidePalette.s;
+    s.noStroke();
     for (const idx of FINGERTIP_INDICES) {
       const lm = hand.landmarks[idx];
       if (!lm) continue;
       const [x, y] = landmarkToScreen(lm.x, lm.y, w, h);
-      const baseR = 8 + beatV * 6;
-      s.fill(sideHue, 40, 100, 0.7);
-      s.circle(x, y, baseR);
+      const baseR = 6 + beatV * 4;
+      s.fill(sideHue, sideSat, 100, 0.7);
+      s.beginShape();
+      s.vertex(x, y - baseR);
+      s.vertex(x + baseR, y);
+      s.vertex(x, y + baseR);
+      s.vertex(x - baseR, y);
+      s.endShape(s.CLOSE);
     }
   }
 }
@@ -583,14 +638,13 @@ function drawFingertipCores(
 // ---------------------------------------------------------------------------
 // Face skeleton — oval, eyes, nose bridge, lips, optional brows.
 //
-// Pose-driven tilt: rotate the whole skeleton by face.pose.roll around the
-// face center for liveliness. We don't apply mirror — FaceTracker mirrors at
-// emit time (same convention as HandTracker) so coordinates land in the
-// selfie-mirrored frame already.
+// Cyberpunk recolor: outer oval and eye iris use ORANGE_HOT; eye outlines
+// use AMBER_BEAT (eyes pop hardest because they're the most expressive
+// landmark); brows / nose / philtrum / jaw use ORANGE_DARK or GREY_LINE.
+// Lips outer = ORANGE_HOT; lips inner = ORANGE_GLOW soft fill on speak.
 //
-// Stroke palette: subtle cyan/lavender, HSB(220, 35, 95) at alpha 0.55. Lips
-// pulse on mouthOpen (>0.1): stroke weight scales by 1+2*mouthOpen, and a
-// faint warm fill is added to the inner contour.
+// No rotation — that was a perf killer per the prior commit. Head tilt is
+// already conveyed by the landmark positions themselves.
 // ---------------------------------------------------------------------------
 
 export function drawFaceSkeleton(
@@ -604,7 +658,7 @@ export function drawFaceSkeleton(
   const lms = face.landmarks;
   if (!lms || lms.length < 478) return;
 
-  // Compute face center (for rotation pivot) from oval landmarks.
+  // Compute face center for any optional pivot (currently unused).
   let cx = 0;
   let cy = 0;
   let n = 0;
@@ -621,70 +675,64 @@ export function drawFaceSkeleton(
   cy /= n;
 
   s.push();
-  // PERF: dropped the pose-driven rotate() call. On a 2560×1215 canvas in
-  // Canvas2D mode, applying a non-identity transform forces every
-  // beginShape/vertex/endShape to go through a slow CPU-side path; in
-  // practice it took the visualizer from ~12 FPS to <1 FPS in real
-  // Chrome. The face oval already conveys head tilt purely via the
-  // landmark x/y, so the rotation was a cosmetic-only artifact.
   void cx; void cy;
 
   s.noFill();
-  s.strokeWeight(1.0);
 
-  // Outer face oval — slightly thicker.
+  // Outer face oval — ORANGE_HOT, slightly thicker.
   s.strokeWeight(1.4);
-  s.stroke(220, 35, 95, 0.55 + beatV * 0.05);
+  s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.6 + beatV * 0.05);
   drawClosedLoop(s, lms, FACE_OVAL, width, height, false, cover);
-  s.strokeWeight(1.0);
 
-  // Jawlines (polylines) — adds chin definition.
-  s.stroke(220, 28, 92, 0.30);
+  // Jawlines (polylines) — neutral grey, dim. Adds chin definition without
+  // competing with the warm accents.
+  s.strokeWeight(1.0);
+  s.stroke(GREY_LINE.h, GREY_LINE.s, GREY_LINE.b, 0.45);
   drawPolyline(s, lms, FACE_LEFT_JAW, width, height, cover);
   drawPolyline(s, lms, FACE_RIGHT_JAW, width, height, cover);
 
-  // Eyes (closed loops).
-  s.stroke(195, 45, 100, 0.65 + beatV * 0.05);
+  // Eyes (closed loops) — AMBER_BEAT. Eyes pop hardest.
+  s.strokeWeight(1.1);
+  s.stroke(AMBER_BEAT.h, AMBER_BEAT.s, AMBER_BEAT.b, 0.7 + beatV * 0.05);
   drawClosedLoop(s, lms, FACE_LEFT_EYE, width, height, false, cover);
   drawClosedLoop(s, lms, FACE_RIGHT_EYE, width, height, false, cover);
 
-  // Iris rings — only render if landmarks include them (refine_landmarks).
-  // FaceLandmarker emits 478 points when iris is on; we draw if available.
+  // Iris rings — ORANGE_HOT, alpha 0.8. Renders only if landmarks include
+  // them (refine_landmarks). Eyes are the most expressive thing — lean in.
   if (lms.length >= 478) {
-    s.strokeWeight(0.8);
-    s.stroke(195, 60, 100, 0.55);
+    s.strokeWeight(0.9);
+    s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.8);
     drawClosedLoop(s, lms, FACE_LEFT_IRIS, width, height, false, cover);
     drawClosedLoop(s, lms, FACE_RIGHT_IRIS, width, height, false, cover);
     s.strokeWeight(1.0);
   }
 
-  // Eyebrows.
-  s.stroke(220, 30, 90, 0.45);
+  // Eyebrows — ORANGE_DARK, low alpha.
+  s.stroke(ORANGE_DARK.h, ORANGE_DARK.s, ORANGE_DARK.b, 0.5);
   drawPolyline(s, lms, FACE_LEFT_BROW, width, height, cover);
   drawPolyline(s, lms, FACE_RIGHT_BROW, width, height, cover);
 
-  // Nose bridge (polyline) + nostril ring.
-  s.stroke(220, 25, 88, 0.40);
+  // Nose bridge (polyline) + nostril ring — GREY_LINE.
+  s.stroke(GREY_LINE.h, GREY_LINE.s, GREY_LINE.b, 0.5);
   drawPolyline(s, lms, FACE_NOSE_BRIDGE, width, height, cover);
   drawClosedLoop(s, lms, FACE_NOSE_TIP_RING, width, height, false, cover);
 
-  // Philtrum / cupid's bow.
-  s.stroke(220, 30, 92, 0.30);
+  // Philtrum / cupid's bow — ORANGE_DARK at low alpha.
+  s.stroke(ORANGE_DARK.h, ORANGE_DARK.s, ORANGE_DARK.b, 0.4);
   drawPolyline(s, lms, FACE_PHILTRUM, width, height, cover);
 
-  // Lips: outer + inner. Mouth-open scales stroke and adds a faint warm fill.
+  // Lips: outer ORANGE_HOT, inner soft ORANGE_GLOW fill on speak.
   const mo = face.mouthOpen;
   const lipWeight = 1.2 * (1 + 2 * Math.max(0, mo));
-  // Desaturate slightly + boost alpha as the mouth opens.
-  const lipSat = 35 - mo * 10;
-  const lipAlpha = 0.55 + mo * 0.25;
+  const lipAlpha = 0.7 + mo * 0.2;
 
   s.strokeWeight(lipWeight);
-  s.stroke(220, lipSat, 95, lipAlpha);
+  s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, lipAlpha);
 
   if (mo > 0.1) {
-    // Faint warm tint inside the lips when speaking.
-    s.fill(20, 45, 100, mo * 0.18);
+    // Soft ORANGE_GLOW fill inside the lips when speaking. Alpha caps at
+    // 0.25 (per brief).
+    s.fill(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, mo * 0.25);
     drawClosedLoop(s, lms, FACE_LIPS_INNER, width, height, /* fill */ true, cover);
     s.noFill();
   } else {
@@ -733,10 +781,9 @@ function drawPolyline(
 }
 
 // ---------------------------------------------------------------------------
-// Fake arms — bezier from face chin to each hand wrist. Control points are
-// pulled slightly downward so the curve mimics a relaxed shoulder/arm arc
-// (keeps the connection feeling anatomical without spawning a full pose
-// landmarker).
+// Fake arms — bezier from face chin to each hand wrist. Three layers of
+// glow, all in ORANGE_HOT family (no per-side hue split — the fake arms
+// share the same warm tone regardless of which hand they connect to).
 // ---------------------------------------------------------------------------
 
 export function drawFakeArms(
@@ -770,17 +817,17 @@ export function drawFakeArms(
     const c2x = wx + (midX - wx) * 0.6;
     const c2y = wy + (midY - wy) * 1.1;
 
-    const sideHue = hand.side === 'right' ? 200 : 280;
+    // All arms use the same ORANGE_HOT family — no per-side split.
     // Outer glow.
-    s.stroke(sideHue, 35, 95, 0.10);
+    s.stroke(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, 0.10);
     s.strokeWeight(8);
     s.bezier(cx, cy, c1x, c1y, c2x, c2y, wx, wy);
     // Mid.
-    s.stroke(sideHue, 30, 95, 0.20);
+    s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.22);
     s.strokeWeight(3);
     s.bezier(cx, cy, c1x, c1y, c2x, c2y, wx, wy);
     // Core.
-    s.stroke(sideHue, 25, 100, 0.25);
+    s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.4);
     s.strokeWeight(1.2);
     s.bezier(cx, cy, c1x, c1y, c2x, c2y, wx, wy);
   }
@@ -793,6 +840,9 @@ export function drawFakeArms(
 // into a downsampled buffer where the buffer's `.width`/`.height` would
 // be the small dimensions, but we want the strings positioned in the
 // main canvas-space coords. The caller scales the buffer accordingly.
+//
+// All strings are ORANGE_HOT — the per-side hue split was removed for
+// visual cohesion. Beat brightness modulates alpha.
 // ---------------------------------------------------------------------------
 
 function drawFingerStrings(
@@ -803,8 +853,6 @@ function drawFingerStrings(
   h: number,
 ): void {
   for (const hand of hands) {
-    const sideHue = hand.side === 'right' ? 195 : 285;
-
     // Mean Y of fingertips → "high" hand position means taut, "low" means sag.
     let yMean = 0;
     let n = 0;
@@ -816,8 +864,6 @@ function drawFingerStrings(
     }
     if (n === 0) continue;
     yMean /= n;
-    // p5 y is screen-space (0 top); MediaPipe y is also 0 top, so a high hand
-    // has small y. More sag when y is large (hand is low).
     const sagAmount = Math.min(1, Math.max(0, yMean)) * h * 0.08;
 
     const brightness = 0.6 + 0.4 * beatV;
@@ -836,17 +882,17 @@ function drawFingerStrings(
       const cy1 = ay + sagAmount;
       const cy2 = by + sagAmount;
 
-      // Outer halo
+      // Outer halo — ORANGE_GLOW
       s.noFill();
-      s.stroke(sideHue, 35, 100, 0.18 * brightness);
+      s.stroke(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, 0.18 * brightness);
       s.strokeWeight(thickness * 4);
       s.bezier(ax, ay, cx1, cy1, cx2, cy2, bx, by);
-      // Mid
-      s.stroke(sideHue, 25, 100, 0.45 * brightness);
+      // Mid — ORANGE_HOT
+      s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.45 * brightness);
       s.strokeWeight(thickness * 2);
       s.bezier(ax, ay, cx1, cy1, cx2, cy2, bx, by);
-      // Core
-      s.stroke(sideHue, 10, 100, 0.9 * brightness);
+      // Core — bright ORANGE_HOT
+      s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.9 * brightness);
       s.strokeWeight(thickness);
       s.bezier(ax, ay, cx1, cy1, cx2, cy2, bx, by);
     }
@@ -854,7 +900,7 @@ function drawFingerStrings(
 }
 
 // ---------------------------------------------------------------------------
-// Vignette (radial darkening toward edges)
+// Vignette (radial darkening toward edges) — charcoal corners on BG_PANEL.
 // ---------------------------------------------------------------------------
 
 function buildVignette(s: p5, w: number, h: number): p5.Graphics {
@@ -869,38 +915,64 @@ function buildVignette(s: p5, w: number, h: number): p5.Graphics {
   for (let i = steps; i >= 0; i -= 1) {
     const t = i / steps;
     // alpha ramps from 0 at center to ~0.6 at corners. Slightly stronger
-    // curvature than before (pow=1.7) for a tighter vignette ring.
+    // curvature for a tighter vignette ring.
     const a = Math.pow(t, 1.7) * 0.6;
-    g.fill(230, 80, 5, a);
+    // Use BG_PANEL darkened — rather than the previous deep blue. The
+    // result is a charcoal corner darkening that matches the cyberpunk
+    // palette.
+    g.fill(BG_PANEL.h, BG_PANEL.s, Math.max(2, BG_PANEL.b - 4), a);
     g.circle(cx, cy, maxR * 2 * (1 - t * 0.05));
   }
   return g;
 }
 
-// Pre-rendered radial background gradient — slightly warmer center
-// (#14163a → HSB ~232, 64, 23) ramping out to the deep #0a0e2c at the
-// corners. Adds depth without per-frame cost.
-function buildBackgroundGradient(s: p5, w: number, h: number): p5.Graphics {
+// ---------------------------------------------------------------------------
+// Hex grid backdrop — pre-rendered ONCE into a p5.Graphics. Single image()
+// blit per frame thereafter. Static (no animation) — pure decoration that
+// sells the cyberpunk console aesthetic without per-frame cost.
+//
+// Implementation: a tessellation of regular hexagons drawn as polylines.
+// We use "pointy-top" hex layout. Each hex has side length HEX_SIDE.
+//
+// The grid covers a 1.1× margin so cells at the edges aren't visibly cut.
+// ---------------------------------------------------------------------------
+
+const HEX_SIDE = 36;
+
+function buildHexGrid(s: p5, w: number, h: number): p5.Graphics {
   const g = s.createGraphics(w, h);
   g.colorMode(s.HSB, 360, 100, 100, 1);
-  g.noStroke();
-  // Fill solid base first.
-  g.background(230, 70, 17);
-  const cx = w / 2;
-  const cy = h / 2;
-  const maxR = Math.hypot(cx, cy);
-  // Layer warmer center with falloff. Use additive-ish stacked translucent
-  // circles. 18 stops is enough to look smooth at any size.
-  const steps = 18;
-  for (let i = steps - 1; i >= 0; i -= 1) {
-    const t = i / (steps - 1);
-    // Hue 232, sat falls as we move out, brightness falls too.
-    const hue = 232 - t * 4;
-    const sat = 64 - t * 8;
-    const bri = 23 - t * 6;
-    const alpha = Math.pow(1 - t, 1.4) * 0.18;
-    g.fill(hue, sat, bri, alpha);
-    g.circle(cx, cy, maxR * 2 * t);
+  g.noFill();
+  g.strokeWeight(1);
+  g.stroke(GREY_LINE.h, GREY_LINE.s, GREY_LINE.b, 0.08);
+
+  const side = HEX_SIDE;
+  const sqrt3 = Math.sqrt(3);
+  // Pointy-top hex: width = sqrt(3)*side, height = 2*side.
+  const hexW = sqrt3 * side;
+  const hexH = 2 * side;
+  const colStep = hexW;
+  const rowStep = (3 / 4) * hexH;
+
+  // Precompute the 6 corner offsets (pointy-top).
+  const corners: Array<[number, number]> = [];
+  for (let i = 0; i < 6; i += 1) {
+    const a = (Math.PI / 180) * (60 * i - 30);
+    corners.push([Math.cos(a) * side, Math.sin(a) * side]);
   }
+
+  for (let row = -1; row * rowStep <= h + side; row += 1) {
+    for (let col = -1; col * colStep <= w + side; col += 1) {
+      const offX = (row & 1) === 0 ? 0 : hexW / 2;
+      const cx = col * colStep + offX;
+      const cy = row * rowStep;
+      g.beginShape();
+      for (const [dx, dy] of corners) {
+        g.vertex(cx + dx, cy + dy);
+      }
+      g.endShape(g.CLOSE);
+    }
+  }
+
   return g;
 }

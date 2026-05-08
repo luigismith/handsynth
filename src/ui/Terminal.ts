@@ -111,14 +111,14 @@ export class TerminalImpl {
     status.appendChild(rec);
     const recLbl = document.createElement('span');
     recLbl.textContent = 'REC';
-    recLbl.style.color = '#ff8a8a';
+    recLbl.style.color = 'var(--hs-orange)';
     recLbl.style.letterSpacing = '1.5px';
     status.appendChild(recLbl);
 
-    const intStat = this.makeStat('INT', '—');
-    const moodStat = this.makeStat('MOOD', '—');
-    const bpmStat = this.makeStat('BPM', '—');
-    const ctxStat = this.makeStat('CTX', '—');
+    const intStat = this.makeStat('INT', '—', 'hs-term-stat-int');
+    const moodStat = this.makeStat('MOOD', '—', 'hs-term-stat-mood');
+    const bpmStat = this.makeStat('BPM', '—', 'hs-term-stat-bpm');
+    const ctxStat = this.makeStat('CTX', '—', 'hs-term-stat-ctx');
     status.append(intStat.wrap, moodStat.wrap, bpmStat.wrap, ctxStat.wrap);
     root.appendChild(status);
 
@@ -210,12 +210,12 @@ export class TerminalImpl {
   // internals
   // ------------------------------------------------------------------------
 
-  private makeStat(label: string, initial: string): {
+  private makeStat(label: string, initial: string, modifier?: string): {
     wrap: HTMLElement;
     value: HTMLElement;
   } {
     const wrap = document.createElement('span');
-    wrap.className = 'hs-term-stat';
+    wrap.className = modifier ? `hs-term-stat ${modifier}` : 'hs-term-stat';
     const lbl = document.createElement('span');
     lbl.className = 'hs-term-stat-label';
     lbl.textContent = label;

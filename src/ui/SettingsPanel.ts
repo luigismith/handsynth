@@ -104,10 +104,10 @@ export class SettingsPanelImpl {
     header.className = 'hs-settings-header';
     const title = document.createElement('h2');
     title.className = 'hs-settings-title';
-    title.textContent = 'Patch';
+    title.textContent = 'PATCH';
     const sub = document.createElement('span');
     sub.className = 'hs-settings-sub';
-    sub.textContent = 'edit · save · load';
+    sub.textContent = 'EDIT · SAVE · LOAD';
     header.append(title, sub);
     card.appendChild(header);
 
@@ -189,7 +189,7 @@ export class SettingsPanelImpl {
     nameInput.setAttribute('aria-label', 'Patch name');
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
-    saveBtn.className = 'hs-btn hs-btn-tiny';
+    saveBtn.className = 'hs-btn hs-btn-tiny hs-btn-primary';
     saveBtn.textContent = 'Save';
     saveBtn.addEventListener('click', () => {
       const raw = nameInput.value.trim();
