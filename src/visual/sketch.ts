@@ -937,28 +937,38 @@ export function drawEyeLasers(
     if (!eye.lm) continue;
     const [ex, ey] = landmarkToScreen(eye.lm.x, eye.lm.y, width, height, cover);
 
-    // Outward direction from face center to this eye + slight upward
-    // lift. Naturally points each beam away from the face, and since
-    // both eye and face-center coords live in the SAME selfie-mirrored
-    // frame, no sign-flip is needed under any mirror toggle.
+    // Outward direction = vector FROM face center TO this eye, normalized.
+    // Eyes sit above + outward of the face center, so the unit vector
+    // already points naturally up-and-outward (left eye up-left, right
+    // eye up-right) — no extra bias needed. The earlier `- height * 0.18`
+    // additive lift, applied BEFORE normalization, was ~218 px on a
+    // 1215-tall canvas while ey-fcy is only ~50–60 px in magnitude;
+    // the bias dominated and lasers always shot straight up. Remove it.
     let rfx = ex - fcx;
-    let rfy = (ey - fcy) - height * EYES_LASER_DEFAULT_LIFT;
+    let rfy = ey - fcy;
     const mag = Math.hypot(rfx, rfy);
     if (mag < 1e-6) {
+      // Degenerate (eye coincides with face center). Pick a sensible
+      // default — outward & slightly up.
       rfx = 1;
-      rfy = -EYES_LASER_DEFAULT_LIFT;
+      rfy = -0.3;
+      const m2 = Math.hypot(rfx, rfy);
+      rfx /= m2;
+      rfy /= m2;
     } else {
       rfx /= mag;
       rfy /= mag;
     }
-    // Clamp the y component to prevent shooting straight into the floor.
+    // Clamp the y component if the user happens to look severely DOWN
+    // (head tilted forward) — prevents lasers angling into the floor.
     if (rfy > EYES_LASER_MAX_DOWN) {
       rfy = EYES_LASER_MAX_DOWN;
       const m2 = Math.hypot(rfx, rfy) || 1;
       rfx /= m2;
       rfy /= m2;
     }
-    void SIDE_SPLAY; // splay folded into the outward vector now
+    void SIDE_SPLAY;
+    void EYES_LASER_DEFAULT_LIFT;
 
     const tx = ex + rfx * len;
     const ty = ey + rfy * len;
