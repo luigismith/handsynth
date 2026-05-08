@@ -14,9 +14,18 @@
 // emitting tags so even if the manual ever picks up a stray `<` it stays safe.
 
 import { injectStyles } from './styles';
+import { getLang, subscribeLang, t, type Lang } from '../i18n';
 // Vite ?raw import — works in build & dev. Tests import the helper directly
-// so they don't hit this loader.
-import manualText from '../../USER_MANUAL.md?raw';
+// so they don't hit this loader. Two manuals: English (source of truth) and
+// the Italian translation. The HelpPanel selects one based on the active
+// language, and re-renders the body when the language changes.
+import manualEn from '../../USER_MANUAL.md?raw';
+import manualIt from '../../USER_MANUAL.it.md?raw';
+
+const MANUALS: Record<Lang, string> = {
+  en: manualEn,
+  it: manualIt,
+};
 
 /**
  * Convert a small subset of GitHub-flavored markdown to HTML.
@@ -212,9 +221,14 @@ export class HelpPanelImpl {
   private mounted = false;
   private root: HTMLDivElement | null = null;
   private cardEl: HTMLDivElement | null = null;
+  private titleEl: HTMLHeadingElement | null = null;
+  private subEl: HTMLSpanElement | null = null;
+  private bodyEl: HTMLDivElement | null = null;
+  private closeBtn: HTMLButtonElement | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private clickOutsideHandler: ((e: MouseEvent) => void) | null = null;
   private lastFocus: Element | null = null;
+  private unsubLang: (() => void) | null = null;
 
   mount(parent: HTMLElement): void {
     if (this.mounted) return;
@@ -226,7 +240,6 @@ export class HelpPanelImpl {
     root.hidden = true;
     root.setAttribute('role', 'dialog');
     root.setAttribute('aria-modal', 'true');
-    root.setAttribute('aria-label', 'HandSynth manual');
 
     const card = document.createElement('div');
     card.className = 'hs-help-card';
@@ -236,22 +249,18 @@ export class HelpPanelImpl {
     header.className = 'hs-help-header';
     const title = document.createElement('h2');
     title.className = 'hs-help-title';
-    title.textContent = 'MANUAL';
     const sub = document.createElement('span');
     sub.className = 'hs-help-sub';
-    sub.textContent = 'PRESS ESC OR H TO CLOSE';
     header.append(title, sub);
     card.appendChild(header);
 
     const body = document.createElement('div');
     body.className = 'hs-help-body';
-    body.innerHTML = markdownToHtml(manualText);
     card.appendChild(body);
 
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'hs-help-close';
-    close.setAttribute('aria-label', 'Close manual');
     close.textContent = '×'; // ×
     close.addEventListener('click', () => this.setVisible(false));
     card.appendChild(close);
@@ -260,6 +269,13 @@ export class HelpPanelImpl {
     parent.appendChild(root);
     this.root = root;
     this.cardEl = card;
+    this.titleEl = title;
+    this.subEl = sub;
+    this.bodyEl = body;
+    this.closeBtn = close;
+
+    this.applyLang();
+    this.unsubLang = subscribeLang(() => this.applyLang());
 
     // Click outside the card → close.
     this.clickOutsideHandler = (e: MouseEvent) => {
@@ -288,6 +304,10 @@ export class HelpPanelImpl {
   unmount(): void {
     if (!this.mounted) return;
     this.mounted = false;
+    if (this.unsubLang) {
+      this.unsubLang();
+      this.unsubLang = null;
+    }
     if (this.keydownHandler) {
       window.removeEventListener('keydown', this.keydownHandler);
       this.keydownHandler = null;
@@ -299,6 +319,29 @@ export class HelpPanelImpl {
     if (this.root) this.root.remove();
     this.root = null;
     this.cardEl = null;
+    this.titleEl = null;
+    this.subEl = null;
+    this.bodyEl = null;
+    this.closeBtn = null;
+  }
+
+  /**
+   * Re-apply localized strings to the existing DOM. Re-renders the manual
+   * body from the language-appropriate markdown source. Called on mount and
+   * whenever the lang flips.
+   */
+  applyLang(): void {
+    if (this.titleEl) this.titleEl.textContent = t('panel.help.title');
+    if (this.subEl) this.subEl.textContent = t('panel.help.closeHint');
+    if (this.closeBtn) {
+      this.closeBtn.setAttribute('aria-label', t('panel.help.closeAria'));
+    }
+    if (this.root) {
+      this.root.setAttribute('aria-label', t('panel.help.dialogAria'));
+    }
+    if (this.bodyEl) {
+      this.bodyEl.innerHTML = markdownToHtml(MANUALS[getLang()]);
+    }
   }
 
   setVisible(visible: boolean): void {

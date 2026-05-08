@@ -20,6 +20,7 @@ import type {
   NoteEvent,
 } from '@contracts/contracts';
 import { injectStyles } from './styles';
+import { t, subscribeLang } from '../i18n';
 
 export interface TerminalDeps {
   music: MusicBrain;
@@ -80,6 +81,7 @@ export class TerminalImpl {
   private lastGestureLineMs = 0;
   private statTimer: number | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private unsubLang: (() => void) | null = null;
 
   mount(parent: HTMLElement, deps: TerminalDeps): void {
     if (this.mounted) return;
@@ -103,7 +105,7 @@ export class TerminalImpl {
     root.className = 'hs-terminal';
     root.hidden = true;
     root.setAttribute('role', 'log');
-    root.setAttribute('aria-label', 'Terminal HUD');
+    root.setAttribute('aria-label', t('terminal.ariaLabel'));
     root.setAttribute('aria-live', 'polite');
 
     const status = document.createElement('div');
@@ -171,15 +173,25 @@ export class TerminalImpl {
     };
     window.addEventListener('keydown', this.keydownHandler);
 
-    this.appendLine(
-      'info',
-      'handsynth terminal ready · t toggle · esc mute · h help',
-    );
+    this.appendLine('info', t('terminal.ready'));
+
+    // The translucent log lines (events, gestures) stay in their original
+    // language since they are auto-generated identifiers; only the static
+    // aria-label of the root reacts to lang changes.
+    this.unsubLang = subscribeLang(() => {
+      if (this.root) {
+        this.root.setAttribute('aria-label', t('terminal.ariaLabel'));
+      }
+    });
   }
 
   unmount(): void {
     if (!this.mounted) return;
     this.mounted = false;
+    if (this.unsubLang) {
+      this.unsubLang();
+      this.unsubLang = null;
+    }
     if (this.deps && this.musicSub) this.deps.music.off(this.musicSub);
     if (this.deps && this.gestureCb) this.deps.hands.off('gesture:update', this.gestureCb);
     this.musicSub = null;

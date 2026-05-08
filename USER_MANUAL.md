@@ -1,5 +1,9 @@
 # HandSynth — User Manual
 
+> **Italiano:** una traduzione completa di questo manuale è disponibile in
+> [`USER_MANUAL.it.md`](./USER_MANUAL.it.md). The whole UI is bilingual —
+> use the **IT / EN** pill in the bottom-right HUD to switch live.
+
 ## Welcome
 
 HandSynth is a gestural synthesizer you play with your body. Move your hands,

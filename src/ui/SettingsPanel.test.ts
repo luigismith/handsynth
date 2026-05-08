@@ -15,6 +15,7 @@ import {
 } from './patches';
 import { FACTORY_PRESETS } from '@presets/factory-presets';
 import type { AudioEngine, MusicBrain, AudioEngineParams, VibeId } from '@contracts/contracts';
+import { setLang, __resetForTests } from '../i18n';
 
 function stubAudio(): AudioEngine & {
   lastSet: Partial<AudioEngineParams>;
@@ -232,10 +233,12 @@ describe('SettingsPanelImpl', () => {
     parent = document.createElement('div');
     document.body.appendChild(parent);
     localStorage.clear();
+    __resetForTests('en');
   });
   afterEach(() => {
     if (parent.parentElement) parent.parentElement.removeChild(parent);
     localStorage.clear();
+    __resetForTests('en');
   });
 
   it('mounts knobs, gear button, and patch list', () => {
@@ -456,10 +459,12 @@ describe('SettingsPanelImpl — scale / key controls', () => {
     parent = document.createElement('div');
     document.body.appendChild(parent);
     localStorage.clear();
+    __resetForTests('en');
   });
   afterEach(() => {
     if (parent.parentElement) parent.parentElement.removeChild(parent);
     localStorage.clear();
+    __resetForTests('en');
   });
 
   it('renders KEY and SCALE dropdowns plus a reset button', () => {
@@ -592,6 +597,99 @@ describe('SettingsPanelImpl — scale / key controls', () => {
     panel.mount(parent, deps);
     const keySel = parent.querySelector('select[data-music-key]') as HTMLSelectElement;
     expect(keySel.value).toBe('A#'); // Bb canonicalized to A#
+    panel.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// i18n integration
+// ---------------------------------------------------------------------------
+
+describe('SettingsPanelImpl — i18n', () => {
+  let parent: HTMLDivElement;
+
+  beforeEach(() => {
+    parent = document.createElement('div');
+    document.body.appendChild(parent);
+    localStorage.clear();
+    __resetForTests('en');
+  });
+  afterEach(() => {
+    if (parent.parentElement) parent.parentElement.removeChild(parent);
+    localStorage.clear();
+    __resetForTests('en');
+  });
+
+  it('renders English header and labels by default', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const title = parent.querySelector('.hs-settings-title') as HTMLElement;
+    expect(title.textContent).toBe('PATCH');
+    const sub = parent.querySelector('.hs-settings-sub') as HTMLElement;
+    expect(sub.textContent).toMatch(/MUTE/);
+    panel.unmount();
+  });
+
+  it('renders Italian header and labels after setLang("it")', () => {
+    setLang('it');
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const sub = parent.querySelector('.hs-settings-sub') as HTMLElement;
+    expect(sub.textContent).toMatch(/MUTO/);
+    const saveBtn = parent.querySelector('.hs-prompt button') as HTMLButtonElement;
+    expect(saveBtn.textContent).toBe('Salva');
+    const empty = parent.querySelector('.hs-patches-empty') as HTMLElement;
+    expect(empty.textContent).toBe('Nessuna patch salvata.');
+    panel.unmount();
+  });
+
+  it('flips header / save button / empty state when lang switches mid-life', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const saveBtn = parent.querySelector('.hs-prompt button') as HTMLButtonElement;
+    expect(saveBtn.textContent).toBe('Save');
+    setLang('it');
+    expect(saveBtn.textContent).toBe('Salva');
+    setLang('en');
+    expect(saveBtn.textContent).toBe('Save');
+    panel.unmount();
+  });
+
+  it('translates scale dropdown options', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const scaleSel = parent.querySelector(
+      'select[data-music-scale]',
+    ) as HTMLSelectElement;
+    const major = Array.from(scaleSel.options).find((o) => o.value === 'major');
+    expect(major?.textContent).toBe('Major (Ionian)');
+    setLang('it');
+    expect(major?.textContent).toBe('Maggiore (Ionica)');
+    panel.unmount();
+  });
+
+  it('translates vibe dropdown options', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const vibeSel = parent.querySelector(
+      '#hs-settings-vibe-select',
+    ) as HTMLSelectElement;
+    const tycho = Array.from(vibeSel.options).find((o) => o.value === 'tycho');
+    expect(tycho?.textContent).toMatch(/sunset drift/);
+    setLang('it');
+    expect(tycho?.textContent).toMatch(/deriva al tramonto/);
+    panel.unmount();
+  });
+
+  it('translates the factory chip tooltip on lang switch', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const dub = parent.querySelector(
+      '.hs-preset-chip[data-preset-id="dub"]',
+    ) as HTMLButtonElement;
+    expect(dub.title).toContain('Echo chamber');
+    setLang('it');
+    expect(dub.title).toMatch(/Camera/);
     panel.unmount();
   });
 });

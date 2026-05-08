@@ -45,6 +45,8 @@ import {
   makePatchId,
   type Patch,
 } from './patches';
+import { t, subscribeLang } from '../i18n';
+import type { DictKey } from '../i18n';
 
 export interface SettingsPanelDeps {
   audio: AudioEngine;
@@ -100,10 +102,17 @@ function clearMusicSettings(): void {
   }
 }
 
+type KnobSection = 'Filter' | 'Drive' | 'Time FX' | 'Mix' | 'Tempo';
+
 interface KnobDef {
   id: keyof AudioEngineParams | 'bpm' | 'intensity';
+  /** English fallback label — also the assertion target in tests. */
   label: string;
-  section: 'Filter' | 'Drive' | 'Time FX' | 'Mix' | 'Tempo';
+  /** i18n key for the localized label. Resolved at render time. */
+  labelKey: DictKey;
+  section: KnobSection;
+  /** i18n key for the localized section heading. */
+  sectionKey: DictKey;
   min: number;
   max: number;
   step: number;
@@ -114,18 +123,26 @@ interface KnobDef {
 }
 
 const KNOB_DEFS: KnobDef[] = [
-  { id: 'filterCutoff', label: 'Cutoff', section: 'Filter', min: 100, max: 16000, step: 1, fallback: 8000, log: true, unit: 'Hz', digits: 0 },
-  { id: 'filterResonance', label: 'Q', section: 'Filter', min: 0.1, max: 18, step: 0.1, fallback: 1.0, digits: 1 },
-  { id: 'brightness', label: 'Bright', section: 'Filter', min: 0, max: 1, step: 0.01, fallback: 0.5 },
-  { id: 'saturatorDrive', label: 'Drive', section: 'Drive', min: 0.5, max: 3, step: 0.01, fallback: 1.0 },
-  { id: 'reverbWet', label: 'Verb', section: 'Time FX', min: 0, max: 1, step: 0.01, fallback: 0.4 },
-  { id: 'delayFeedback', label: 'Delay FB', section: 'Time FX', min: 0, max: 0.9, step: 0.01, fallback: 0.35 },
-  { id: 'masterDuck', label: 'Duck', section: 'Mix', min: 0, max: 1, step: 0.01, fallback: 0 },
-  { id: 'intensity', label: 'Intens.', section: 'Mix', min: 0, max: 1, step: 0.01, fallback: 0.5 },
-  { id: 'bpm', label: 'BPM', section: 'Tempo', min: 60, max: 180, step: 1, fallback: 92, digits: 0 },
+  { id: 'filterCutoff', label: 'Cutoff', labelKey: 'panel.patch.knob.cutoff', section: 'Filter', sectionKey: 'panel.patch.section.filter', min: 100, max: 16000, step: 1, fallback: 8000, log: true, unit: 'Hz', digits: 0 },
+  { id: 'filterResonance', label: 'Q', labelKey: 'panel.patch.knob.q', section: 'Filter', sectionKey: 'panel.patch.section.filter', min: 0.1, max: 18, step: 0.1, fallback: 1.0, digits: 1 },
+  { id: 'brightness', label: 'Bright', labelKey: 'panel.patch.knob.bright', section: 'Filter', sectionKey: 'panel.patch.section.filter', min: 0, max: 1, step: 0.01, fallback: 0.5 },
+  { id: 'saturatorDrive', label: 'Drive', labelKey: 'panel.patch.knob.drive', section: 'Drive', sectionKey: 'panel.patch.section.drive', min: 0.5, max: 3, step: 0.01, fallback: 1.0 },
+  { id: 'reverbWet', label: 'Verb', labelKey: 'panel.patch.knob.verb', section: 'Time FX', sectionKey: 'panel.patch.section.timefx', min: 0, max: 1, step: 0.01, fallback: 0.4 },
+  { id: 'delayFeedback', label: 'Delay FB', labelKey: 'panel.patch.knob.delayfb', section: 'Time FX', sectionKey: 'panel.patch.section.timefx', min: 0, max: 0.9, step: 0.01, fallback: 0.35 },
+  { id: 'masterDuck', label: 'Duck', labelKey: 'panel.patch.knob.duck', section: 'Mix', sectionKey: 'panel.patch.section.mix', min: 0, max: 1, step: 0.01, fallback: 0 },
+  { id: 'intensity', label: 'Intens.', labelKey: 'panel.patch.knob.intens', section: 'Mix', sectionKey: 'panel.patch.section.mix', min: 0, max: 1, step: 0.01, fallback: 0.5 },
+  { id: 'bpm', label: 'BPM', labelKey: 'panel.patch.knob.bpm', section: 'Tempo', sectionKey: 'panel.patch.section.tempo', min: 60, max: 180, step: 1, fallback: 92, digits: 0 },
 ];
 
-const SECTION_ORDER: KnobDef['section'][] = ['Filter', 'Drive', 'Time FX', 'Mix', 'Tempo'];
+const SECTION_ORDER: KnobSection[] = ['Filter', 'Drive', 'Time FX', 'Mix', 'Tempo'];
+
+const SECTION_KEY_BY_NAME: Record<KnobSection, DictKey> = {
+  Filter: 'panel.patch.section.filter',
+  Drive: 'panel.patch.section.drive',
+  'Time FX': 'panel.patch.section.timefx',
+  Mix: 'panel.patch.section.mix',
+  Tempo: 'panel.patch.section.tempo',
+};
 
 function paramKnobInitial(
   def: KnobDef,
@@ -141,15 +158,27 @@ export class SettingsPanelImpl {
   private mounted = false;
   private deps: SettingsPanelDeps | null = null;
   private cardEl: HTMLDivElement | null = null;
+  private titleEl: HTMLHeadingElement | null = null;
+  private subEl: HTMLSpanElement | null = null;
   private toggleBtn: HTMLButtonElement | null = null;
   private knobs = new Map<KnobDef['id'], Knob>();
   private patchListEl: HTMLDivElement | null = null;
   private vibeSelectEl: HTMLSelectElement | null = null;
   private keySelectEl: HTMLSelectElement | null = null;
   private scaleSelectEl: HTMLSelectElement | null = null;
+  private keyLabelEl: HTMLLabelElement | null = null;
+  private scaleLabelEl: HTMLLabelElement | null = null;
+  private musicResetBtn: HTMLButtonElement | null = null;
+  private vibeFieldLabelEl: HTMLLabelElement | null = null;
+  private patchSaveBtn: HTMLButtonElement | null = null;
+  private patchNameInputEl: HTMLInputElement | null = null;
+  private patchResetVibeBtn: HTMLButtonElement | null = null;
+  private sectionLabelEls = new Map<KnobSection | 'Vibe' | 'Patches', HTMLDivElement>();
+  private presetChips: Array<{ chip: HTMLButtonElement; preset: FactoryPreset }> = [];
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private intensityOverride: number | null = null;
   private bpmCurrent = 92;
+  private unsubLang: (() => void) | null = null;
 
   mount(parent: HTMLElement, deps: SettingsPanelDeps): void {
     if (this.mounted) return;
@@ -162,36 +191,35 @@ export class SettingsPanelImpl {
     card.className = 'hs-settings-card hs-collapsed';
     card.hidden = true;
     card.setAttribute('role', 'dialog');
-    card.setAttribute('aria-label', 'Patch editor');
 
     // Header.
     const header = document.createElement('div');
     header.className = 'hs-settings-header';
     const title = document.createElement('h2');
     title.className = 'hs-settings-title';
-    title.textContent = 'PATCH';
     const sub = document.createElement('span');
     sub.className = 'hs-settings-sub';
-    sub.textContent = 'P · ESC MUTE · H HELP';
     header.append(title, sub);
     card.appendChild(header);
+    this.titleEl = title;
+    this.subEl = sub;
 
     // Factory preset chip strip — quick-apply timbre banks above the knobs.
     // Distinct from the user-saved patch list (below the knobs).
     const presetRow = document.createElement('div');
     presetRow.className = 'hs-preset-row';
     presetRow.setAttribute('role', 'group');
-    presetRow.setAttribute('aria-label', 'Factory presets');
     for (const preset of FACTORY_PRESETS) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'hs-preset-chip';
+      // Display name stays uppercase 4-char (LUSH / ACID / etc.) — these are
+      // brand-style labels that read the same in any language.
       chip.textContent = preset.name;
-      chip.title = preset.tagline;
-      chip.setAttribute('aria-label', `Apply preset ${preset.name}: ${preset.tagline}`);
       chip.dataset.presetId = preset.id;
       chip.addEventListener('click', () => this.applyFactoryPreset(preset, chip));
       presetRow.appendChild(chip);
+      this.presetChips.push({ chip, preset });
     }
     card.appendChild(presetRow);
 
@@ -210,8 +238,8 @@ export class SettingsPanelImpl {
       sec.className = 'hs-settings-section';
       const lbl = document.createElement('div');
       lbl.className = 'hs-settings-section-label';
-      lbl.textContent = section;
       sec.appendChild(lbl);
+      this.sectionLabelEls.set(section, lbl);
 
       const grid = document.createElement('div');
       grid.className = 'hs-knob-grid';
@@ -230,19 +258,23 @@ export class SettingsPanelImpl {
     vibeSec.className = 'hs-settings-section';
     const vibeLbl = document.createElement('div');
     vibeLbl.className = 'hs-settings-section-label';
-    vibeLbl.textContent = 'Vibe';
     vibeSec.appendChild(vibeLbl);
+    this.sectionLabelEls.set('Vibe', vibeLbl);
     const vibeRow = document.createElement('div');
     vibeRow.className = 'hs-settings-vibe';
     const vlbl = document.createElement('label');
     vlbl.htmlFor = 'hs-settings-vibe-select';
-    vlbl.textContent = 'Preset';
+    this.vibeFieldLabelEl = vlbl;
     const vsel = document.createElement('select');
     vsel.id = 'hs-settings-vibe-select';
     for (const id of Object.keys(VIBES) as VibeId[]) {
       const opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = VIBES[id].displayName;
+      // Vibe display name flows through i18n at render time. Falls back to
+      // the data file's English `displayName` if a key is missing — which
+      // the parity meta-test prevents at CI.
+      opt.textContent = t(`vibe.${id}.displayName` as DictKey);
+      opt.dataset.vibeId = id;
       vsel.appendChild(opt);
     }
     vsel.value = deps.getCurrentVibeId();
@@ -265,8 +297,8 @@ export class SettingsPanelImpl {
     patchSec.className = 'hs-settings-section';
     const patchLbl = document.createElement('div');
     patchLbl.className = 'hs-settings-section-label';
-    patchLbl.textContent = 'Patches';
     patchSec.appendChild(patchLbl);
+    this.sectionLabelEls.set('Patches', patchLbl);
 
     const list = document.createElement('div');
     list.className = 'hs-patches';
@@ -279,16 +311,18 @@ export class SettingsPanelImpl {
     prompt.className = 'hs-prompt';
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
-    nameInput.placeholder = 'Patch name';
     nameInput.maxLength = 40;
-    nameInput.setAttribute('aria-label', 'Patch name');
+    this.patchNameInputEl = nameInput;
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'hs-btn hs-btn-tiny hs-btn-primary';
-    saveBtn.textContent = 'Save';
+    this.patchSaveBtn = saveBtn;
     saveBtn.addEventListener('click', () => {
       const raw = nameInput.value.trim();
-      const name = raw.length > 0 ? raw : `Patch ${new Date().toLocaleTimeString()}`;
+      const name =
+        raw.length > 0
+          ? raw
+          : `${t('panel.patch.untitledPrefix')} ${new Date().toLocaleTimeString()}`;
       this.handleSavePatch(name);
       nameInput.value = '';
     });
@@ -303,7 +337,7 @@ export class SettingsPanelImpl {
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.className = 'hs-btn hs-btn-tiny';
-    resetBtn.textContent = 'Reset to vibe';
+    this.patchResetVibeBtn = resetBtn;
     resetBtn.addEventListener('click', () => this.resetToVibe());
     actions.appendChild(resetBtn);
     patchSec.appendChild(actions);
@@ -318,7 +352,6 @@ export class SettingsPanelImpl {
     btn.type = 'button';
     btn.id = 'settings-toggle-btn';
     btn.className = 'hs-settings-toggle';
-    btn.setAttribute('aria-label', 'Toggle patch editor');
     btn.setAttribute('aria-haspopup', 'dialog');
     btn.setAttribute('aria-expanded', 'false');
     btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .67.39 1.27 1 1.51H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
@@ -338,21 +371,138 @@ export class SettingsPanelImpl {
     // Apply persisted scale/key override AFTER the panel is fully built so
     // the dropdowns reflect the just-restored selection.
     this.applyPersistedMusicSettings();
+
+    // Apply localized labels onto every node we just built, then subscribe
+    // for future lang changes (lang switcher in HudControls fires this).
+    this.applyLang();
+    this.unsubLang = subscribeLang(() => this.applyLang());
+  }
+
+  /**
+   * Re-apply localized strings to every static element of the panel: header,
+   * subtitles, section labels, knob labels, factory chip tooltips, vibe
+   * dropdown options + scale dropdown options + key dropdown labels +
+   * patches section, and the toggle gear button. Knob values themselves
+   * stay untouched; only labels flip.
+   */
+  applyLang(): void {
+    if (this.titleEl) this.titleEl.textContent = t('panel.patch.title');
+    if (this.subEl) this.subEl.textContent = t('panel.patch.subtitle');
+    if (this.cardEl)
+      this.cardEl.setAttribute('aria-label', t('panel.patch.dialogAria'));
+    if (this.toggleBtn)
+      this.toggleBtn.setAttribute('aria-label', t('panel.patch.toggleAria'));
+
+    // Section labels.
+    for (const [section, el] of this.sectionLabelEls) {
+      if (section === 'Vibe') {
+        el.textContent = t('panel.patch.section.vibe');
+      } else if (section === 'Patches') {
+        el.textContent = t('panel.patch.section.patches');
+      } else {
+        el.textContent = t(SECTION_KEY_BY_NAME[section]);
+      }
+    }
+
+    // Knob labels.
+    for (const def of KNOB_DEFS) {
+      const k = this.knobs.get(def.id);
+      k?.setLabel(t(def.labelKey));
+    }
+
+    // Factory preset chips: tooltip + aria-label.
+    for (const { chip, preset } of this.presetChips) {
+      const taglineKey = `factory.${preset.id}.tagline` as DictKey;
+      const tagline = t(taglineKey);
+      chip.title = tagline;
+      chip.setAttribute(
+        'aria-label',
+        t('factory.applyAria', { name: preset.name, tagline }),
+      );
+    }
+
+    // Vibe dropdown option text.
+    if (this.vibeSelectEl) {
+      for (const opt of Array.from(this.vibeSelectEl.options)) {
+        const id = opt.dataset.vibeId;
+        if (id) opt.textContent = t(`vibe.${id}.displayName` as DictKey);
+      }
+    }
+    if (this.vibeFieldLabelEl)
+      this.vibeFieldLabelEl.textContent = t('panel.patch.vibeLabel');
+
+    // Scale dropdown option text.
+    if (this.scaleSelectEl) {
+      for (const opt of Array.from(this.scaleSelectEl.options)) {
+        const id = opt.value;
+        opt.textContent = t(`scale.${id}.displayName` as DictKey);
+      }
+    }
+
+    // Music row labels.
+    if (this.keyLabelEl) this.keyLabelEl.textContent = t('panel.patch.keyLabel');
+    if (this.scaleLabelEl)
+      this.scaleLabelEl.textContent = t('panel.patch.scaleLabel');
+    if (this.keySelectEl)
+      this.keySelectEl.setAttribute('aria-label', t('panel.patch.keyAria'));
+    if (this.scaleSelectEl)
+      this.scaleSelectEl.setAttribute('aria-label', t('panel.patch.scaleAria'));
+    if (this.musicResetBtn) {
+      this.musicResetBtn.title = t('panel.patch.resetTooltip');
+      this.musicResetBtn.setAttribute('aria-label', t('panel.patch.resetAria'));
+    }
+
+    // Patch save / reset buttons + name input.
+    if (this.patchSaveBtn) this.patchSaveBtn.textContent = t('panel.patch.saveBtn');
+    if (this.patchResetVibeBtn)
+      this.patchResetVibeBtn.textContent = t('panel.patch.resetVibeBtn');
+    if (this.patchNameInputEl) {
+      this.patchNameInputEl.placeholder = t('panel.patch.patchNamePlaceholder');
+      this.patchNameInputEl.setAttribute(
+        'aria-label',
+        t('panel.patch.patchNameAria'),
+      );
+    }
+
+    // Group aria-labels on the chip strip + music row.
+    const presetGroup = this.cardEl?.querySelector('.hs-preset-row');
+    presetGroup?.setAttribute('aria-label', t('panel.patch.factoryAria'));
+    const musicGroup = this.cardEl?.querySelector('.hs-music-row');
+    musicGroup?.setAttribute('aria-label', t('panel.patch.scaleKeyAria'));
+
+    // Refresh the patch list so the empty state + Load/Del buttons follow
+    // the new lang.
+    this.refreshPatchList();
   }
 
   unmount(): void {
     if (!this.mounted) return;
     this.mounted = false;
+    if (this.unsubLang) {
+      this.unsubLang();
+      this.unsubLang = null;
+    }
     for (const k of this.knobs.values()) k.destroy();
     this.knobs.clear();
     if (this.cardEl) this.cardEl.remove();
     if (this.toggleBtn) this.toggleBtn.remove();
     this.cardEl = null;
+    this.titleEl = null;
+    this.subEl = null;
     this.toggleBtn = null;
     this.patchListEl = null;
     this.vibeSelectEl = null;
     this.keySelectEl = null;
     this.scaleSelectEl = null;
+    this.keyLabelEl = null;
+    this.scaleLabelEl = null;
+    this.musicResetBtn = null;
+    this.vibeFieldLabelEl = null;
+    this.patchSaveBtn = null;
+    this.patchNameInputEl = null;
+    this.patchResetVibeBtn = null;
+    this.sectionLabelEls.clear();
+    this.presetChips = [];
     if (this.keydownHandler) {
       window.removeEventListener('keydown', this.keydownHandler);
       this.keydownHandler = null;
@@ -370,21 +520,21 @@ export class SettingsPanelImpl {
     const row = document.createElement('div');
     row.className = 'hs-music-row';
     row.setAttribute('role', 'group');
-    row.setAttribute('aria-label', 'Scale and key');
 
     const keyLbl = document.createElement('label');
     keyLbl.className = 'hs-music-label';
-    keyLbl.textContent = 'KEY';
     keyLbl.htmlFor = 'hs-music-key';
+    this.keyLabelEl = keyLbl;
 
     const keySel = document.createElement('select');
     keySel.id = 'hs-music-key';
     keySel.className = 'hs-music-select';
     keySel.dataset.musicKey = '';
-    keySel.setAttribute('aria-label', 'Key');
     for (const k of KEY_OPTIONS) {
       const opt = document.createElement('option');
       opt.value = k.id;
+      // Key display names are language-neutral note labels ("C", "C# / Db",
+      // …) — no translation needed.
       opt.textContent = k.displayName;
       keySel.appendChild(opt);
     }
@@ -395,18 +545,17 @@ export class SettingsPanelImpl {
 
     const scaleLbl = document.createElement('label');
     scaleLbl.className = 'hs-music-label';
-    scaleLbl.textContent = 'SCALE';
     scaleLbl.htmlFor = 'hs-music-scale';
+    this.scaleLabelEl = scaleLbl;
 
     const scaleSel = document.createElement('select');
     scaleSel.id = 'hs-music-scale';
     scaleSel.className = 'hs-music-select';
     scaleSel.dataset.musicScale = '';
-    scaleSel.setAttribute('aria-label', 'Scale');
     for (const s of SCALE_OPTIONS) {
       const opt = document.createElement('option');
       opt.value = s.id;
-      opt.textContent = s.displayName;
+      opt.textContent = t(`scale.${s.id}.displayName` as DictKey);
       scaleSel.appendChild(opt);
     }
     scaleSel.addEventListener('change', () => {
@@ -418,8 +567,7 @@ export class SettingsPanelImpl {
     resetBtn.type = 'button';
     resetBtn.className = 'hs-music-reset';
     resetBtn.textContent = '↺'; // counter-clockwise arrow
-    resetBtn.title = 'Reset to vibe default';
-    resetBtn.setAttribute('aria-label', 'Reset key and scale to vibe default');
+    this.musicResetBtn = resetBtn;
     resetBtn.addEventListener('click', () => this.handleScaleReset());
 
     // Seed the dropdowns with the current vibe's defaults; the actual
@@ -717,7 +865,7 @@ export class SettingsPanelImpl {
     if (patches.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'hs-patches-empty';
-      empty.textContent = 'No saved patches.';
+      empty.textContent = t('panel.patch.patchesEmpty');
       list.appendChild(empty);
       return;
     }
@@ -730,12 +878,12 @@ export class SettingsPanelImpl {
       const loadBtn = document.createElement('button');
       loadBtn.type = 'button';
       loadBtn.className = 'hs-btn hs-btn-tiny';
-      loadBtn.textContent = 'Load';
+      loadBtn.textContent = t('panel.patch.loadBtn');
       loadBtn.addEventListener('click', () => this.loadPatch(p));
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
       delBtn.className = 'hs-btn hs-btn-tiny hs-btn-danger';
-      delBtn.textContent = 'Del';
+      delBtn.textContent = t('panel.patch.delBtn');
       delBtn.addEventListener('click', () => {
         deletePatch(p.id);
         this.refreshPatchList();

@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { HelpPanelImpl, markdownToHtml } from './HelpPanel';
+import { setLang, __resetForTests } from '../i18n';
 
 describe('markdownToHtml', () => {
   it('renders top-level headings', () => {
@@ -79,12 +80,16 @@ describe('HelpPanelImpl', () => {
   beforeEach(() => {
     parent = document.createElement('div');
     document.body.appendChild(parent);
+    localStorage.clear();
+    __resetForTests('en');
     panel = new HelpPanelImpl();
   });
 
   afterEach(() => {
     panel.unmount();
     parent.remove();
+    localStorage.clear();
+    __resetForTests('en');
   });
 
   it('mounts a hidden overlay with a card containing the manual title', () => {
@@ -156,5 +161,39 @@ describe('HelpPanelImpl', () => {
     expect(parent.querySelector('.hs-help-overlay')).toBeTruthy();
     panel.unmount();
     expect(parent.querySelector('.hs-help-overlay')).toBeFalsy();
+  });
+
+  it('renders English manual headers when active lang is en', () => {
+    panel.mount(parent);
+    const title = parent.querySelector('.hs-help-title') as HTMLElement;
+    expect(title.textContent).toBe('MANUAL');
+    const body = parent.querySelector('.hs-help-body') as HTMLElement;
+    expect(body.innerHTML).toContain('User Manual');
+  });
+
+  it('renders Italian manual when active lang is it', () => {
+    setLang('it');
+    panel.mount(parent);
+    const title = parent.querySelector('.hs-help-title') as HTMLElement;
+    expect(title.textContent).toBe('MANUALE');
+    const body = parent.querySelector('.hs-help-body') as HTMLElement;
+    expect(body.innerHTML).toContain('Manuale Utente');
+  });
+
+  it('reloads the manual body on lang switch (en -> it)', () => {
+    panel.mount(parent);
+    const body = parent.querySelector('.hs-help-body') as HTMLElement;
+    expect(body.innerHTML).toContain('User Manual');
+    setLang('it');
+    expect(body.innerHTML).toContain('Manuale Utente');
+    expect(body.innerHTML).not.toContain('User Manual');
+  });
+
+  it('updates the close-hint subtitle on lang switch', () => {
+    panel.mount(parent);
+    const sub = parent.querySelector('.hs-help-sub') as HTMLElement;
+    expect(sub.textContent).toMatch(/PRESS ESC OR H TO CLOSE/);
+    setLang('it');
+    expect(sub.textContent).toMatch(/PREMI ESC O H PER CHIUDERE/);
   });
 });

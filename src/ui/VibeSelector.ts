@@ -7,6 +7,8 @@
 
 import type { VibeId, VibePreset } from '@contracts/contracts';
 import { injectStyles } from './styles';
+import { t, subscribeLang } from '../i18n';
+import type { DictKey } from '../i18n';
 
 export interface VibeSelectorApi {
   mount(parent: HTMLElement, vibes: VibePreset[], current: VibeId): void;
@@ -15,7 +17,13 @@ export interface VibeSelectorApi {
   unmount(): void;
 }
 
-/** Strip the vibe's mood tagline ("Tycho — sunset drift" → "Tycho"). */
+/**
+ * Strip the vibe's mood tagline ("Tycho — sunset drift" → "Tycho").
+ *
+ * The localized `displayName` is "Name — descriptive tagline" in both langs,
+ * and the chip strip just wants "Name" so the pill stays compact. We split
+ * on the em-dash (—) which is common to both en and it dictionaries.
+ */
 function shortName(displayName: string): string {
   const dashIdx = displayName.indexOf('—');
   if (dashIdx > 0) return displayName.slice(0, dashIdx).trim();
@@ -28,6 +36,7 @@ export class VibeSelectorImpl implements VibeSelectorApi {
   private chips = new Map<VibeId, HTMLButtonElement>();
   private listeners: Array<(vibe: VibeId) => void> = [];
   private active: VibeId | null = null;
+  private unsubLang: (() => void) | null = null;
 
   mount(parent: HTMLElement, vibes: VibePreset[], current: VibeId): void {
     if (this.container) return; // idempotent
@@ -36,13 +45,11 @@ export class VibeSelectorImpl implements VibeSelectorApi {
     const wrap = document.createElement('div');
     wrap.className = 'hs-vibes';
     wrap.setAttribute('role', 'radiogroup');
-    wrap.setAttribute('aria-label', 'Vibe');
 
     for (const v of vibes) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'hs-vibe-chip';
-      chip.textContent = shortName(v.displayName);
       chip.setAttribute('role', 'radio');
       chip.setAttribute('aria-checked', String(v.id === current));
       chip.dataset.vibeId = v.id;
@@ -55,6 +62,23 @@ export class VibeSelectorImpl implements VibeSelectorApi {
     this.root = parent;
     this.container = wrap;
     this.active = current;
+
+    this.applyLang();
+    this.unsubLang = subscribeLang(() => this.applyLang());
+  }
+
+  /**
+   * Re-apply chip labels from the active dictionary. Each chip stores its
+   * vibeId as a dataset attribute; we map it back to the localized
+   * displayName via the i18n key, then strip to the short name.
+   */
+  applyLang(): void {
+    if (!this.container) return;
+    this.container.setAttribute('aria-label', t('panel.patch.section.vibe'));
+    for (const [id, chip] of this.chips) {
+      const full = t(`vibe.${id}.displayName` as DictKey);
+      chip.textContent = shortName(full);
+    }
   }
 
   setActive(vibe: VibeId): void {
@@ -69,6 +93,10 @@ export class VibeSelectorImpl implements VibeSelectorApi {
   }
 
   unmount(): void {
+    if (this.unsubLang) {
+      this.unsubLang();
+      this.unsubLang = null;
+    }
     if (this.container && this.container.parentElement) {
       this.container.parentElement.removeChild(this.container);
     }

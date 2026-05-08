@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { VibeSelectorImpl } from './VibeSelector';
 import { VIBES, DEFAULT_VIBE, VIBE_LIST } from '@presets/vibes';
 import type { VibeId } from '@contracts/contracts';
+import { setLang, __resetForTests } from '../i18n';
 
 describe('VibeSelectorImpl', () => {
   let parent: HTMLDivElement;
@@ -14,10 +15,14 @@ describe('VibeSelectorImpl', () => {
   beforeEach(() => {
     parent = document.createElement('div');
     document.body.appendChild(parent);
+    localStorage.clear();
+    __resetForTests('en');
   });
 
   afterEach(() => {
     if (parent.parentElement) parent.parentElement.removeChild(parent);
+    localStorage.clear();
+    __resetForTests('en');
   });
 
   it('renders one chip per vibe with the default checked', () => {
@@ -97,6 +102,18 @@ describe('VibeSelectorImpl', () => {
     const tychoChip = parent.querySelector(
       `.hs-vibe-chip[data-vibe-id="${VIBES.tycho.id}"]`,
     ) as HTMLButtonElement;
+    expect(tychoChip.textContent).toBe('Tycho');
+  });
+
+  it('keeps the same short name when lang flips (display name shape is the same in both langs)', () => {
+    const sel = new VibeSelectorImpl();
+    sel.mount(parent, VIBE_LIST.slice(), DEFAULT_VIBE);
+    const tychoChip = parent.querySelector(
+      `.hs-vibe-chip[data-vibe-id="tycho"]`,
+    ) as HTMLButtonElement;
+    expect(tychoChip.textContent).toBe('Tycho');
+    setLang('it');
+    // "Tycho — deriva al tramonto" — short name stays "Tycho".
     expect(tychoChip.textContent).toBe('Tycho');
   });
 });

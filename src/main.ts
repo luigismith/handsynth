@@ -35,6 +35,7 @@ import { TerminalImpl } from '@ui/Terminal';
 import { HelpPanelImpl } from '@ui/HelpPanel';
 import { HudControlsImpl } from '@ui/HudControls';
 import { injectStyles } from '@ui/styles';
+import { getLang, t as tt } from './i18n';
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -51,6 +52,14 @@ function isTypingTarget(t: EventTarget | null): boolean {
 
 async function bootstrap(): Promise<void> {
   injectStyles();
+
+  // i18n: detection happens automatically when the i18n module loads (it
+  // pre-computes a starting Lang from localStorage / navigator.language at
+  // import time). Sync the <html lang> attribute so screen readers and the
+  // browser's reading-mode pick the right language hint right away.
+  if (typeof document !== 'undefined' && document.documentElement) {
+    document.documentElement.lang = getLang();
+  }
 
   // Reduced-motion hint for the visualizer (it's free to read this attr later).
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -101,9 +110,7 @@ async function bootstrap(): Promise<void> {
     } catch (err) {
       console.error('[main] startup failed', err);
       const msg =
-        err instanceof Error
-          ? err.message
-          : 'Avvio non riuscito. Riprova.';
+        err instanceof Error ? err.message : tt('error.startupFailed');
       onboarding.showError(`${msg}`);
       // Loop continues; awaitStart() will resolve again on next click.
     }
@@ -428,9 +435,7 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
 
   if (!handsLive) {
     mapper.startAutopilot();
-    deps.onAutopilotEngaged(
-      'Webcam non disponibile — modalità autopilot attiva.',
-    );
+    deps.onAutopilotEngaged(tt('error.autopilot'));
   }
 
   // 5. Visualizer mounts last so analyser tap is hot. Face is optional —

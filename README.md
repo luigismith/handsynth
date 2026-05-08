@@ -42,9 +42,19 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:5173`, click **Permetti webcam e iniziare**, raise your hands.
+Open `http://localhost:5173`, click **Allow webcam and begin** (or **Permetti webcam e iniziare** if your browser is set to Italian), raise your hands.
 
 Tested in Chrome, Edge, Safari 15+, Firefox 114+. Webcam permission required.
+
+### Bilingual UI (English / Italian)
+
+The entire interface is available in **English** and **Italian**. The browser
+locale picks the starting language automatically (`it`, `it-IT`, `it-CH` →
+Italian; everything else → English), and a small **IT / EN** pill in the
+bottom-right HUD strip flips the UI live without a reload. Your choice is
+remembered in `localStorage`. The in-app manual itself is fully translated —
+see [`USER_MANUAL.md`](./USER_MANUAL.md) (English) and
+[`USER_MANUAL.it.md`](./USER_MANUAL.it.md) (Italian).
 
 ## Desktop installers
 

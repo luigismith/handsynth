@@ -1,5 +1,11 @@
 <!doctype html>
-<html lang="it">
+<!--
+  The `lang` attribute starts as English (the canonical source language) and
+  is overwritten at boot by main.ts → getLang() once the i18n layer has
+  resolved localStorage + navigator.language. The HudControls language
+  switcher updates it on every flip.
+-->
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -10,7 +16,7 @@
     <title>HandSynth</title>
     <meta
       name="description"
-      content="Un sintetizzatore gestuale suonato con le mani via webcam."
+      content="A gestural synthesizer played with your hands via webcam."
     />
     <style>
       :root {

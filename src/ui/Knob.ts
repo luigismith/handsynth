@@ -71,6 +71,7 @@ export class Knob {
   private indicator: HTMLDivElement;
   private valueEl: HTMLDivElement;
   private dial: HTMLDivElement;
+  private labelEl: HTMLDivElement;
 
   // Drag state.
   private dragStartY = 0;
@@ -122,6 +123,7 @@ export class Knob {
     this.indicator = indicator;
     this.valueEl = val;
     this.dial = dial;
+    this.labelEl = lbl;
 
     this.refreshVisual();
 
@@ -137,6 +139,15 @@ export class Knob {
     this.value = clamped;
     this.refreshVisual();
     if (fire) this.onChange(this.value);
+  }
+
+  /**
+   * Update the visible label and aria-label without rebuilding the DOM.
+   * Used by the i18n layer when the active language flips.
+   */
+  setLabel(label: string): void {
+    this.labelEl.textContent = label;
+    this.dial.setAttribute('aria-label', label);
   }
 
   destroy(): void {

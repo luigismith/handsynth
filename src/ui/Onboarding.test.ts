@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { OnboardingImpl } from './Onboarding';
+import { setLang, __resetForTests } from '../i18n';
 
 describe('OnboardingImpl', () => {
   let parent: HTMLDivElement;
@@ -12,10 +13,14 @@ describe('OnboardingImpl', () => {
   beforeEach(() => {
     parent = document.createElement('div');
     document.body.appendChild(parent);
+    localStorage.clear();
+    __resetForTests('en');
   });
 
   afterEach(() => {
     if (parent.parentElement) parent.parentElement.removeChild(parent);
+    localStorage.clear();
+    __resetForTests('en');
   });
 
   it('mounts a CTA and resolves awaitStart() on click', async () => {
@@ -59,10 +64,10 @@ describe('OnboardingImpl', () => {
     expect(errEl.hidden).toBe(false);
     expect(errEl.textContent).toBe('Webcam negata.');
 
-    // After showError the button text is "Riprova" and a fresh awaitStart()
-    // resolves only after another click.
+    // After showError the button text is the localized retry label
+    // ("Retry" in en, "Riprova" in it). We boot in en here.
     const button = parent.querySelector('button')!;
-    expect(button.textContent).toMatch(/riprova/i);
+    expect(button.textContent).toMatch(/retry/i);
 
     const second = ob.awaitStart();
     let done = false;
@@ -75,5 +80,37 @@ describe('OnboardingImpl', () => {
 
     button.click();
     await second;
+  });
+
+  it('renders English strings by default', () => {
+    const ob = new OnboardingImpl();
+    ob.mount(parent);
+    const sub = parent.querySelector('.hs-onboard-sub') as HTMLElement;
+    const button = parent.querySelector('button') as HTMLButtonElement;
+    expect(sub.textContent).toContain('Raise your hands');
+    expect(button.textContent).toBe('Allow webcam and begin');
+  });
+
+  it('renders Italian strings when active language is it', () => {
+    setLang('it');
+    const ob = new OnboardingImpl();
+    ob.mount(parent);
+    const sub = parent.querySelector('.hs-onboard-sub') as HTMLElement;
+    const button = parent.querySelector('button') as HTMLButtonElement;
+    expect(sub.textContent).toContain('Alza le mani');
+    expect(button.textContent).toBe('Permetti webcam e iniziare');
+  });
+
+  it('reflows on lang switch without remount', () => {
+    const ob = new OnboardingImpl();
+    ob.mount(parent);
+    const sub = parent.querySelector('.hs-onboard-sub') as HTMLElement;
+    const button = parent.querySelector('button') as HTMLButtonElement;
+    expect(button.textContent).toBe('Allow webcam and begin');
+    setLang('it');
+    expect(button.textContent).toBe('Permetti webcam e iniziare');
+    expect(sub.textContent).toContain('Alza le mani');
+    setLang('en');
+    expect(button.textContent).toBe('Allow webcam and begin');
   });
 });

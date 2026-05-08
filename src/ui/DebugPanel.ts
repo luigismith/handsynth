@@ -15,6 +15,8 @@
 import type { AudioEngine, AudioEngineParams, MusicBrain, VibeId } from '@contracts/contracts';
 import { VIBES } from '@presets/vibes';
 import { injectStyles } from './styles';
+import { t, subscribeLang } from '../i18n';
+import type { DictKey } from '../i18n';
 
 export interface DebugPanelDeps {
   audio: AudioEngine;
@@ -33,7 +35,10 @@ const KEY = 'd';
 
 interface SliderDef {
   id: keyof AudioEngineParams | 'bpm' | 'intensity';
+  /** English fallback label. */
   label: string;
+  /** i18n key resolved at render time. */
+  labelKey: DictKey;
   min: number;
   max: number;
   step: number;
@@ -42,15 +47,15 @@ interface SliderDef {
 }
 
 const SLIDERS: SliderDef[] = [
-  { id: 'filterCutoff', label: 'Filter cutoff (Hz)', min: 100, max: 16000, step: 1, initial: 8000, log: true },
-  { id: 'filterResonance', label: 'Filter resonance Q', min: 0.1, max: 18, step: 0.1, initial: 1.0 },
-  { id: 'reverbWet', label: 'Reverb wet', min: 0, max: 1, step: 0.01, initial: 0.4 },
-  { id: 'delayFeedback', label: 'Delay feedback', min: 0, max: 0.9, step: 0.01, initial: 0.35 },
-  { id: 'saturatorDrive', label: 'Saturator drive', min: 0.5, max: 3, step: 0.01, initial: 1.0 },
-  { id: 'brightness', label: 'Brightness', min: 0, max: 1, step: 0.01, initial: 0.5 },
-  { id: 'masterDuck', label: 'Master duck', min: 0, max: 1, step: 0.01, initial: 0 },
-  { id: 'intensity', label: 'Intensity (overrides gesture)', min: 0, max: 1, step: 0.01, initial: 0.5 },
-  { id: 'bpm', label: 'BPM', min: 60, max: 180, step: 1, initial: 92 },
+  { id: 'filterCutoff', label: 'Filter cutoff (Hz)', labelKey: 'debug.slider.cutoff', min: 100, max: 16000, step: 1, initial: 8000, log: true },
+  { id: 'filterResonance', label: 'Filter resonance Q', labelKey: 'debug.slider.q', min: 0.1, max: 18, step: 0.1, initial: 1.0 },
+  { id: 'reverbWet', label: 'Reverb wet', labelKey: 'debug.slider.reverbWet', min: 0, max: 1, step: 0.01, initial: 0.4 },
+  { id: 'delayFeedback', label: 'Delay feedback', labelKey: 'debug.slider.delayFb', min: 0, max: 0.9, step: 0.01, initial: 0.35 },
+  { id: 'saturatorDrive', label: 'Saturator drive', labelKey: 'debug.slider.drive', min: 0.5, max: 3, step: 0.01, initial: 1.0 },
+  { id: 'brightness', label: 'Brightness', labelKey: 'debug.slider.brightness', min: 0, max: 1, step: 0.01, initial: 0.5 },
+  { id: 'masterDuck', label: 'Master duck', labelKey: 'debug.slider.duck', min: 0, max: 1, step: 0.01, initial: 0 },
+  { id: 'intensity', label: 'Intensity (overrides gesture)', labelKey: 'debug.slider.intensity', min: 0, max: 1, step: 0.01, initial: 0.5 },
+  { id: 'bpm', label: 'BPM', labelKey: 'debug.slider.bpm', min: 60, max: 180, step: 1, initial: 92 },
 ];
 
 export interface DebugPanelApi {
@@ -71,6 +76,13 @@ export class DebugPanelImpl implements DebugPanelApi {
   private overrides: Partial<AudioEngineParams> = {};
   private bpmCurrent = 92;
   private intensityOverride: number | null = null;
+  private toggleEl2: HTMLButtonElement | null = null;
+  private titleEl: HTMLHeadingElement | null = null;
+  private hintEl: HTMLDivElement | null = null;
+  private vibeFieldLabelEl: HTMLLabelElement | null = null;
+  private sliderLabelEls = new Map<string, HTMLLabelElement>();
+  private vibeOptionEls: HTMLOptionElement[] = [];
+  private unsubLang: (() => void) | null = null;
 
   mount(parent: HTMLElement, deps: DebugPanelDeps): void {
     if (this.mounted) return;
@@ -82,15 +94,16 @@ export class DebugPanelImpl implements DebugPanelApi {
     const toggle = document.createElement('button');
     toggle.className = 'hs-debug-toggle';
     toggle.type = 'button';
-    toggle.textContent = 'CONTROLS';
-    toggle.setAttribute('aria-label', 'Show controls panel');
     parent.appendChild(toggle);
     this.toggleEl = toggle;
+    this.toggleEl2 = toggle;
 
     const card = document.createElement('div');
     card.className = 'hs-debug-card';
     card.hidden = true;
-    card.innerHTML = `<h3>CONTROLS</h3>`;
+    const title = document.createElement('h3');
+    card.appendChild(title);
+    this.titleEl = title;
     parent.appendChild(card);
     this.cardEl = card;
 
@@ -99,7 +112,7 @@ export class DebugPanelImpl implements DebugPanelApi {
       row.className = 'hs-debug-row';
       const lbl = document.createElement('label');
       lbl.htmlFor = `hs-dbg-${def.id}`;
-      lbl.textContent = def.label;
+      this.sliderLabelEls.set(def.id, lbl);
       row.appendChild(lbl);
       const input = document.createElement('input');
       input.type = 'range';
@@ -142,7 +155,7 @@ export class DebugPanelImpl implements DebugPanelApi {
     const vibeRow = document.createElement('div');
     vibeRow.className = 'hs-debug-row';
     const vibeLbl = document.createElement('label');
-    vibeLbl.textContent = 'Vibe';
+    this.vibeFieldLabelEl = vibeLbl;
     vibeRow.appendChild(vibeLbl);
     const vibeSelect = document.createElement('select');
     vibeSelect.style.gridColumn = '1 / 3';
@@ -158,8 +171,10 @@ export class DebugPanelImpl implements DebugPanelApi {
     for (const id of Object.keys(VIBES) as VibeId[]) {
       const opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = VIBES[id].displayName;
+      opt.dataset.vibeId = id;
+      opt.textContent = t(`vibe.${id}.displayName` as DictKey);
       vibeSelect.appendChild(opt);
+      this.vibeOptionEls.push(opt);
     }
     vibeSelect.addEventListener('change', () => {
       deps.setVibe(vibeSelect.value as VibeId);
@@ -179,7 +194,7 @@ export class DebugPanelImpl implements DebugPanelApi {
 
     const hint = document.createElement('div');
     hint.className = 'hs-debug-hint';
-    hint.textContent = '? to toggle · double-click a slider to release control';
+    this.hintEl = hint;
     card.appendChild(hint);
 
     this.statEls = {
@@ -200,14 +215,47 @@ export class DebugPanelImpl implements DebugPanelApi {
 
     // Live stat refresh.
     this.statTimer = window.setInterval(() => this.refreshStats(), 250);
+
+    this.applyLang();
+    this.unsubLang = subscribeLang(() => this.applyLang());
+  }
+
+  /** Re-apply localized labels onto every static element. */
+  applyLang(): void {
+    if (this.toggleEl2) {
+      this.toggleEl2.textContent = t('debug.toggle');
+      this.toggleEl2.setAttribute('aria-label', t('debug.toggleAria'));
+    }
+    if (this.titleEl) this.titleEl.textContent = t('debug.title');
+    if (this.hintEl) this.hintEl.textContent = t('debug.hint');
+    if (this.vibeFieldLabelEl)
+      this.vibeFieldLabelEl.textContent = t('debug.vibeLabel');
+    for (const def of SLIDERS) {
+      const lbl = this.sliderLabelEls.get(def.id);
+      if (lbl) lbl.textContent = t(def.labelKey);
+    }
+    for (const opt of this.vibeOptionEls) {
+      const id = opt.dataset.vibeId;
+      if (id) opt.textContent = t(`vibe.${id}.displayName` as DictKey);
+    }
   }
 
   unmount(): void {
     if (!this.mounted) return;
     this.mounted = false;
+    if (this.unsubLang) {
+      this.unsubLang();
+      this.unsubLang = null;
+    }
     if (this.toggleEl) this.toggleEl.remove();
     if (this.cardEl) this.cardEl.remove();
     this.toggleEl = null;
+    this.toggleEl2 = null;
+    this.titleEl = null;
+    this.hintEl = null;
+    this.vibeFieldLabelEl = null;
+    this.sliderLabelEls.clear();
+    this.vibeOptionEls = [];
     this.cardEl = null;
     if (this.statTimer !== null) {
       clearInterval(this.statTimer);

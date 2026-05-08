@@ -5,8 +5,14 @@
 // `AudioContext.resume()` (Tone.start) and `getUserMedia` to succeed in
 // modern browsers — main.ts awaits awaitStart() and proceeds inside the same
 // gesture.
+//
+// All user-visible strings come from the i18n layer. `applyLang()` re-reads
+// the active dictionary into the existing DOM nodes (no remount) so the
+// language switcher in HudControls can flip the card while it's still on
+// screen during the retry loop.
 
 import { injectStyles } from './styles';
+import { t, subscribeLang } from '../i18n';
 
 export interface OnboardingApi {
   /** Mount the card into the given parent element. Idempotent. */
@@ -22,8 +28,13 @@ export interface OnboardingApi {
 export class OnboardingImpl implements OnboardingApi {
   private root: HTMLElement | null = null;
   private card: HTMLDivElement | null = null;
+  private titleEl: HTMLHeadingElement | null = null;
+  private subEl: HTMLParagraphElement | null = null;
+  private cheatsEl: HTMLDivElement | null = null;
   private button: HTMLButtonElement | null = null;
   private errorEl: HTMLDivElement | null = null;
+  private hasErrorShown = false;
+  private unsubLang: (() => void) | null = null;
 
   private startResolvers: Array<() => void> = [];
   private startedPromise: Promise<void> | null = null;
@@ -42,22 +53,17 @@ export class OnboardingImpl implements OnboardingApi {
     const title = document.createElement('h1');
     title.id = 'hs-onboard-title';
     title.className = 'hs-onboard-title';
-    title.textContent = 'HANDSYNTH';
 
     const sub = document.createElement('p');
     sub.className = 'hs-onboard-sub';
-    sub.textContent = '> Alza le mani — webcam input ready.';
 
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'hs-onboard-btn';
-    button.textContent = 'Permetti webcam e iniziare';
-    button.setAttribute('aria-label', 'Iniziare HandSynth');
     button.addEventListener('click', () => this.handleStart());
 
     const cheats = document.createElement('div');
     cheats.className = 'hs-onboard-cheats';
-    cheats.textContent = '[ ↔ ] FILTER  [ ↑ ] DENSITY  [ ☞ ] STAB';
 
     const errorEl = document.createElement('div');
     errorEl.className = 'hs-onboard-error';
@@ -69,11 +75,36 @@ export class OnboardingImpl implements OnboardingApi {
 
     this.root = parent;
     this.card = card;
+    this.titleEl = title;
+    this.subEl = sub;
+    this.cheatsEl = cheats;
     this.button = button;
     this.errorEl = errorEl;
 
+    this.applyLang();
+    this.unsubLang = subscribeLang(() => this.applyLang());
+
     // Auto-focus the CTA so keyboard users can press Enter immediately.
     queueMicrotask(() => button.focus());
+  }
+
+  /**
+   * Re-apply localized strings onto the existing DOM. Called on mount and
+   * whenever the language changes. We deliberately keep the button text
+   * stable across lang changes when the user has hit Retry — we still want
+   * to read "Retry" / "Riprova" in the new language.
+   */
+  applyLang(): void {
+    if (!this.card) return;
+    if (this.titleEl) this.titleEl.textContent = t('onboarding.title');
+    if (this.subEl) this.subEl.textContent = t('onboarding.subtitle');
+    if (this.cheatsEl) this.cheatsEl.textContent = t('onboarding.cheats');
+    if (this.button) {
+      this.button.textContent = this.hasErrorShown
+        ? t('onboarding.retry')
+        : t('onboarding.cta');
+      this.button.setAttribute('aria-label', t('onboarding.ctaAria'));
+    }
   }
 
   awaitStart(): Promise<void> {
@@ -93,8 +124,9 @@ export class OnboardingImpl implements OnboardingApi {
     if (!this.errorEl) return;
     this.errorEl.textContent = message;
     this.errorEl.hidden = false;
+    this.hasErrorShown = true;
     if (this.button) {
-      this.button.textContent = 'Riprova';
+      this.button.textContent = t('onboarding.retry');
       this.button.focus();
     }
     // Re-arm: future awaitStart() calls should wait for the next click.
@@ -103,13 +135,21 @@ export class OnboardingImpl implements OnboardingApi {
   }
 
   unmount(): void {
+    if (this.unsubLang) {
+      this.unsubLang();
+      this.unsubLang = null;
+    }
     if (this.card && this.card.parentElement) {
       this.card.parentElement.removeChild(this.card);
     }
     this.card = null;
+    this.titleEl = null;
+    this.subEl = null;
+    this.cheatsEl = null;
     this.button = null;
     this.errorEl = null;
     this.root = null;
+    this.hasErrorShown = false;
     // Resolve any leftover awaiters so callers don't hang.
     for (const r of this.startResolvers) r();
     this.startResolvers = [];
