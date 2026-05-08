@@ -141,6 +141,15 @@ const FINGERTIP_INDICES = [4, 8, 12, 16, 20] as const;
 // Palm landmarks used to compute hand center / radius.
 const PALM_INDICES = [0, 5, 9, 13, 17] as const;
 
+// MediaPipe FaceLandmarker eye-CORNER indices used by drawEyeLasers to
+// compute the eye centroid (mean of inner+outer corner). Exported so the
+// face-gesture helpers and the lasers stay in lockstep with the canonical
+// FaceMesh topology.
+export const FACE_LEFT_EYE_OUTER_CORNER = 33;
+export const FACE_LEFT_EYE_INNER_CORNER = 133;
+export const FACE_RIGHT_EYE_OUTER_CORNER = 263;
+export const FACE_RIGHT_EYE_INNER_CORNER = 362;
+
 // MediaPipe FaceLandmarker indices for the visible-skeleton subset we draw.
 // These are exported for unit tests so we can verify the sketch is using
 // the documented mesh topology.
@@ -441,6 +450,20 @@ export function createSketch(
           drawFakeArms(s, state.face, state.hands, s.width, s.height);
           s.pop();
         }
+
+        // Superman laser eyes — fired after the face skeleton (so they're
+        // not occluded by the eye rings) but before finger strings (so
+        // distant beams sit behind closer string layers). The function
+        // self-no-ops below the eyesWide threshold.
+        drawEyeLasers(
+          s,
+          state.face,
+          s.width,
+          s.height,
+          beatV,
+          state.videoCover,
+          state.reducedMotion,
+        );
       }
 
       // Layer 7 — finger strings on top of everything else.
@@ -784,6 +807,206 @@ function drawPolyline(
     s.vertex(px, py);
   }
   s.endShape();
+}
+
+// ---------------------------------------------------------------------------
+// Superman laser eyes
+//
+// Beams emitted from the user's eyes when they open them WIDE (eyesWide
+// > 0.15 — small threshold so blinks don't fire). Each eye gets a
+// three-layer beam (outer glow, mid, white-hot core) plus a small radial
+// "spark" cluster at the tip. All ADD-blended so they add light rather
+// than occluding the face beneath.
+//
+// Beam direction: projected outward along an approximation of the user's
+// gaze, using the head pose's yaw/pitch:
+//
+//     forward = vec2(sin(yaw), -sin(pitch))
+//
+// At yaw=pitch=0 the beam shoots straight to the right of the eye (we
+// then add a tiny default upward bias so a centred face doesn't fire
+// straight into the floor). The y component is clamped so the beam can
+// never angle beyond 60° downward.
+//
+// Length scales with eyesWide. A small sine-wave flicker (~18 Hz) on
+// length and width keeps the beam feeling alive.
+//
+// Reduced-motion mode draws a single thin core line — same direction,
+// no glow stack, no flicker.
+// ---------------------------------------------------------------------------
+
+/** Below this threshold the lasers don't render. Was 0.15 — that let
+ *  resting/relaxed eyes still fire lasers because the EAR fallback +
+ *  blendshape noise can pull eyesWide above 0.15 even when the user
+ *  isn't trying. 0.45 means the user has to deliberately open their
+ *  eyes wide (well past resting) for the lasers to engage. */
+const EYES_LASER_MIN = 0.45;
+/** Maximum beam length in pixels (at eyesWide=1). */
+const EYES_LASER_MAX_LEN = 600;
+/** Minimum beam length while above threshold. */
+const EYES_LASER_MIN_LEN = 80;
+/** Flicker frequency (Hz). */
+const EYES_LASER_FLICKER_HZ = 18;
+/** ±10% amplitude on the sine flicker. */
+const EYES_LASER_FLICKER_AMP = 0.1;
+/** Default upward tilt added to the forward vector so a centred face's
+ *  beams don't shoot straight horizontally / into the floor. Empirically
+ *  a slight upward bias reads best against a face-facing camera. */
+const EYES_LASER_DEFAULT_LIFT = 0.18;
+/** Maximum allowed downward angle (clamp on the y component of the
+ *  forward direction). Prevents lasers angling beyond 60° below
+ *  horizontal when the user looks down. */
+const EYES_LASER_MAX_DOWN = 0.85;
+/** Spark count at the beam tip. */
+const EYES_LASER_SPARKS = 5;
+/** Spark length in pixels. */
+const EYES_LASER_SPARK_LEN = 12;
+
+function eyeCenter(
+  lms: readonly FaceLandmark[],
+  outer: number,
+  inner: number,
+): { x: number; y: number } | null {
+  const a = lms[outer];
+  const b = lms[inner];
+  if (!a || !b) return null;
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+export function drawEyeLasers(
+  s: p5,
+  face: FaceState,
+  width: number,
+  height: number,
+  beat: number,
+  cover: VideoCoverTransform | null = null,
+  reducedMotion = false,
+): void {
+  const lms = face.landmarks;
+  if (!lms || lms.length < 478) return;
+  const w = clamp01Local(face.eyesWide ?? 0);
+  if (w <= EYES_LASER_MIN) return;
+
+  const eyeL = eyeCenter(
+    lms,
+    FACE_LEFT_EYE_OUTER_CORNER,
+    FACE_LEFT_EYE_INNER_CORNER,
+  );
+  const eyeR = eyeCenter(
+    lms,
+    FACE_RIGHT_EYE_OUTER_CORNER,
+    FACE_RIGHT_EYE_INNER_CORNER,
+  );
+  if (!eyeL && !eyeR) return;
+
+  // Beam direction. The previous yaw/pitch formula had sign-of-yaw
+  // confusion in the selfie-mirrored frame — beams went OPPOSITE of
+  // where the user was facing. Replaced with a geometric rule that's
+  // self-correcting under any mirror convention:
+  //
+  //   per-eye direction = normalize(eye_pos - face_center) + small
+  //                       upward bias
+  //
+  // Each eye's beam points OUTWARD from the face center, plus a small
+  // upward lift so a perfectly-centered face doesn't shoot beams into
+  // the chin. As the user turns their head the eye positions shift
+  // relative to the face center → the beams naturally swing in the
+  // same direction the user is looking. No yaw/pitch reading needed.
+  const fcRaw = face.center ?? { x: 0.5, y: 0.5 };
+  const [fcx, fcy] = landmarkToScreen(fcRaw.x, fcRaw.y, width, height, cover);
+
+  // Beam length (with flicker).
+  const tNow = performance.now() / 1000;
+  const flicker = reducedMotion
+    ? 0
+    : Math.sin(tNow * 2 * Math.PI * EYES_LASER_FLICKER_HZ) *
+      EYES_LASER_FLICKER_AMP;
+  const baseLen = Math.max(EYES_LASER_MIN_LEN, w * EYES_LASER_MAX_LEN);
+  const len = baseLen * (1 + flicker);
+  // Per-eye outward bias so the LEFT eye's laser leans slightly LEFT and
+  // the right eye's leans slightly RIGHT (so the two beams diverge when
+  // the user is centred — Superman style). Left eye in screen-space is
+  // the left of the (mirrored) image: x < 0.5.
+  const SIDE_SPLAY = 0.18;
+
+  s.push();
+  s.blendMode(s.ADD);
+  s.noFill();
+
+  for (const eye of [{ lm: eyeL }, { lm: eyeR }]) {
+    if (!eye.lm) continue;
+    const [ex, ey] = landmarkToScreen(eye.lm.x, eye.lm.y, width, height, cover);
+
+    // Outward direction from face center to this eye + slight upward
+    // lift. Naturally points each beam away from the face, and since
+    // both eye and face-center coords live in the SAME selfie-mirrored
+    // frame, no sign-flip is needed under any mirror toggle.
+    let rfx = ex - fcx;
+    let rfy = (ey - fcy) - height * EYES_LASER_DEFAULT_LIFT;
+    const mag = Math.hypot(rfx, rfy);
+    if (mag < 1e-6) {
+      rfx = 1;
+      rfy = -EYES_LASER_DEFAULT_LIFT;
+    } else {
+      rfx /= mag;
+      rfy /= mag;
+    }
+    // Clamp the y component to prevent shooting straight into the floor.
+    if (rfy > EYES_LASER_MAX_DOWN) {
+      rfy = EYES_LASER_MAX_DOWN;
+      const m2 = Math.hypot(rfx, rfy) || 1;
+      rfx /= m2;
+      rfy /= m2;
+    }
+    void SIDE_SPLAY; // splay folded into the outward vector now
+
+    const tx = ex + rfx * len;
+    const ty = ey + rfy * len;
+
+    if (reducedMotion) {
+      // Quiet mode: single thin core line, no flicker stack.
+      s.stroke(28, 30, 100, 0.9);
+      s.strokeWeight(2);
+      s.line(ex, ey, tx, ty);
+      continue;
+    }
+
+    // Layer 1: outer glow. ORANGE_GLOW.
+    s.stroke(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, 0.15);
+    s.strokeWeight(18 * (1 + flicker));
+    s.line(ex, ey, tx, ty);
+
+    // Layer 2: mid. ORANGE_HOT, brighter on beat.
+    s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.35 + 0.05 * beat);
+    s.strokeWeight(8 * (1 + flicker));
+    s.line(ex, ey, tx, ty);
+
+    // Layer 3: white-hot core (HSB 28, 30, 100). 0.95 alpha.
+    s.stroke(28, 30, 100, 0.95);
+    s.strokeWeight(2);
+    s.line(ex, ey, tx, ty);
+
+    // Tip sparks: short radial lines from the endpoint, ORANGE_HOT,
+    // fading with eyesWide. Drawn above the core so they read as the
+    // explosive impact at the beam tip.
+    const sparkAlpha = 0.6 + 0.3 * w;
+    s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, sparkAlpha);
+    s.strokeWeight(1.4);
+    for (let i = 0; i < EYES_LASER_SPARKS; i += 1) {
+      const a = (i / EYES_LASER_SPARKS) * Math.PI * 2 + tNow * 4;
+      const sx2 = Math.cos(a) * EYES_LASER_SPARK_LEN;
+      const sy2 = Math.sin(a) * EYES_LASER_SPARK_LEN;
+      s.line(tx, ty, tx + sx2, ty + sy2);
+    }
+  }
+
+  s.pop();
+}
+
+function clamp01Local(v: number): number {
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
 }
 
 // ---------------------------------------------------------------------------

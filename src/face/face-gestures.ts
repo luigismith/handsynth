@@ -211,6 +211,101 @@ export function browRaiseFromLandmarks(landmarks: FaceLandmark[]): number {
 }
 
 // ---------------------------------------------------------------------------
+// Eye openness (geometric eye-aspect ratio, EAR)
+//
+// The MediaPipe FaceMesh canonical landmark indices for the eye contours
+// give us a vertical / horizontal ratio that maps cleanly to "openness":
+//
+//   Left eye:  top (159, 158), bottom (145, 153), corners 33 (outer), 133 (inner)
+//   Right eye: top (386, 385), bottom (374, 380), corners 263 (outer), 362 (inner)
+//
+// EAR = mean(vertical1, vertical2) / horizontalWidth.
+// Typical resting ~0.30, fully open ~0.45+, blink/closed ~0.15.
+//
+// We expose helpers for each side plus a `normalizeEyeOpenness` that
+// re-centres the signal around 0.5 at rest, peaks near 1 at wide-open,
+// and dips to 0 on a blink.
+// ---------------------------------------------------------------------------
+
+const LM_LEFT_EYE_TOP_OUTER = 159;
+const LM_LEFT_EYE_TOP_INNER = 158;
+const LM_LEFT_EYE_BOTTOM_OUTER = 145;
+const LM_LEFT_EYE_BOTTOM_INNER = 153;
+const LM_LEFT_EYE_OUTER_CORNER = 33;
+const LM_LEFT_EYE_INNER_CORNER = 133;
+
+const LM_RIGHT_EYE_TOP_OUTER = 386;
+const LM_RIGHT_EYE_TOP_INNER = 385;
+const LM_RIGHT_EYE_BOTTOM_OUTER = 374;
+const LM_RIGHT_EYE_BOTTOM_INNER = 380;
+const LM_RIGHT_EYE_OUTER_CORNER = 263;
+const LM_RIGHT_EYE_INNER_CORNER = 362;
+
+/** EAR calibration: resting eye sits around this raw value. */
+const EAR_REST = 0.3;
+/** Fully open (deliberate wide-eye stare). Maps to normalized 1.0. */
+const EAR_FULL = 0.45;
+/** Blink / closed. Maps to normalized 0. */
+const EAR_CLOSED = 0.15;
+
+/**
+ * Geometric eye-aspect ratio for the LEFT eye. Returns 0 if any required
+ * landmark is missing or the horizontal width is zero.
+ */
+export function eyeAspectRatioLeft(landmarks: FaceLandmark[]): number {
+  const t1 = landmarks[LM_LEFT_EYE_TOP_OUTER];
+  const t2 = landmarks[LM_LEFT_EYE_TOP_INNER];
+  const b1 = landmarks[LM_LEFT_EYE_BOTTOM_OUTER];
+  const b2 = landmarks[LM_LEFT_EYE_BOTTOM_INNER];
+  const c1 = landmarks[LM_LEFT_EYE_OUTER_CORNER];
+  const c2 = landmarks[LM_LEFT_EYE_INNER_CORNER];
+  if (!t1 || !t2 || !b1 || !b2 || !c1 || !c2) return 0;
+  const v1 = dist2D(t1, b1);
+  const v2 = dist2D(t2, b2);
+  const w = dist2D(c1, c2);
+  if (w <= 0) return 0;
+  return (v1 + v2) / 2 / w;
+}
+
+/** Geometric EAR for the RIGHT eye. See `eyeAspectRatioLeft`. */
+export function eyeAspectRatioRight(landmarks: FaceLandmark[]): number {
+  const t1 = landmarks[LM_RIGHT_EYE_TOP_OUTER];
+  const t2 = landmarks[LM_RIGHT_EYE_TOP_INNER];
+  const b1 = landmarks[LM_RIGHT_EYE_BOTTOM_OUTER];
+  const b2 = landmarks[LM_RIGHT_EYE_BOTTOM_INNER];
+  const c1 = landmarks[LM_RIGHT_EYE_OUTER_CORNER];
+  const c2 = landmarks[LM_RIGHT_EYE_INNER_CORNER];
+  if (!t1 || !t2 || !b1 || !b2 || !c1 || !c2) return 0;
+  const v1 = dist2D(t1, b1);
+  const v2 = dist2D(t2, b2);
+  const w = dist2D(c1, c2);
+  if (w <= 0) return 0;
+  return (v1 + v2) / 2 / w;
+}
+
+/**
+ * Map raw EAR (or 1 - eyeBlink blendshape, which has the same useful range)
+ * onto a 0..1 normalized openness signal:
+ *   - At EAR_REST (~0.30) -> 0.5  (eyes at neutral, half-lit)
+ *   - At EAR_FULL (~0.45) -> 1.0  (deliberately wide)
+ *   - At EAR_CLOSED (~0.15) -> 0  (blink / closed)
+ *
+ * Two-segment linear ramp through the rest point so the upper and lower
+ * halves of the curve are independently calibrated.
+ */
+export function normalizeEyeOpenness(raw: number): number {
+  if (!Number.isFinite(raw)) return 0;
+  if (raw <= EAR_CLOSED) return 0;
+  if (raw >= EAR_FULL) return 1;
+  if (raw <= EAR_REST) {
+    // Lower half: closed→rest maps to 0..0.5.
+    return ((raw - EAR_CLOSED) / (EAR_REST - EAR_CLOSED)) * 0.5;
+  }
+  // Upper half: rest→full maps to 0.5..1.
+  return 0.5 + ((raw - EAR_REST) / (EAR_FULL - EAR_REST)) * 0.5;
+}
+
+// ---------------------------------------------------------------------------
 // Face center (un-mirrored). The FaceTracker x-flips at emit time.
 // ---------------------------------------------------------------------------
 

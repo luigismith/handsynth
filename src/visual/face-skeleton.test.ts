@@ -9,15 +9,20 @@
 import { describe, it, expect } from 'vitest';
 import type { FaceState, FaceLandmark, Hand } from '@contracts/contracts';
 import {
+  drawEyeLasers,
   drawFaceSkeleton,
   drawFakeArms,
-  FACE_OVAL,
   FACE_LEFT_EYE,
-  FACE_RIGHT_EYE,
-  FACE_LIPS_OUTER,
-  FACE_LIPS_INNER,
-  FACE_NOSE_BRIDGE,
+  FACE_LEFT_EYE_INNER_CORNER,
+  FACE_LEFT_EYE_OUTER_CORNER,
   FACE_LEFT_BROW,
+  FACE_LIPS_INNER,
+  FACE_LIPS_OUTER,
+  FACE_NOSE_BRIDGE,
+  FACE_OVAL,
+  FACE_RIGHT_EYE,
+  FACE_RIGHT_EYE_INNER_CORNER,
+  FACE_RIGHT_EYE_OUTER_CORNER,
   FACE_RIGHT_BROW,
 } from './sketch';
 
@@ -33,6 +38,8 @@ interface StubCall {
 interface P5Stub {
   calls: StubCall[];
   CLOSE: 'close';
+  ADD: 'add';
+  BLEND: 'blend';
   push(): void;
   pop(): void;
   translate(x: number, y: number): void;
@@ -42,7 +49,9 @@ interface P5Stub {
   noStroke(): void;
   stroke(...args: unknown[]): void;
   strokeWeight(w: number): void;
+  blendMode(mode: unknown): void;
   bezier(...args: number[]): void;
+  line(x1: number, y1: number, x2: number, y2: number): void;
   beginShape(): void;
   vertex(x: number, y: number): void;
   endShape(mode?: string): void;
@@ -56,6 +65,8 @@ function createStub(): P5Stub {
   return {
     calls,
     CLOSE: 'close' as const,
+    ADD: 'add' as const,
+    BLEND: 'blend' as const,
     push: rec('push'),
     pop: rec('pop'),
     translate: rec('translate'),
@@ -65,7 +76,9 @@ function createStub(): P5Stub {
     noStroke: rec('noStroke'),
     stroke: rec('stroke'),
     strokeWeight: rec('strokeWeight'),
+    blendMode: rec('blendMode'),
     bezier: rec('bezier') as unknown as P5Stub['bezier'],
+    line: rec('line') as unknown as P5Stub['line'],
     beginShape: rec('beginShape'),
     vertex: rec('vertex') as unknown as P5Stub['vertex'],
     endShape: rec('endShape') as unknown as P5Stub['endShape'],
@@ -92,6 +105,9 @@ function makeFace(over: Partial<FaceState> = {}): FaceState {
     pose: { yaw: 0, pitch: 0, roll: 0, depth: 0 },
     mouthOpen: 0,
     browRaise: 0,
+    eyeOpenLeft: 0.5,
+    eyeOpenRight: 0.5,
+    eyesWide: 0,
     noFaceDuration: 0,
     landmarks: makeFaceLandmarks(),
     ...over,
@@ -280,5 +296,104 @@ describe('drawFakeArms', () => {
     );
     const beziers = s.calls.filter((c) => c.fn === 'bezier').length;
     expect(beziers).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// drawEyeLasers — Superman laser eyes
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a face fixture with valid eye-corner landmarks at the documented
+ * MediaPipe indices. Without these the laser function early-returns even
+ * with eyesWide above threshold.
+ */
+function makeFaceWithEyeCorners(over: Partial<FaceState> = {}): FaceState {
+  const lms = makeFaceLandmarks();
+  // Place eye corners at distinct pixel positions so the centroids land
+  // on different points and the helpers don't collapse to (0,0).
+  lms[FACE_LEFT_EYE_OUTER_CORNER] = { x: 0.30, y: 0.45, z: 0 };
+  lms[FACE_LEFT_EYE_INNER_CORNER] = { x: 0.40, y: 0.45, z: 0 };
+  lms[FACE_RIGHT_EYE_OUTER_CORNER] = { x: 0.70, y: 0.45, z: 0 };
+  lms[FACE_RIGHT_EYE_INNER_CORNER] = { x: 0.60, y: 0.45, z: 0 };
+  return {
+    ...makeFace({ landmarks: lms }),
+    ...over,
+  };
+}
+
+describe('drawEyeLasers', () => {
+  it('is a no-op when eyesWide is at or below 0.15', () => {
+    const s = createStub();
+    drawEyeLasers(
+      s as unknown as Parameters<typeof drawEyeLasers>[0],
+      makeFaceWithEyeCorners({ eyesWide: 0.15 }),
+      1280,
+      720,
+      0,
+    );
+    // No stroke / line calls — only a defensive early return.
+    expect(s.calls.length).toBe(0);
+  });
+
+  it('is a no-op when landmarks are missing', () => {
+    const s = createStub();
+    drawEyeLasers(
+      s as unknown as Parameters<typeof drawEyeLasers>[0],
+      makeFace({ landmarks: undefined, eyesWide: 0.9 }),
+      1280,
+      720,
+      0,
+    );
+    expect(s.calls.length).toBe(0);
+  });
+
+  it('emits at least 6 stroke calls (3 layers x 2 eyes) at eyesWide=0.5', () => {
+    const s = createStub();
+    drawEyeLasers(
+      s as unknown as Parameters<typeof drawEyeLasers>[0],
+      makeFaceWithEyeCorners({ eyesWide: 0.5 }),
+      1280,
+      720,
+      0,
+    );
+    const strokes = s.calls.filter((c) => c.fn === 'stroke').length;
+    expect(strokes).toBeGreaterThanOrEqual(6);
+  });
+
+  it('wraps the laser draw in a push/pop pair', () => {
+    const s = createStub();
+    drawEyeLasers(
+      s as unknown as Parameters<typeof drawEyeLasers>[0],
+      makeFaceWithEyeCorners({ eyesWide: 0.7 }),
+      1280,
+      720,
+      0,
+    );
+    const pushes = s.calls.filter((c) => c.fn === 'push').length;
+    const pops = s.calls.filter((c) => c.fn === 'pop').length;
+    expect(pushes).toBeGreaterThanOrEqual(1);
+    expect(pops).toBe(pushes);
+    // First push and last pop frame the body of the function.
+    expect(s.calls[0]?.fn).toBe('push');
+    expect(s.calls[s.calls.length - 1]?.fn).toBe('pop');
+  });
+
+  it('reduced-motion mode draws a single thin line per eye, no glow stack', () => {
+    const s = createStub();
+    drawEyeLasers(
+      s as unknown as Parameters<typeof drawEyeLasers>[0],
+      makeFaceWithEyeCorners({ eyesWide: 0.9 }),
+      1280,
+      720,
+      0,
+      null,
+      /* reducedMotion */ true,
+    );
+    // One stroke + one line per eye = 2 strokes, 2 lines.
+    const strokes = s.calls.filter((c) => c.fn === 'stroke').length;
+    const lines = s.calls.filter((c) => c.fn === 'line').length;
+    expect(strokes).toBe(2);
+    expect(lines).toBe(2);
   });
 });

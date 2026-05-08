@@ -24,8 +24,11 @@ import {
   apparentSizeToCloseness,
   browRaiseFromLandmarks,
   extractEulerFromMatrix,
+  eyeAspectRatioLeft,
+  eyeAspectRatioRight,
   faceCenter,
   mouthOpenFromLandmarks,
+  normalizeEyeOpenness,
 } from './face-gestures';
 
 // ---------------------------------------------------------------------------
@@ -112,12 +115,20 @@ interface FaceFilterSlot {
   roll: OneEuroFilter;
   mouthOpen: OneEuroFilter;
   browRaise: OneEuroFilter;
+  /** Per-eye openness — same params as mouthOpen / browRaise. */
+  eyeOpenLeft: OneEuroFilter;
+  eyeOpenRight: OneEuroFilter;
+  /** eyesWide is the value the visualizer reads each frame. Slightly
+   * higher mincutoff so the lasers don't shimmer. */
+  eyesWide: OneEuroFilter;
   lastSeenMs: number;
 }
 
 function makeFaceFilterSlot(): FaceFilterSlot {
   // mincutoff=2.0, beta=0.02 for the centroid; mincutoff=1.5, beta=0.01 for
-  // pose & expression scalars (per spec).
+  // pose & expression scalars (per spec). The visualizer-facing eyesWide
+  // gets the heavier-cutoff "centroid" preset so lasers feel steady rather
+  // than shimmery.
   const centroid = (): OneEuroFilter =>
     new OneEuroFilter({ mincutoff: 2.0, beta: 0.02 });
   const pose = (): OneEuroFilter =>
@@ -131,6 +142,9 @@ function makeFaceFilterSlot(): FaceFilterSlot {
     roll: pose(),
     mouthOpen: pose(),
     browRaise: pose(),
+    eyeOpenLeft: pose(),
+    eyeOpenRight: pose(),
+    eyesWide: centroid(),
     lastSeenMs: 0,
   };
 }
@@ -144,7 +158,14 @@ function resetSlot(slot: FaceFilterSlot): void {
   slot.roll.reset();
   slot.mouthOpen.reset();
   slot.browRaise.reset();
+  slot.eyeOpenLeft.reset();
+  slot.eyeOpenRight.reset();
+  slot.eyesWide.reset();
 }
+
+/** Calibration: average eye openness at rest. Above this peg `eyesWide`
+ * begins to climb; below this it stays at 0 (so blinks don't fire lasers). */
+const EYE_REST = 0.5;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -399,6 +420,9 @@ export class FaceTrackerImpl implements FaceTracker {
         pose: empty,
         mouthOpen: 0,
         browRaise: 0,
+        eyeOpenLeft: 0,
+        eyeOpenRight: 0,
+        eyesWide: 0,
         noFaceDuration: this.noFaceAccumSec,
       };
     }
@@ -473,6 +497,29 @@ export class FaceTrackerImpl implements FaceTracker {
       browRaiseRaw = browRaiseFromLandmarks(lms);
     }
 
+    // Eye openness: prefer blendshapes (`eyeBlinkLeft/Right` are HIGH when the
+    // eye is CLOSED, so we invert), else fall back to the geometric EAR.
+    let eyeOpenLeftRaw: number;
+    const blendBlinkL = blendshapeScore(result, 'eyeBlinkLeft');
+    if (blendBlinkL !== null) {
+      eyeOpenLeftRaw = clamp01(1 - blendBlinkL);
+    } else {
+      eyeOpenLeftRaw = normalizeEyeOpenness(eyeAspectRatioLeft(lms));
+    }
+    let eyeOpenRightRaw: number;
+    const blendBlinkR = blendshapeScore(result, 'eyeBlinkRight');
+    if (blendBlinkR !== null) {
+      eyeOpenRightRaw = clamp01(1 - blendBlinkR);
+    } else {
+      eyeOpenRightRaw = normalizeEyeOpenness(eyeAspectRatioRight(lms));
+    }
+    // eyesWide: only kicks in when both eyes are pushed beyond rest, so a
+    // normal blink stays at zero while a deliberate wide-eye stare pegs the
+    // signal toward 1. See FaceState.eyesWide comment in contracts.ts.
+    const eyeMean = (eyeOpenLeftRaw + eyeOpenRightRaw) / 2;
+    const eyesWideRaw =
+      EYE_REST < 1 ? Math.max(0, (eyeMean - EYE_REST) / (1 - EYE_REST)) : 0;
+
     // Apply One-Euro filtering. Negate yaw/roll for selfie-mirrored
     // coordinates (pitch sign stays).
     const cx = clamp01(this.slot.centerX.filter(mirroredCenterX, tSec));
@@ -486,6 +533,9 @@ export class FaceTrackerImpl implements FaceTracker {
     const rollF = this.slot.roll.filter(rollSign * roll, tSec);
     const mo = clamp01(this.slot.mouthOpen.filter(mouthOpenRaw, tSec));
     const br = clamp01(this.slot.browRaise.filter(browRaiseRaw, tSec));
+    const eolF = clamp01(this.slot.eyeOpenLeft.filter(eyeOpenLeftRaw, tSec));
+    const eorF = clamp01(this.slot.eyeOpenRight.filter(eyeOpenRightRaw, tSec));
+    const ewF = clamp01(this.slot.eyesWide.filter(eyesWideRaw, tSec));
 
     const state: FaceState = {
       detected: true,
@@ -494,6 +544,9 @@ export class FaceTrackerImpl implements FaceTracker {
       pose: { yaw: yawF, pitch: pitchF, roll: rollF, depth },
       mouthOpen: mo,
       browRaise: br,
+      eyeOpenLeft: eolF,
+      eyeOpenRight: eorF,
+      eyesWide: ewF,
       noFaceDuration: 0,
       landmarks: lms,
     };

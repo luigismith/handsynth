@@ -95,7 +95,11 @@ const NO_HANDS_FALLBACK_SECONDS = 2.0;
 //   pose.roll  -> brightness offset (±FACE_BRIGHTNESS_GAIN around hand value)
 //   pose.yaw   -> filterResonance offset (±FACE_RESONANCE_GAIN)
 //   pose.pitch -> intensity boost (+FACE_INTENSITY_GAIN * sin(pitch))
-//   mouthOpen  -> rising-edge stab trigger
+//   mouthOpen  -> rising-edge stab trigger + 4-dim continuous controller
+//   eyesWide   -> reverbWet additive lift (+FACE_EYES_WIDE_REVERB_GAIN) AND
+//                 filterResonance Q boost (+FACE_EYES_WIDE_Q_GAIN, clamped).
+//                 "Explosive" sound when the user widens their eyes — pairs
+//                 with the Superman laser-eye visual.
 //   noFaceDuration > face-lost threshold -> masterDuck += FACE_LOST_DUCK
 // ---------------------------------------------------------------------------
 
@@ -168,6 +172,16 @@ const FACE_MOUTH_CUTOFF_LIFT = 6000;
 const FACE_MOUTH_REVERB_LIFT = 0.3;
 /** 0..1 added to brightness when mouth is fully open. */
 const FACE_MOUTH_BRIGHTNESS_GAIN = 0.4;
+
+/**
+ * Eyes-wide additive contributions, layered on top of the hand-derived
+ * target. eyesWide=1 -> +0.25 reverbWet AND +4 Q. The combination lifts
+ * the wash and pinches the resonance — together they read as "explosive"
+ * even when the underlying gesture mix is quiet. Pairs with the Superman
+ * laser-eye visual.
+ */
+const FACE_EYES_WIDE_REVERB_GAIN = 0.25;
+const FACE_EYES_WIDE_Q_GAIN = 4;
 
 /**
  * Lower bound on the intensity pushed into MusicBrain. Re-maps the gesture's
@@ -917,6 +931,19 @@ export class InteractionMapperImpl implements InteractionMapper {
         typeof out.brightness === 'number' ? out.brightness : 0.5;
       out.brightness = clamp01(
         handBrightness2 + m * FACE_MOUTH_BRIGHTNESS_GAIN,
+      );
+
+      // Eyes-wide additive: lift reverbWet and Q on top of everything
+      // already composed. Layered AFTER the mouth block so wide eyes +
+      // open mouth read as the most extreme combined sound.
+      const w = clamp01(f.eyesWide);
+      out.reverbWet = clamp01(
+        (out.reverbWet ?? 0.4) + w * FACE_EYES_WIDE_REVERB_GAIN,
+      );
+      out.filterResonance = clamp(
+        (out.filterResonance ?? 1) + w * FACE_EYES_WIDE_Q_GAIN,
+        Q_MIN,
+        Q_MAX,
       );
     }
 

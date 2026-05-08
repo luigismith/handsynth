@@ -10,6 +10,8 @@ import {
   apparentSizeToCloseness,
   browRaiseFromLandmarks,
   extractEulerFromMatrix,
+  eyeAspectRatioLeft,
+  eyeAspectRatioRight,
   faceCenter,
   faceHeight,
   LM_BROW_CENTRE,
@@ -21,6 +23,7 @@ import {
   LM_UPPER_EYELID,
   LM_UPPER_INNER_LIP,
   mouthOpenFromLandmarks,
+  normalizeEyeOpenness,
 } from './face-gestures';
 
 // ---------------------------------------------------------------------------
@@ -234,5 +237,86 @@ describe('browRaiseFromLandmarks', () => {
 
   it('returns 0 for empty input', () => {
     expect(browRaiseFromLandmarks([])).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Eye openness — EAR + normalize
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a synthetic resting-eye fixture at the documented MediaPipe indices
+ * for both eyes. The horizontal width is 0.10; the mean vertical opening is
+ * 0.030 → EAR = 0.030 / 0.10 = 0.30 (the documented resting EAR).
+ */
+function eyesAtRest(): FaceLandmark[] {
+  const lms = makeLandmarks();
+  // Left eye: corners 33 (outer), 133 (inner) — width 0.10
+  lms[33] = { x: 0.30, y: 0.45, z: 0 };
+  lms[133] = { x: 0.40, y: 0.45, z: 0 };
+  // Top 159, 158 / Bottom 145, 153 — vertical opening 0.030 each
+  lms[159] = { x: 0.33, y: 0.435, z: 0 };
+  lms[158] = { x: 0.37, y: 0.435, z: 0 };
+  lms[145] = { x: 0.33, y: 0.465, z: 0 };
+  lms[153] = { x: 0.37, y: 0.465, z: 0 };
+
+  // Right eye mirrored: corners 263 (outer), 362 (inner)
+  lms[263] = { x: 0.70, y: 0.45, z: 0 };
+  lms[362] = { x: 0.60, y: 0.45, z: 0 };
+  lms[386] = { x: 0.67, y: 0.435, z: 0 };
+  lms[385] = { x: 0.63, y: 0.435, z: 0 };
+  lms[374] = { x: 0.67, y: 0.465, z: 0 };
+  lms[380] = { x: 0.63, y: 0.465, z: 0 };
+  return lms;
+}
+
+describe('eyeAspectRatio', () => {
+  it('returns ~0.30 for a synthetic resting-eye fixture (left)', () => {
+    expect(eyeAspectRatioLeft(eyesAtRest())).toBeCloseTo(0.3, 5);
+  });
+
+  it('returns ~0.30 for a synthetic resting-eye fixture (right)', () => {
+    expect(eyeAspectRatioRight(eyesAtRest())).toBeCloseTo(0.3, 5);
+  });
+
+  it('returns 0 for missing landmarks', () => {
+    expect(eyeAspectRatioLeft([])).toBe(0);
+    expect(eyeAspectRatioRight([])).toBe(0);
+  });
+
+  it('rises when the eye opens wider', () => {
+    const lms = eyesAtRest();
+    // Push top up + bottom down: vertical opening = 0.045 → EAR = 0.45.
+    lms[159] = { x: 0.33, y: 0.4275, z: 0 };
+    lms[158] = { x: 0.37, y: 0.4275, z: 0 };
+    lms[145] = { x: 0.33, y: 0.4725, z: 0 };
+    lms[153] = { x: 0.37, y: 0.4725, z: 0 };
+    expect(eyeAspectRatioLeft(lms)).toBeCloseTo(0.45, 5);
+  });
+});
+
+describe('normalizeEyeOpenness', () => {
+  it('maps resting EAR (0.30) to ~0.5', () => {
+    expect(normalizeEyeOpenness(0.3)).toBeCloseTo(0.5, 5);
+  });
+
+  it('maps wide-open EAR (0.45) to ~1.0', () => {
+    expect(normalizeEyeOpenness(0.45)).toBeCloseTo(1, 5);
+  });
+
+  it('maps closed EAR (0.15) to ~0', () => {
+    expect(normalizeEyeOpenness(0.15)).toBeCloseTo(0, 5);
+  });
+
+  it('clamps below the closed threshold to 0', () => {
+    expect(normalizeEyeOpenness(0.05)).toBe(0);
+  });
+
+  it('clamps above the wide threshold to 1', () => {
+    expect(normalizeEyeOpenness(0.6)).toBe(1);
+  });
+
+  it('returns 0 for non-finite input', () => {
+    expect(normalizeEyeOpenness(Number.NaN)).toBe(0);
   });
 });

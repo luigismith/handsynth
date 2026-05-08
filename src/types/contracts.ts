@@ -354,6 +354,17 @@ export interface FaceState {
   mouthOpen: number;
   /** Eyebrow raise 0..1. */
   browRaise: number;
+  /** Left eye openness, 0..1 (0 = closed/blink, 1 = wide open). Derived
+   * from MediaPipe's eyeBlinkLeft blendshape (inverted) when available,
+   * otherwise from the geometric eye-aspect ratio. */
+  eyeOpenLeft: number;
+  /** Right eye openness, 0..1. Same derivation as eyeOpenLeft. */
+  eyeOpenRight: number;
+  /** Eyes-wide signal: 0..1, peaks when both eyes are clearly OPEN beyond
+   * resting state. Computed as max(0, mean(left,right) - EYE_REST) /
+   * (1 - EYE_REST). The threshold lets normal blinks not register; only
+   * deliberate wide-open eyes light up the lasers. */
+  eyesWide: number;
   /** Time since face last seen, seconds. 0 if currently detected. */
   noFaceDuration: number;
   /** Optional: full landmark array for visualizer overlay (478 points). */
