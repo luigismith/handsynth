@@ -2,8 +2,8 @@
 //
 // p5.js (instance mode) FFT-driven visualization. Reads the AudioEngine's
 // master analyser, optionally syncs to MusicBrain `onBeat`, and draws hand
-// silhouettes + elastic beat-pulsing strings using the HandTracker's gesture
-// state.
+// silhouettes + face skeleton + elastic beat-pulsing strings using the
+// HandTracker's gesture state and the (optional) FaceTracker's face state.
 //
 // MOUNT STRATEGY (option "a" from the brief)
 // ------------------------------------------
@@ -17,21 +17,23 @@
 //      `unmount()` should be reversible.
 //   3. Let p5 append its own canvas to the parent.
 //
-// Bonus: this means CSS in `index.html` (`#visualizer { position: absolute;
-// inset: 0; z-index: 1 }`) cascades to p5's canvas because the parent <div>
-// styles all child canvases. UX-curator must NOT depend on the original
-// `<canvas id="visualizer">` having any specific class — p5's canvas is a
-// sibling of it, in the same parent.
-//
-// REQUIRED DOM (for Phase 4 / ux-curator):
-//   - A parent element wrapping the placeholder canvas (the existing <div
-//     id="app"> works).
-//   - The parent should be styled to fill the viewport. p5 reads
-//     `parent.clientWidth/Height` at setup.
+// FACE PARAMETER (extension to the contract)
+// ------------------------------------------
+// `mount()` accepts an optional `face` dependency. The orchestrator should
+// pass the FaceTracker if face tracking initialised successfully. When
+// present, the Visualizer subscribes to `face:update` and forwards the
+// state into the sketch, which renders a face skeleton + fake-arm
+// connectors. When absent, the visualizer behaves identically to the
+// hands-only legacy. The contract `Visualizer.mount` declares only
+// `{ audio, hands, music }` — passing `face` is a runtime extension that
+// older callers can safely ignore.
 
 import p5 from 'p5';
 import type {
   AudioEngine,
+  FaceState,
+  FaceTracker,
+  FaceTrackerEvents,
   GestureState,
   HandTracker,
   HandTrackerEvents,
@@ -43,6 +45,14 @@ import { createSketch, type SketchHandle, type SketchState } from './sketch';
 
 const FFT_SIZE = 1024;
 
+// HMR / dev-only zombie marker. If a previous instance mounted on `window`
+// without unmounting (e.g. Vite HMR replaced the module mid-frame), we log
+// a warning so devs notice rAF zombies before the FPS hint dies.
+const HMR_MARKER = '__hsVisualMounted';
+interface HMRWindow {
+  [HMR_MARKER]?: number;
+}
+
 export class VisualizerImpl implements Visualizer {
   private mounted = false;
   private sketch: SketchHandle | null = null;
@@ -51,6 +61,7 @@ export class VisualizerImpl implements Visualizer {
   private audio: AudioEngine | null = null;
   private hands: HandTracker | null = null;
   private music: MusicBrain | null = null;
+  private face: FaceTracker | null = null;
 
   private analyser: AnalyserNode | null = null;
   // Explicit ArrayBuffer-backed Uint8Array — newer DOM lib types require this
@@ -61,6 +72,7 @@ export class VisualizerImpl implements Visualizer {
   // Mounted state shared with the sketch (mutable reference).
   private state: SketchState = {
     hands: [],
+    face: null,
     pulse: 0,
     fftBins: this.fftBins,
     hasAnalyser: false,
@@ -74,6 +86,7 @@ export class VisualizerImpl implements Visualizer {
 
   // Listener references — needed for off().
   private gestureUpdateHandler: HandTrackerEvents['gesture:update'] | null = null;
+  private faceUpdateHandler: FaceTrackerEvents['face:update'] | null = null;
   private musicEvents: MusicBrainEvents | null = null;
   private resizeHandler: (() => void) | null = null;
 
@@ -84,9 +97,17 @@ export class VisualizerImpl implements Visualizer {
   // Wraps the FFT pull so we can substitute it during tests.
   private rafHandle: number | null = null;
 
+  /**
+   * Mount the sketch with its dependencies.
+   *
+   * Concrete signature widens the {@link Visualizer.mount} contract with an
+   * optional `face` dependency — see the file header. The orchestrator
+   * (main.ts) is expected to pass `{ audio, hands, music, face }` when face
+   * tracking is live.
+   */
   mount(
     canvas: HTMLCanvasElement,
-    deps: { audio: AudioEngine; hands: HandTracker; music: MusicBrain },
+    deps: { audio: AudioEngine; hands: HandTracker; music: MusicBrain; face?: FaceTracker },
   ): void {
     if (this.mounted) {
       // Idempotent — already mounted.
@@ -101,10 +122,31 @@ export class VisualizerImpl implements Visualizer {
       );
     }
 
+    // HMR safety: warn if a prior mount didn't tear down. Vite's HMR
+    // replaces the module but cannot cancel rAF callbacks bound by the
+    // previous instance — those zombies keep running and pile up FFT pulls
+    // every frame.
+    try {
+      if (typeof window !== 'undefined') {
+        const w = window as unknown as HMRWindow;
+        const prev = w[HMR_MARKER] ?? 0;
+        if (prev > 0) {
+          console.warn(
+            '[Visualizer] HMR zombie detected — ' +
+              `${prev} prior instance(s) on window. Reload the page if FPS drops.`,
+          );
+        }
+        w[HMR_MARKER] = prev + 1;
+      }
+    } catch {
+      // Window may be locked-down (e.g. cross-origin iframe); ignore.
+    }
+
     this.mounted = true;
     this.audio = deps.audio;
     this.hands = deps.hands;
     this.music = deps.music;
+    this.face = deps.face ?? null;
 
     // Hide the placeholder so p5's fresh canvas is what the user sees.
     this.hiddenPlaceholder = canvas;
@@ -154,6 +196,14 @@ export class VisualizerImpl implements Visualizer {
     };
     deps.hands.on('gesture:update', this.gestureUpdateHandler);
 
+    // Subscribe to face updates if a tracker was provided.
+    if (this.face) {
+      this.faceUpdateHandler = (faceState: FaceState): void => {
+        this.state.face = faceState;
+      };
+      this.face.on('face:update', this.faceUpdateHandler);
+    }
+
     // Subscribe to musical beats. MusicBrain.on takes the full events
     // object — we provide an object with only `onBeat` filled in (the
     // others are required by the type, but stubs are harmless because
@@ -185,7 +235,12 @@ export class VisualizerImpl implements Visualizer {
     // Pull FFT data each animation frame. We use rAF here (not p5's draw
     // hook) so the pull is decoupled from the render loop — if the canvas
     // is hidden (tab in background), browsers throttle rAF anyway.
+    //
+    // PERF: we check `this.mounted` BEFORE scheduling the next frame so a
+    // late-arriving callback after unmount() doesn't queue a new rAF.
+    // Without this guard HMR cycles can leave dangling rAF chains.
     const pullFFT = (): void => {
+      if (!this.mounted) return;
       this.rafHandle = requestAnimationFrame(pullFFT);
       if (this.analyser) {
         try {
@@ -221,7 +276,8 @@ export class VisualizerImpl implements Visualizer {
       // No CSS mirror on the canvas: HandTracker x-mirrors landmarks on
       // output, so the skeleton coordinates already live in the same
       // selfie-mirrored frame as the (CSS-flipped) <video>. Drawing them on
-      // an un-flipped canvas keeps the overlay aligned.
+      // an un-flipped canvas keeps the overlay aligned. FaceTracker uses
+      // the same convention.
     } catch (err) {
       console.warn('[Visualizer] p5 sketch failed to boot:', err);
       this.sketch = null;
@@ -250,6 +306,11 @@ export class VisualizerImpl implements Visualizer {
       this.hands.off('gesture:update', this.gestureUpdateHandler);
     }
     this.gestureUpdateHandler = null;
+
+    if (this.face && this.faceUpdateHandler) {
+      this.face.off('face:update', this.faceUpdateHandler);
+    }
+    this.faceUpdateHandler = null;
 
     if (this.music && this.musicEvents) {
       this.music.off(this.musicEvents);
@@ -288,14 +349,28 @@ export class VisualizerImpl implements Visualizer {
     this.audio = null;
     this.hands = null;
     this.music = null;
+    this.face = null;
 
     // Reset shared state so a future mount starts clean.
     this.state.hands = [];
+    this.state.face = null;
     this.state.pulse = 0;
     this.state.hasAnalyser = false;
     this.state.reducedMotion = false;
     // Keep the same Uint8Array reference, just zero it.
     this.fftBins.fill(0);
+
+    // Decrement the HMR marker so re-mount in the same window doesn't
+    // perpetually warn.
+    try {
+      if (typeof window !== 'undefined') {
+        const w = window as unknown as HMRWindow;
+        const prev = w[HMR_MARKER] ?? 0;
+        w[HMR_MARKER] = Math.max(0, prev - 1);
+      }
+    } catch {
+      // ignore
+    }
   }
 
   /**

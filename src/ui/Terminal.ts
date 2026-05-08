@@ -84,6 +84,18 @@ export class TerminalImpl {
     this.deps = deps;
     injectStyles();
 
+    // HMR safety: remove any orphan terminal roots left by a prior module
+    // version. Without this an HMR reload can leave the previous tree's
+    // DOM (and its accumulated 100+ lines) sitting in the parent.
+    const stale = parent.querySelectorAll('.hs-terminal');
+    for (const node of Array.from(stale)) {
+      try {
+        node.remove();
+      } catch {
+        // ignore detached nodes
+      }
+    }
+
     const root = document.createElement('div');
     root.className = 'hs-terminal';
     root.hidden = true;
@@ -232,12 +244,26 @@ export class TerminalImpl {
     }, 1500);
     this.lines.push(line);
 
-    // Trim to BUFFER_CAP via circular buffer behavior.
+    // Trim to BUFFER_CAP via circular buffer behavior. Two passes:
+    //   1. Trim our own tracked list — removes lines we know about.
+    //   2. Belt-and-suspenders: if the live DOM has MORE lines than the
+    //      cap (e.g. HMR re-mount left stale nodes from a previous
+    //      instance), prune the leading nodes directly. Without this
+    //      backstop, an old instance's lines stick around forever.
     while (this.lines.length > BUFFER_CAP) {
       const old = this.lines.shift();
       if (!old) break;
       if (old.fadeTimer !== null) clearTimeout(old.fadeTimer);
       old.el.remove();
+    }
+    const liveCount = this.bodyEl.childElementCount;
+    if (liveCount > BUFFER_CAP) {
+      const excess = liveCount - BUFFER_CAP;
+      for (let i = 0; i < excess; i += 1) {
+        const first = this.bodyEl.firstElementChild;
+        if (!first) break;
+        first.remove();
+      }
     }
 
     // Auto-scroll if visible.

@@ -8,7 +8,12 @@
 
 import type p5 from 'p5';
 
-const PATTERN_HEIGHT = 4; // 1px line + 3px gap, repeats vertically
+// PERF: 16 (was 4) to drop the per-frame image() blit count by 4×.
+// At PATTERN_HEIGHT=4 on a 1215px canvas we were issuing ~304 image() calls
+// every frame just for scanlines. At 16 we issue ~76. Visually the
+// scanlines are now slightly more spaced — a 1px line every 16px — which
+// still reads clearly as CRT but eats far less fillrate.
+const PATTERN_HEIGHT = 16;
 
 export interface ScanlineLayer {
   /** Resize the offscreen buffer; pattern is regenerated. */
@@ -23,7 +28,17 @@ export function createScanlineLayer(p: p5, width: number, height: number): Scanl
   let buf: p5.Graphics | null = null;
 
   function rebuild(p: p5, w: number, _h: number): void {
-    if (buf) buf.remove();
+    if (buf) {
+      try {
+        buf.remove();
+      } catch {
+        // p5 v1 sometimes throws TypeError during Element.remove() when the
+        // element has been detached from its parent's _elements array via
+        // an HMR/resize race. The orphaned buffer will be GC'd; swallowing
+        // the throw prevents the draw loop from being interrupted on every
+        // frame (catastrophic FPS regression: 0.7 fps until silenced).
+      }
+    }
     // Buffer is exactly one pattern tall — we tile vertically at draw time.
     buf = p.createGraphics(w, PATTERN_HEIGHT);
     buf.noStroke();

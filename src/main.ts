@@ -353,8 +353,9 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
     );
   }
 
-  // 5. Visualizer mounts last so analyser tap is hot.
-  visual.mount(canvasEl, { audio, hands, music });
+  // 5. Visualizer mounts last so analyser tap is hot. Face is optional —
+  // visualizer tolerates absence (falls back to hands-only rendering).
+  visual.mount(canvasEl, { audio, hands, music, face: faceLive ? face : undefined });
 
   // DEV-ONLY: expose subsystems on window so DevTools / Claude Preview can
   // probe live state. Also instrument MusicBrain to bump a counter each

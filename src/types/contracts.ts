@@ -95,6 +95,8 @@ export interface AudioEngineParams {
   reverbWet: number;
   /** Ping-pong delay feedback, 0..0.95. */
   delayFeedback: number;
+  /** Ping-pong delay wet/dry mix, 0..1. */
+  delayWet: number;
   /** Saturator drive, 0.5..3.0. */
   saturatorDrive: number;
   /** Filter resonance / Q, 0..20. */

@@ -116,6 +116,17 @@ const FACE_LOST_DUCK_AFTER_SEC = 1.5;
 const FACE_LOST_DUCK = 0.15;
 
 /**
+ * Mouth-open continuous control: how widely opening the mouth maps to a
+ * delay-wet boost. The hand-driven base delayWet stays in place; we LERP
+ * up toward DELAY_WET_FULL as the mouth opens. This is intentionally
+ * audible — the user gets immediate feedback when they open their mouth.
+ */
+const FACE_MOUTH_DELAY_BASE = 0.25;
+const FACE_MOUTH_DELAY_FULL = 0.7;
+/** Mouth shape also adds a brightness lift (gentler than the delay sweep). */
+const FACE_MOUTH_BRIGHTNESS_GAIN = 0.2;
+
+/**
  * Lower bound on the intensity pushed into MusicBrain. Re-maps the gesture's
  * meanHeight ∈ [0, 1] to [INTENSITY_FLOOR, 1] so the music has continuous
  * presence even when the user's hands rest at chest level. Tested at 0.45 in
@@ -760,6 +771,18 @@ export class InteractionMapperImpl implements InteractionMapper {
         handQ + yawNorm * FACE_RESONANCE_GAIN,
         Q_MIN,
         Q_MAX,
+      );
+
+      // Continuous mouth control: open mouth → more delay wet + brighter
+      // sound. Independent of the rising-edge stab trigger (which still
+      // fires on hard mouth-opens). The two coexist: the stab is a
+      // one-shot, this is the sustained timbre shift.
+      const m = clamp01(f.mouthOpen);
+      out.delayWet = lerp(FACE_MOUTH_DELAY_BASE, FACE_MOUTH_DELAY_FULL, m);
+      const handBrightness2 =
+        typeof out.brightness === 'number' ? out.brightness : 0.5;
+      out.brightness = clamp01(
+        handBrightness2 + m * FACE_MOUTH_BRIGHTNESS_GAIN,
       );
     }
 

@@ -160,6 +160,8 @@ export class AudioEngineImpl implements AudioEngine {
       mapped.reverbWet = clamp(partial.reverbWet, 0, 1);
     if (typeof partial.delayFeedback === 'number')
       mapped.delayFeedback = clamp(partial.delayFeedback, 0, 0.95);
+    if (typeof partial.delayWet === 'number')
+      mapped.delayWet = clamp(partial.delayWet, 0, 1);
     if (typeof partial.brightness === 'number') {
       const b = clamp(partial.brightness, 0, 1);
       mapped.brightness = b;

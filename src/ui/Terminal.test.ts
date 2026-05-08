@@ -175,6 +175,55 @@ describe('TerminalImpl', () => {
     term.unmount();
   });
 
+  it('still caps the DOM at 60 lines after 100 mixed events', () => {
+    const term = new TerminalImpl();
+    const music = makeMusic();
+    term.mount(parent, { ...makeDeps(), music });
+    // Mix of music event types — exercises every appendLine entry point.
+    for (let i = 0; i < 100; i += 1) {
+      switch (i % 5) {
+        case 0:
+          music.__sub?.onKick(0);
+          break;
+        case 1:
+          music.__sub?.onHat(0);
+          break;
+        case 2:
+          music.__sub?.onPerc(0);
+          break;
+        case 3:
+          music.__sub?.onLead({
+            pitch: 'C5',
+            duration: '8n',
+            velocity: 0.8,
+            time: 0,
+          });
+          break;
+        default:
+          music.__sub?.onChord({ notes: ['C4', 'E4', 'G4'], duration: '2n', time: 0 });
+      }
+    }
+    const lines = parent.querySelectorAll('.hs-term-line');
+    expect(lines.length).toBeLessThanOrEqual(60);
+    term.unmount();
+  });
+
+  it('cleans up stale .hs-terminal nodes left from a prior mount (HMR safety)', () => {
+    // Simulate a stale terminal root left by a previous module instance.
+    const stale = document.createElement('div');
+    stale.className = 'hs-terminal';
+    parent.appendChild(stale);
+    expect(parent.querySelectorAll('.hs-terminal').length).toBe(1);
+
+    const term = new TerminalImpl();
+    term.mount(parent, makeDeps());
+
+    // Mount should have removed the stale node before adding its own.
+    expect(parent.querySelectorAll('.hs-terminal').length).toBe(1);
+    expect(parent.querySelectorAll('.hs-terminal')[0]).not.toBe(stale);
+    term.unmount();
+  });
+
   it('setVisible toggles the hidden attribute', () => {
     const term = new TerminalImpl();
     term.mount(parent, makeDeps());

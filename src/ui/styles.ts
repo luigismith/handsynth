@@ -21,6 +21,18 @@ export const UI_STYLES = `
   0%, 100% { opacity: 0.45; }
   50%      { opacity: 1; }
 }
+@keyframes hs-cta-glow {
+  0%, 100% { box-shadow: 0 6px 18px rgba(70, 90, 220, 0.45), 0 0 0 0 rgba(120, 140, 255, 0.0); }
+  50%      { box-shadow: 0 6px 22px rgba(90, 118, 255, 0.55), 0 0 14px 2px rgba(120, 140, 255, 0.35); }
+}
+@keyframes hs-chip-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(180, 200, 255, 0.30); }
+  50%      { box-shadow: 0 0 0 1px rgba(180, 200, 255, 0.50); }
+}
+@keyframes hs-line-glow {
+  0%   { background: rgba(159, 248, 192, 0.18); }
+  100% { background: rgba(159, 248, 192, 0.06); }
+}
 
 .hs-onboard-card {
   position: absolute;
@@ -49,7 +61,7 @@ export const UI_STYLES = `
   margin: 0 0 6px 0;
   font-size: 28px;
   font-weight: 600;
-  letter-spacing: -0.2px;
+  letter-spacing: -0.6px;
   color: #f3f6ff;
 }
 .hs-onboard-sub {
@@ -67,10 +79,12 @@ export const UI_STYLES = `
   padding: 12px 22px;
   border-radius: 999px;
   cursor: pointer;
-  letter-spacing: 0.2px;
+  letter-spacing: 0.4px;
   box-shadow: 0 6px 18px rgba(70, 90, 220, 0.45);
   transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  animation: hs-cta-glow 1.6s ease-in-out infinite;
 }
+.hs-onboard-btn:hover { animation: none; }
 .hs-onboard-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .hs-onboard-btn:focus-visible {
   outline: 2px solid #c9d4ff;
@@ -128,8 +142,8 @@ export const UI_STYLES = `
 .hs-vibe-chip[aria-checked='true'] {
   background: rgba(120, 140, 255, 0.22);
   color: #fff;
-  box-shadow: 0 0 0 1px rgba(180, 200, 255, 0.6);
   filter: drop-shadow(0 0 8px rgba(120, 140, 255, 0.45));
+  animation: hs-chip-pulse 2s ease-in-out infinite;
 }
 
 .hs-error-card {
@@ -327,7 +341,18 @@ export const UI_STYLES = `
     0 0 6px rgba(255, 212, 126, 0.02);
   cursor: ns-resize;
   outline: none;
-  transition: box-shadow 120ms ease;
+  transition: box-shadow 160ms ease;
+}
+.hs-knob-dial:hover,
+.hs-knob-dial:active {
+  box-shadow:
+    0 0 0 1px rgba(255, 212, 126, 0.18) inset,
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 0 14px 2px rgba(255, 212, 126, 0.28);
+}
+.hs-knob-dial:active .hs-knob-indicator,
+.hs-knob-dial:hover .hs-knob-indicator {
+  filter: drop-shadow(0 0 4px rgba(255, 212, 126, 0.55));
 }
 .hs-knob-dial:focus-visible {
   box-shadow:
@@ -554,6 +579,7 @@ export const UI_STYLES = `
 .hs-term-line.hs-fade { opacity: 0.45; }
 .hs-term-line.hs-fresh {
   background: rgba(159, 248, 192, 0.06);
+  animation: hs-line-glow 600ms ease-out;
 }
 .hs-term-prefix {
   color: #5a8a72;
