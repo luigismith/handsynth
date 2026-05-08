@@ -741,8 +741,11 @@ export function drawFaceSkeleton(
   drawPolyline(s, lms, FACE_LEFT_BROW, width, height, cover);
   drawPolyline(s, lms, FACE_RIGHT_BROW, width, height, cover);
 
-  // Nose bridge (polyline) + nostril ring — GREY_LINE.
-  s.stroke(GREY_LINE.h, GREY_LINE.s, GREY_LINE.b, 0.5);
+  // Nose bridge (polyline) + nostril ring — ORANGE_DARK to match the rest
+  // of the face skeleton (oval, brows, philtrum, lips) which all sit on the
+  // orange palette. Was GREY_LINE which read as a "missing" stroke against
+  // the otherwise-warm face wireframe.
+  s.stroke(ORANGE_DARK.h, ORANGE_DARK.s, ORANGE_DARK.b, 0.5);
   drawPolyline(s, lms, FACE_NOSE_BRIDGE, width, height, cover);
   drawClosedLoop(s, lms, FACE_NOSE_TIP_RING, width, height, false, cover);
 
