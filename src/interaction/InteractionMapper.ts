@@ -570,14 +570,18 @@ export class InteractionMapperImpl implements InteractionMapper {
     );
     this.pushMusicInput();
 
-    // Push every frame. The previous every-other-frame throttle saved a
-    // small amount of CPU but introduced a perceptible "hesitation" between
-    // a fast hand movement and the audio response — user-reported as
-    // sluggish. AudioEngine.setParams uses rampTo internally so back-to-
-    // back sets are smoothed at the audio level; no zipper risk.
-    this.audio?.setParams(target);
-    this.lastParamSnapshot = target;
-    void this.frameTick;
+    // Throttle param push to every other gesture frame. The previous
+    // 'every-frame' version made movement feel snappier, but pushing 24
+    // hand-tracker frames/sec × 6 params = ~144 rampTo commands/sec
+    // accumulated in Tone's scheduler at high lookahead (0.6s) and
+    // eventually triggered Chrome's 'page-is-unresponsive' watchdog.
+    // 12Hz param push is still smooth thanks to One Euro filtering on
+    // the input + Tone's own ~50 ms ramp interpolation.
+    this.frameTick = (this.frameTick + 1) & 1;
+    if (this.frameTick === 0 || this.handsBackFade) {
+      this.audio?.setParams(target);
+      this.lastParamSnapshot = target;
+    }
 
     // If we just left drone mode, this update path is fine — clear the flag.
     if (this.inDroneMode) {

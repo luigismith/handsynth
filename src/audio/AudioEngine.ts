@@ -67,16 +67,19 @@ export class AudioEngineImpl implements AudioEngine {
     // well ahead of when they need to fire.
     try {
       // Numerical latencyHint asks the browser for an output buffer of AT
-      // LEAST that many seconds. 0.2s is much bigger than 'playback'
-      // (~0.15s on Chrome) and gives the renderer plenty of headroom for
-      // GC pauses, MediaPipe inference spikes, and p5 draw stalls.
-      const raw = new AudioContext({ latencyHint: 0.2 });
+      // LEAST that many seconds. 0.15s is bigger than the 'playback' hint
+      // default (~0.1–0.15s depending on browser) and gives the renderer
+      // headroom for GC pauses + MediaPipe inference spikes without the
+      // queue-depth side-effects of a 0.2 s buffer.
+      const raw = new AudioContext({ latencyHint: 0.15 });
       const tuned = new Tone.Context(raw);
-      // Lookahead 0.6s — Tone schedules each note this far ahead of its
-      // target time. A 600ms main-thread freeze can pass without the
-      // listener hearing anything because every imminent event is
-      // already in the audio thread's queue.
-      tuned.lookAhead = 0.6;
+      // Lookahead 0.4 s. Was 0.6 s; that was too aggressive — Tone queued
+      // up many minutes' worth of scheduled rampTo events per second
+      // (continuous gesture-driven setParams plus the deeper queue) and
+      // the audio thread's event list grew unbounded, eventually
+      // freezing the page. 0.4 s still survives a fairly long main-
+      // thread stall while keeping Tone's per-tick work bounded.
+      tuned.lookAhead = 0.4;
       Tone.setContext(tuned);
     } catch (e) {
       console.warn('[AudioEngine] context construction failed, falling back to defaults', e);
