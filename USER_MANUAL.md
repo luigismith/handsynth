@@ -97,6 +97,57 @@ expression. A subtle smile registers as ~0.3 and contributes proportionally.
 If an expression isn't triggering, exaggerate it — point your face at the
 camera, hold the expression for half a second.
 
+## Gesture cheat sheet
+
+The discrete-gesture interpreter recognizes 12 static hand shapes and 5
+velocity gestures. Each one fires a one-shot musical action. The interpreter
+is conservative on purpose — every shape has to hold for three frames in a
+row before it counts, and the same gesture can't re-fire inside its
+cooldown window. Better to miss a deliberate gesture than fire one you
+didn't mean.
+
+### Static hand shapes
+
+| Hand shape | Hand | Effect |
+|---|---|---|
+| Point | right | Filter Q spike — sharp focus, decays over 600 ms |
+| Peace (V) | right | Brightness pulse (vibrato shimmer approximation) |
+| Rock on (horns) | right | Distortion crank — drive +0.35 for 1.5 s |
+| OK (ring) | right | Tape flutter — delay feedback +0.2 for 1 s |
+| Finger gun (L-shape) | right | Lead chord-tone stab |
+| Thumbs up | right | Save quick-patch (logged to console) |
+| Thumbs down | right | Reset to INIT factory preset |
+| Three (I+M+R) | right | Apply factory preset slot 3 (ACID) |
+| Four (I+M+R+P) | right | Apply factory preset slot 4 (DUB) |
+| Call me (shaka) | right | Percussion one-shot |
+| Fist | both | (Velocity gesture — see below) |
+| Open palm | either | Reset / no special action (releases held shapes) |
+
+### Velocity gestures
+
+| Velocity gesture | Hand | Effect |
+|---|---|---|
+| Snap (fast index extend) | either | Percussion one-shot |
+| Swipe right | right | Next factory PATCH preset |
+| Swipe left | right | Previous factory PATCH preset |
+| Fist pump (both hands, fast down) | both | Drop bomb — delay feedback +0.3 + reverb +0.3 for 1.5 s |
+| Wave (oscillating L↔R, ≥3 sign-flips in 1.2 s) | either | Tremolo wobble (brightness LFO at 5 Hz) |
+
+### Tips for discrete gestures
+
+- **Hold the shape briefly.** The interpreter requires three identical
+  frames (~125 ms at 24 Hz) before it commits — flicker between similar
+  shapes is rejected.
+- **Wait a beat between fires.** Each shape has a 350 ms cooldown; snap
+  has 250 ms; swipe has 600 ms. Slamming through gestures spams the
+  cooldown, not the audio engine.
+- **Snap requires curl-then-extend.** Going from a closed fist to an open
+  index in one fast motion fires it. Slow extension doesn't qualify.
+- **Swipes need sustained velocity.** A blip across the frame won't fire —
+  you have to keep moving for at least 150 ms.
+- **Wave is continuous.** Once you wave, the brightness wobbles for as long
+  as you keep oscillating. Stopping the motion fades the wobble out.
+
 ## Vibes
 
 Four built-in vibes set the tonality, BPM, and timbral signature. Click a chip

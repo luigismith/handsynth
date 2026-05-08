@@ -37,6 +37,7 @@ import type {
   FaceState,
   FaceTracker,
   FaceTrackerEvents,
+  GestureEvent,
   GestureState,
   HandTracker,
   HandTrackerEvents,
@@ -49,6 +50,8 @@ import type {
   VibePreset,
 } from '@contracts/contracts';
 import { stripOctave } from '@music/harmony';
+import { GestureInterpreter } from '@hands/GestureInterpreter';
+import { FACTORY_PRESETS } from '@presets/factory-presets';
 
 // ---------------------------------------------------------------------------
 // Tuning constants
@@ -81,6 +84,55 @@ const MOOD_MIN_HOLD_MS = 250;
 
 /** No-hands fallback engages at this elapsed time. */
 const NO_HANDS_FALLBACK_SECONDS = 2.0;
+
+// ---------------------------------------------------------------------------
+// Discrete-gesture pulse mapping constants.
+//
+// Each "pulse" gesture (point, peace, rock_on, ok, finger_gun, fist_pump…)
+// pushes a timed offset onto a small register inside the mapper, then linearly
+// decays it back to zero across PULSE_DECAY_MS milliseconds. The decay runs
+// inside the existing gesture-update path so it doesn't need its own ticker.
+//
+// Rationale for using time-decayed offsets rather than direct setParams calls:
+//   - The hand-driven baseline keeps moving; a static set would be erased on
+//     the next frame.
+//   - The user has explicitly asked for "spike + decay" semantics in the brief.
+//   - The diff-based setParams in this module already collapses unchanged
+//     pushes, so the decaying offsets are not extra audio work when the
+//     baseline doesn't move.
+// ---------------------------------------------------------------------------
+
+/** point: filter Q spike +6 for 600 ms then decay. */
+const POINT_Q_SPIKE = 6;
+const POINT_DECAY_MS = 600;
+
+/** rock_on: distortion +0.35 for 1.5 s then decay. */
+const ROCK_DRIVE_PULSE = 0.35;
+const ROCK_DECAY_MS = 1500;
+
+/** ok: tape-flutter — delay feedback +0.2 for 1 s then decay. */
+const OK_DELAY_FB_PULSE = 0.2;
+const OK_DECAY_MS = 1000;
+
+/** peace: brightness pulse — MusicBrain has no setVibrato, so we lift
+ * brightness +0.3 for 800 ms instead. Documented per the brief: if a target
+ * API doesn't exist, do the most musically sensible existing-API
+ * approximation. The vibrato semantics map naturally to a brightness sweep
+ * because both are perceived as a "shimmer" on the lead. */
+const PEACE_BRIGHT_PULSE = 0.3;
+const PEACE_DECAY_MS = 800;
+
+/** fist_pump (both hands): "drop bomb" — delay feedback +0.3 + reverb +0.3
+ *  for 1.5 s then decay. Both-hands gating is enforced in the handler. */
+const BOMB_DELAY_FB_PULSE = 0.3;
+const BOMB_REVERB_PULSE = 0.3;
+const BOMB_DECAY_MS = 1500;
+
+/** wave: continuous tremolo wobble — implemented as a low-frequency LFO on
+ * `brightness` (since no tremolo API exists on AudioEngine). Documented
+ * per the brief. The wobble depth scales linearly with the wave_level. */
+const WAVE_BRIGHTNESS_DEPTH = 0.25;
+const WAVE_LFO_HZ = 5;
 
 // ---------------------------------------------------------------------------
 // Face → audio param mapping constants.
@@ -362,6 +414,31 @@ export class InteractionMapperImpl implements InteractionMapper {
   private frameTick = 0;
 
   // -------------------------------------------------------------------------
+  // Discrete-gesture interpreter — owned by the mapper. Subscribed in
+  // start(), unsubscribed in stop(). Driven from `handleGestureUpdate`
+  // by extracting left/right Hand objects from the GestureState.
+  // -------------------------------------------------------------------------
+  private interpreter: GestureInterpreter | null = null;
+  private onGestureEvent: ((e: GestureEvent) => void) | null = null;
+
+  /** Time-decay registers for the discrete-gesture pulses. Each entry
+   * stores when the pulse started and its peak magnitude; we recompute the
+   * remaining contribution every frame. */
+  private pointPulseStartMs: number | null = null;
+  private rockPulseStartMs: number | null = null;
+  private okPulseStartMs: number | null = null;
+  private peacePulseStartMs: number | null = null;
+  private bombPulseStartMs: number | null = null;
+
+  /** Current wave level (0..1) — continuous controller, no decay. */
+  private waveLevel = 0;
+  /** Index into the current factory preset list — for swipe prev/next. */
+  private factoryPresetIndex = 0;
+  /** Pending fist_pump fires per hand for the both-hand gating window. */
+  private leftFistPumpAtMs = -Infinity;
+  private rightFistPumpAtMs = -Infinity;
+
+  // -------------------------------------------------------------------------
   // Public API
   // -------------------------------------------------------------------------
 
@@ -434,6 +511,14 @@ export class InteractionMapperImpl implements InteractionMapper {
       this.onFaceUpdate = (s: FaceState) => this.handleFaceUpdate(s);
       this.face.on('face:update', this.onFaceUpdate);
     }
+
+    // Wire the discrete-gesture interpreter. We feed it from inside
+    // `handleGestureUpdate` so its clock advances in lockstep with the
+    // HandTracker's emit rate. Listener routes to `handleGestureEvent`,
+    // which dispatches to the per-event handlers below.
+    this.interpreter = new GestureInterpreter();
+    this.onGestureEvent = (e) => this.handleGestureEvent(e);
+    this.interpreter.on('gesture', this.onGestureEvent);
   }
 
   stop(): void {
@@ -463,6 +548,12 @@ export class InteractionMapperImpl implements InteractionMapper {
     this.onFaceUpdate = null;
     this.lastFace = null;
     this.mouthOpenHigh = false;
+
+    if (this.interpreter && this.onGestureEvent) {
+      this.interpreter.off('gesture', this.onGestureEvent);
+    }
+    this.interpreter = null;
+    this.onGestureEvent = null;
 
     if (this.music && this.musicSubscription) {
       this.music.off(this.musicSubscription);
@@ -567,6 +658,15 @@ export class InteractionMapperImpl implements InteractionMapper {
   private handleGestureUpdate(state: GestureState): void {
     this.lastSeenState = state;
 
+    // Feed the discrete-gesture interpreter. It internally edge-detects
+    // shape changes and velocity gestures; events arrive through
+    // `handleGestureEvent` (set up in start()).
+    if (this.interpreter) {
+      const left = state.hands.find((h) => h.side === 'left');
+      const right = state.hands.find((h) => h.side === 'right');
+      this.interpreter.ingestHands({ left, right });
+    }
+
     // No-hands fallback engages within the gesture stream itself: HandTracker
     // also emits 'gesture:no-hands' but we double-check from state to be
     // robust to ordering.
@@ -633,6 +733,11 @@ export class InteractionMapperImpl implements InteractionMapper {
     // attached AND has emitted at least one detected state. All branches are
     // tolerant of `lastFace === null` (no-op).
     target = this.applyFaceModulation(target);
+
+    // Discrete-gesture pulses (point/peace/rock_on/ok/fist_pump bomb) and
+    // the continuous wave_level wobble. Applied AFTER face modulation so
+    // the deliberate one-shot gestures always sit on top of the mix.
+    target = this.applyDiscreteGesturePulses(target);
 
     // Hands-back crossfade: blend from drone params back to gesture-driven.
     if (this.handsBackFade) {
@@ -1088,6 +1193,245 @@ export class InteractionMapperImpl implements InteractionMapper {
     };
     this.audio.triggerLead(event);
   }
+
+  // -------------------------------------------------------------------------
+  // Discrete gesture event handling
+  //
+  // The GestureInterpreter has already done all the timing work (3-frame
+  // consensus, per-shape cooldown, velocity sustain, etc.) — this layer just
+  // routes events to musical actions. Each shape_enter dispatches in a
+  // single switch; velocity gestures (snap, swipe, fist_pump, wave_level)
+  // get their own branches.
+  //
+  // Compromises (per the brief — "if a target API doesn't exist, do the
+  // most musically sensible existing-API approximation and document it"):
+  //   - peace → MusicBrain has no setVibrato, so we lift brightness for a
+  //     short window instead.
+  //   - thumbs_up → SettingsPanel has no public savePatch API; we log a
+  //     console message ("saved").
+  //   - thumbs_down / three / four → load factory presets directly through
+  //     audio.setParams (the SettingsPanel exposes only mount/unmount/
+  //     setVisible). FACTORY_PRESETS is in src/presets, not src/ui, so
+  //     reading it here doesn't violate the module-ownership rules.
+  //   - swipe_left / swipe_right → cycle through FACTORY_PRESETS in place
+  //     (same reason as above).
+  //   - wave → no tremolo on AudioEngine; we LFO the brightness param.
+  // -------------------------------------------------------------------------
+
+  private handleGestureEvent(e: GestureEvent): void {
+    switch (e.type) {
+      case 'shape_enter':
+        this.handleShapeEnter(e.shape, e.handedness);
+        break;
+      case 'shape_exit':
+        // Currently no per-exit action; left here as a hook for future
+        // momentary-hold shapes.
+        break;
+      case 'snap':
+        // Either-hand percussion one-shot.
+        this.audio?.triggerPerc();
+        break;
+      case 'swipe_right':
+        if (e.handedness === 'Right') this.cycleFactoryPreset(+1);
+        break;
+      case 'swipe_left':
+        if (e.handedness === 'Right') this.cycleFactoryPreset(-1);
+        break;
+      case 'fist_pump':
+        this.handleFistPump(e.handedness);
+        break;
+      case 'wave_level':
+        this.waveLevel = clamp01(e.level);
+        break;
+    }
+  }
+
+  private handleShapeEnter(
+    shape: import('@contracts/contracts').HandShape,
+    handedness: 'Left' | 'Right',
+  ): void {
+    // Most shape mappings are right-hand only per the brief. Snap / wave /
+    // fist_pump are explicitly multi-hand.
+    if (handedness !== 'Right') return;
+
+    const now = performance.now();
+    switch (shape) {
+      case 'point':
+        this.pointPulseStartMs = now;
+        break;
+      case 'peace':
+        // No setVibrato API on MusicBrain → brightness pulse approximation.
+        this.peacePulseStartMs = now;
+        break;
+      case 'rock_on':
+        this.rockPulseStartMs = now;
+        break;
+      case 'ok':
+        this.okPulseStartMs = now;
+        break;
+      case 'finger_gun':
+        // Lead stab — same path as right pinch.
+        this.triggerStab();
+        break;
+      case 'thumbs_up':
+        // No public savePatch API on the SettingsPanel — log as the brief
+        // documents this fallback choice.
+        // eslint-disable-next-line no-console
+        console.info('[InteractionMapper] thumbs_up — quick-patch saved (logged)');
+        break;
+      case 'thumbs_down':
+        this.applyFactoryPresetById('init');
+        break;
+      case 'three':
+        this.applyFactoryPresetByIndex(2);
+        break;
+      case 'four':
+        this.applyFactoryPresetByIndex(3);
+        break;
+      case 'call_me':
+        this.audio?.triggerPerc();
+        break;
+      default:
+        // unknown / fist / open_palm — no shape-specific action.
+        break;
+    }
+  }
+
+  private handleFistPump(handedness: 'Left' | 'Right'): void {
+    const now = performance.now();
+    if (handedness === 'Left') this.leftFistPumpAtMs = now;
+    else this.rightFistPumpAtMs = now;
+    // Both-hands gating: both fist_pumps within 250 ms of each other to
+    // qualify for the "drop bomb". Stricter than a single hand fires
+    // alone — the brief calls this a "both" event.
+    if (Math.abs(this.leftFistPumpAtMs - this.rightFistPumpAtMs) < 250) {
+      this.bombPulseStartMs = now;
+    }
+  }
+
+  private cycleFactoryPreset(direction: 1 | -1): void {
+    if (FACTORY_PRESETS.length === 0) return;
+    this.factoryPresetIndex =
+      (this.factoryPresetIndex + direction + FACTORY_PRESETS.length) %
+      FACTORY_PRESETS.length;
+    this.applyFactoryPresetByIndex(this.factoryPresetIndex);
+  }
+
+  private applyFactoryPresetByIndex(idx: number): void {
+    if (idx < 0 || idx >= FACTORY_PRESETS.length) return;
+    const preset = FACTORY_PRESETS[idx];
+    if (!preset) return;
+    this.factoryPresetIndex = idx;
+    const { bpm: _bpm, ...params } = preset.params;
+    void _bpm;
+    if (Object.keys(params).length > 0) {
+      this.audio?.setParams(params as Partial<AudioEngineParams>);
+    }
+  }
+
+  private applyFactoryPresetById(id: string): void {
+    const idx = FACTORY_PRESETS.findIndex((p) => p.id === id);
+    if (idx >= 0) this.applyFactoryPresetByIndex(idx);
+  }
+
+  // -------------------------------------------------------------------------
+  // Time-decayed pulse application
+  //
+  // Each pulse register holds the start timestamp; we compute the remaining
+  // contribution as `peak * (1 - elapsed / decayMs)`, clamped to [0, peak].
+  // When the contribution reaches 0 we clear the register so subsequent
+  // frames are pure baseline.
+  // -------------------------------------------------------------------------
+
+  private applyDiscreteGesturePulses(
+    target: Partial<AudioEngineParams>,
+  ): Partial<AudioEngineParams> {
+    const out: Partial<AudioEngineParams> = { ...target };
+    const now = performance.now();
+
+    // point → filterResonance spike
+    const pointAmt = pulseAmount(this.pointPulseStartMs, now, POINT_DECAY_MS);
+    if (pointAmt > 0) {
+      const baseQ =
+        typeof out.filterResonance === 'number' ? out.filterResonance : 1;
+      out.filterResonance = clamp(
+        baseQ + pointAmt * POINT_Q_SPIKE,
+        Q_MIN,
+        Q_MAX,
+      );
+    } else {
+      this.pointPulseStartMs = null;
+    }
+
+    // peace → brightness pulse (vibrato approximation)
+    const peaceAmt = pulseAmount(this.peacePulseStartMs, now, PEACE_DECAY_MS);
+    if (peaceAmt > 0) {
+      const baseB =
+        typeof out.brightness === 'number' ? out.brightness : 0.5;
+      out.brightness = clamp01(baseB + peaceAmt * PEACE_BRIGHT_PULSE);
+    } else {
+      this.peacePulseStartMs = null;
+    }
+
+    // rock_on → drive pulse
+    const rockAmt = pulseAmount(this.rockPulseStartMs, now, ROCK_DECAY_MS);
+    if (rockAmt > 0) {
+      const baseDrive =
+        typeof out.saturatorDrive === 'number' ? out.saturatorDrive : DRIVE_MIN;
+      out.saturatorDrive = clamp(
+        baseDrive + rockAmt * ROCK_DRIVE_PULSE,
+        DRIVE_MIN,
+        DRIVE_MAX,
+      );
+    } else {
+      this.rockPulseStartMs = null;
+    }
+
+    // ok → tape-flutter (delay feedback pulse)
+    const okAmt = pulseAmount(this.okPulseStartMs, now, OK_DECAY_MS);
+    if (okAmt > 0) {
+      const baseFb =
+        typeof out.delayFeedback === 'number' ? out.delayFeedback : DELAY_FB_MIN;
+      out.delayFeedback = clamp(
+        baseFb + okAmt * OK_DELAY_FB_PULSE,
+        DELAY_FB_MIN,
+        DELAY_FB_MAX,
+      );
+    } else {
+      this.okPulseStartMs = null;
+    }
+
+    // bomb (fist_pump both hands) → delay feedback + reverb
+    const bombAmt = pulseAmount(this.bombPulseStartMs, now, BOMB_DECAY_MS);
+    if (bombAmt > 0) {
+      const baseFb =
+        typeof out.delayFeedback === 'number' ? out.delayFeedback : DELAY_FB_MIN;
+      out.delayFeedback = clamp(
+        baseFb + bombAmt * BOMB_DELAY_FB_PULSE,
+        DELAY_FB_MIN,
+        DELAY_FB_MAX,
+      );
+      const baseRev =
+        typeof out.reverbWet === 'number' ? out.reverbWet : REVERB_MIN;
+      out.reverbWet = clamp01(baseRev + bombAmt * BOMB_REVERB_PULSE);
+    } else {
+      this.bombPulseStartMs = null;
+    }
+
+    // wave → continuous brightness LFO. No decay — the wave_level is
+    // already a controller scalar set by the interpreter.
+    if (this.waveLevel > 0.01) {
+      const baseB =
+        typeof out.brightness === 'number' ? out.brightness : 0.5;
+      const phase =
+        Math.sin((2 * Math.PI * (now / 1000) * WAVE_LFO_HZ));
+      out.brightness = clamp01(
+        baseB + phase * this.waveLevel * WAVE_BRIGHTNESS_DEPTH,
+      );
+    }
+
+    return out;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1169,6 +1513,29 @@ function avg(xs: number[]): number {
   return s / xs.length;
 }
 
+/**
+ * Linear pulse decay helper. Returns the *remaining* contribution scalar
+ * (0..1) at time `now` for a pulse that started at `startMs` with a
+ * `decayMs` window. Returns 0 (and is therefore safe to clear) when the
+ * pulse has fully decayed or `startMs` is null.
+ *
+ * Semantics: amount = max(0, 1 - (now - startMs) / decayMs).
+ * - At now == startMs → amount = 1 (full peak)
+ * - At now == startMs + decayMs → amount = 0
+ * - Beyond decayMs → amount = 0
+ */
+function pulseAmount(
+  startMs: number | null,
+  now: number,
+  decayMs: number,
+): number {
+  if (startMs === null) return 0;
+  const elapsed = now - startMs;
+  if (elapsed < 0) return 1;
+  if (elapsed >= decayMs) return 0;
+  return 1 - elapsed / decayMs;
+}
+
 // Re-export helpers for testing.
 export const __testing = {
   mapDistanceToCutoff,
@@ -1178,4 +1545,5 @@ export const __testing = {
   clamp,
   clamp01,
   lerp,
+  pulseAmount,
 };

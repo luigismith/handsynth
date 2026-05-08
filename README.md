@@ -9,7 +9,7 @@ Cyberpunk visualizer · MediaPipe webcam tracking · Tone.js audio engine.
 
 ![hero](docs/hero.png)
 
-[![tests](https://img.shields.io/badge/tests-215%20passing-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-275%20passing-brightgreen)]()
 [![license](https://img.shields.io/badge/license-MIT-blue)]()
 [![platform](https://img.shields.io/badge/platform-web%20%7C%20windows%20%7C%20macos-lightgrey)]()
 
@@ -82,6 +82,30 @@ See [`electron/BUILD.md`](./electron/BUILD.md) for code-signing + notarization n
 | Left palm roll | Saturator drive fine-tune (±0.4) | additive |
 | Mean palm pitch | Delay feedback fine-tune (±0.15) | additive |
 
+### Discrete gestures (right hand unless noted)
+
+| Gesture | Hand | Effect |
+|---|---|---|
+| Point | right | Filter Q spike +6 (decays over 600 ms) |
+| Peace (V) | right | Brightness pulse (vibrato approximation) |
+| Rock on (horns) | right | Saturator drive +0.35 for 1.5 s |
+| OK (ring) | right | Delay feedback +0.2 for 1 s (tape flutter) |
+| Finger gun | right | Lead chord-tone stab |
+| Thumbs up | right | Save quick-patch (logged) |
+| Thumbs down | right | Reset to INIT factory preset |
+| Three (I+M+R) | right | Apply factory preset slot 3 |
+| Four (I+M+R+P) | right | Apply factory preset slot 4 |
+| Call me (shaka) | right | Percussion one-shot |
+| Snap (fast index extend) | either | Percussion one-shot |
+| Swipe right | right | Next factory preset |
+| Swipe left | right | Previous factory preset |
+| Fist pump (both hands, fast down) | both | Drop bomb (delay fb +0.3 + reverb +0.3) |
+| Wave (oscillating, ≥3 flips in 1.2 s) | either | Tremolo wobble (brightness LFO) |
+
+Discrete gestures are gated by a 3-frame consensus + per-gesture cooldown so
+flicker doesn't fire spurious events. See [`USER_MANUAL.md`](./USER_MANUAL.md#gesture-cheat-sheet)
+for the full cheat sheet.
+
 ### Face (when in frame)
 
 | Gesture | Audio target | Visual |
@@ -136,7 +160,7 @@ Full module map and data-flow diagram in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 ```sh
 pnpm typecheck   # tsc strict, no errors
 pnpm lint        # eslint
-pnpm test        # vitest — 190 unit + integration tests
+pnpm test        # vitest — 275 unit + integration tests
 pnpm build       # vite production build
 ```
 

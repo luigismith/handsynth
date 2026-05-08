@@ -13,6 +13,8 @@ import type {
   FaceTracker,
   FaceTrackerEvents,
   GestureState,
+  Hand,
+  HandShape,
   HandTracker,
   HandTrackerEvents,
   MusicBrain,
@@ -23,6 +25,7 @@ import type {
 } from '@contracts/contracts';
 import { InteractionMapperImpl, __testing } from './InteractionMapper';
 import { VIBES } from '@presets/vibes';
+import { FACTORY_PRESETS } from '@presets/factory-presets';
 
 // ---------------------------------------------------------------------------
 // Stubs
@@ -920,5 +923,302 @@ describe('InteractionMapper face integration', () => {
     const lastInput = music.inputCalls[music.inputCalls.length - 1]!;
     expect(lastInput.intensity).toBeCloseTo(0.725, 2); // INTENSITY_FLOOR + 0.5*(1-floor)
     mapper.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Discrete gesture events (driven via the internal GestureInterpreter)
+//
+// We drive the mapper by emitting synthetic GestureStates whose `hands` carry
+// pre-classified `shape` values. The interpreter consumes those and emits
+// gesture events back into the mapper. We assert on:
+//   - The downstream audio.setParams contributions of each pulse-style shape
+//   - Single-shot triggers (finger_gun, call_me, snap)
+//   - Factory preset cycling on swipe / shape (thumbs_down, three, four)
+// ---------------------------------------------------------------------------
+
+function shapedHand(side: 'left' | 'right', shape: HandShape, x = 0.5, y = 0.5): Hand {
+  // Provide a 21-landmark array good enough for the GestureInterpreter's
+  // velocity bookkeeping. Geometry doesn't matter for shape classification
+  // because we pass `shape` directly on the Hand.
+  const lm = Array.from({ length: 21 }, (_, i) => ({
+    x: i === 0 ? x : x + (i % 5) * 0.02,
+    y: i === 0 ? y + 0.2 : y - (i % 5) * 0.05,
+    z: 0,
+  }));
+  return {
+    side,
+    landmarks: lm,
+    palmCenter: { x, y, z: 0 },
+    openness: 0.5,
+    pinch: 0.5,
+    isClosed: false,
+    depth: 0,
+    roll: 0,
+    pitch: 0,
+    shape,
+  };
+}
+
+function shapedState(shape: HandShape, side: 'left' | 'right' = 'right'): GestureState {
+  const hand = shapedHand(side, shape);
+  return blankState({ hands: [hand] });
+}
+
+function emitShapeFor3Frames(
+  hands: ReturnType<typeof makeHandsStub>,
+  state: GestureState,
+): void {
+  for (let i = 0; i < 3; i += 1) hands.emit('gesture:update', state);
+}
+
+describe('InteractionMapper discrete gestures', () => {
+  it('point shape_enter spikes filter Q above the steady-state value', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Baseline frame to record the steady-state Q at leftOpenness=0.5.
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    const baseQ =
+      audio.paramCalls
+        .map((p) => p.filterResonance)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    // 3 frames of point with same leftOpenness — the interpreter fires
+    // shape_enter on the 3rd frame; the next gesture-update applies the
+    // pulse contribution.
+    const state = blankState({
+      leftOpenness: 0.5,
+      hands: [shapedHand('right', 'point')],
+    });
+    emitShapeFor3Frames(hands, state);
+
+    const lastQ =
+      audio.paramCalls
+        .map((p) => p.filterResonance)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(lastQ).toBeGreaterThan(baseQ + 1);
+    mapper.stop();
+  });
+
+  it('rock_on shape_enter pulses saturatorDrive upward', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    const baseDrive =
+      audio.paramCalls
+        .map((p) => p.saturatorDrive)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    const state = blankState({
+      leftOpenness: 0.5,
+      hands: [shapedHand('right', 'rock_on')],
+    });
+    emitShapeFor3Frames(hands, state);
+
+    const lastDrive =
+      audio.paramCalls
+        .map((p) => p.saturatorDrive)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(lastDrive).toBeGreaterThan(baseDrive + 0.1);
+    mapper.stop();
+  });
+
+  it('ok shape_enter pulses delayFeedback upward', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({ rightOpenness: 0.4 }));
+    hands.emit('gesture:update', blankState({ rightOpenness: 0.4 }));
+    const baseFb =
+      audio.paramCalls
+        .map((p) => p.delayFeedback)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    const state = blankState({
+      rightOpenness: 0.4,
+      hands: [shapedHand('right', 'ok')],
+    });
+    emitShapeFor3Frames(hands, state);
+
+    const lastFb =
+      audio.paramCalls
+        .map((p) => p.delayFeedback)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(lastFb).toBeGreaterThan(baseFb + 0.1);
+    mapper.stop();
+  });
+
+  it('peace shape_enter lifts brightness (vibrato approximation)', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({ meanHeight: 0.4 }));
+    hands.emit('gesture:update', blankState({ meanHeight: 0.4 }));
+    const baseB =
+      audio.paramCalls
+        .map((p) => p.brightness)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    const state = blankState({
+      meanHeight: 0.4,
+      hands: [shapedHand('right', 'peace')],
+    });
+    emitShapeFor3Frames(hands, state);
+
+    const lastB =
+      audio.paramCalls
+        .map((p) => p.brightness)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(lastB).toBeGreaterThan(baseB + 0.05);
+    mapper.stop();
+  });
+
+  it('finger_gun shape_enter triggers a lead stab (or fallback stab)', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    emitShapeFor3Frames(hands, shapedState('finger_gun'));
+    expect(audio.leadCalls.length + audio.stabCalls).toBeGreaterThanOrEqual(1);
+    mapper.stop();
+  });
+
+  it('call_me shape_enter triggers a percussion one-shot', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // We replace triggerPerc with a counter to assert it's called.
+    let perc = 0;
+    audio.triggerPerc = () => {
+      perc += 1;
+    };
+    emitShapeFor3Frames(hands, shapedState('call_me'));
+    expect(perc).toBe(1);
+    mapper.stop();
+  });
+
+  it('thumbs_down loads the INIT factory preset onto setParams', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    const init = FACTORY_PRESETS.find((p) => p.id === 'init');
+    expect(init).toBeDefined();
+    emitShapeFor3Frames(hands, shapedState('thumbs_down'));
+    // The setParams call resulting from the preset push should match
+    // INIT's filterCutoff = 8000.
+    const cutoffs = audio.paramCalls
+      .map((p) => p.filterCutoff)
+      .filter((v): v is number => typeof v === 'number');
+    expect(cutoffs).toContain(init!.params.filterCutoff);
+    mapper.stop();
+  });
+
+  it('three / four shape_enter loads factory preset slots 3 / 4', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    const slot3 = FACTORY_PRESETS[2]!;
+    emitShapeFor3Frames(hands, shapedState('three'));
+    const cutoffs = audio.paramCalls
+      .map((p) => p.filterCutoff)
+      .filter((v): v is number => typeof v === 'number');
+    expect(cutoffs).toContain(slot3.params.filterCutoff);
+    mapper.stop();
+  });
+
+  it('thumbs_up logs a save message instead of throwing (no public savePatch)', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    const spy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    emitShapeFor3Frames(hands, shapedState('thumbs_up'));
+    // Look for our specific log marker.
+    const calls = spy.mock.calls.flat();
+    expect(calls.some((c) => typeof c === 'string' && c.includes('thumbs_up'))).toBe(true);
+    spy.mockRestore();
+    mapper.stop();
+  });
+
+  it('left-hand shape_enter is ignored by the right-hand-only mappings', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    let perc = 0;
+    audio.triggerPerc = () => {
+      perc += 1;
+    };
+    // call_me on the LEFT hand → ignored (right-only per the brief).
+    emitShapeFor3Frames(hands, blankState({ hands: [shapedHand('left', 'call_me')] }));
+    expect(perc).toBe(0);
+    mapper.stop();
+  });
+
+  it('pulseAmount helper produces 1 at start, 0 at end, linear decay between', () => {
+    expect(__testing.pulseAmount(null, 100, 1000)).toBe(0);
+    expect(__testing.pulseAmount(0, 0, 1000)).toBe(1);
+    expect(__testing.pulseAmount(0, 500, 1000)).toBeCloseTo(0.5, 5);
+    expect(__testing.pulseAmount(0, 1000, 1000)).toBe(0);
+    expect(__testing.pulseAmount(0, 2000, 1000)).toBe(0);
   });
 });

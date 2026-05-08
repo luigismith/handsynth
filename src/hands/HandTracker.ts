@@ -33,6 +33,7 @@ import {
   computePinch,
   isFist,
 } from './gestures';
+import { classifyHandShape } from './gesture-classifier';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -572,6 +573,11 @@ export class HandTrackerImpl implements HandTracker {
         pitch,
       };
       hand.isClosed = isFist(hand);
+      // Populate the discrete shape classification so downstream consumers
+      // (GestureInterpreter, terminal HUD, debug overlays) get it for free.
+      // The classifier is pure and runs in O(landmarks) — cheap relative to
+      // the MediaPipe inference.
+      hand.shape = classifyHandShape(smoothed);
 
       slot.lastSeenMs = nowMs;
       out.push(hand);

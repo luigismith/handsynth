@@ -381,6 +381,13 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
   }
 
   // 3. Mapper attach — face is optional; mapper tolerates absence.
+  //    The InteractionMapper internally constructs a GestureInterpreter
+  //    on start() and feeds it the per-frame Hand snapshots; discrete
+  //    gestures (point / peace / rock_on / ok / finger_gun / thumbs_up /
+  //    thumbs_down / three / four / call_me / snap / swipe / fist_pump /
+  //    wave) are routed to musical actions inside the mapper. No extra
+  //    wiring is needed at this layer — see InteractionMapper.ts for the
+  //    full mapping table.
   mapper.attach({ audio, music, hands, face: faceLive ? face : undefined });
   mapper.setVibe(initialVibe);
 

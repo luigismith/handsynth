@@ -201,6 +201,31 @@ export interface HandLandmark {
   z: number;
 }
 
+/**
+ * Static hand shape classification — see `src/hands/gesture-classifier.ts`.
+ * The HandTracker populates `Hand.shape` per frame; the GestureInterpreter
+ * applies hysteresis (3-frame consensus) before emitting `shape_enter` /
+ * `shape_exit` events.
+ *
+ * `unknown` covers transitional / ambiguous frames (e.g. the user is moving
+ * between two named shapes). Consumers should treat `unknown` as "no opinion"
+ * rather than as a fall-through default.
+ */
+export type HandShape =
+  | 'fist'
+  | 'open_palm'
+  | 'point'
+  | 'peace'
+  | 'rock_on'
+  | 'ok'
+  | 'thumbs_up'
+  | 'thumbs_down'
+  | 'finger_gun'
+  | 'three'
+  | 'four'
+  | 'call_me'
+  | 'unknown';
+
 /** A detected hand with derived metrics. */
 export interface Hand {
   /** Which side of the body — MediaPipe handedness, mirrored to user POV. */
@@ -234,7 +259,48 @@ export interface Hand {
    * when pointing toward the camera. Radians, ~±π/3 useful range.
    */
   pitch: number;
+  /**
+   * Per-frame static-shape classification. Optional because legacy callers
+   * (and the synthetic-fixture tests) don't always populate it. The
+   * GestureInterpreter is the canonical consumer — see
+   * `classifyHandShape` in `src/hands/gesture-classifier.ts`.
+   */
+  shape?: HandShape;
 }
+
+/**
+ * The minimal HandsState shape consumed by the GestureInterpreter. The
+ * HandTracker emits a richer `GestureState`; we accept either through
+ * structural typing (any object with optional `left`/`right` Hands works).
+ */
+export interface HandsState {
+  left?: Hand;
+  right?: Hand;
+}
+
+/**
+ * Discrete gesture events emitted by the `GestureInterpreter`.
+ *
+ * - `shape_enter` / `shape_exit` are rising/falling edges of the static
+ *   classifier, gated by a 3-frame consensus window plus a per-shape
+ *   cooldown (see `gesture-classifier.ts` and `GestureInterpreter.ts`).
+ * - `snap`, `swipe_left`, `swipe_right`, `fist_pump` are velocity-driven
+ *   one-shots with their own cooldowns.
+ * - `wave_level` is a continuous controller (0..1) — it does NOT obey
+ *   cooldown; consumers map it to a tremolo / wobble depth directly.
+ *
+ * Per CONTRIBUTING.md ("Don't break the audio") all events MUST be
+ * conservative — a missed deliberate gesture is preferable to a spurious
+ * fire that interrupts an in-progress phrase.
+ */
+export type GestureEvent =
+  | { type: 'shape_enter'; shape: HandShape; handedness: 'Left' | 'Right' }
+  | { type: 'shape_exit'; shape: HandShape; handedness: 'Left' | 'Right' }
+  | { type: 'snap'; handedness: 'Left' | 'Right' }
+  | { type: 'swipe_left'; handedness: 'Left' | 'Right' }
+  | { type: 'swipe_right'; handedness: 'Left' | 'Right' }
+  | { type: 'fist_pump'; handedness: 'Left' | 'Right' }
+  | { type: 'wave_level'; level: number; handedness: 'Left' | 'Right' };
 
 /** Aggregate frame-level gesture state, emitted at `gesture:update`. */
 export interface GestureState {
