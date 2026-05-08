@@ -1,33 +1,16 @@
 // Owner: hand-tracker (sibling module under src/face/)
 //
-// MediaPipe Tasks Vision FaceLandmarker wrapper — WORKER EDITION.
-//
-// The previous implementation ran FaceLandmarker.detectForVideo on the main
-// thread alongside HandLandmarker. Two simultaneous MediaPipe inferences plus
-// the p5 visualizer plus Tone.js were enough to starve the audio scheduler
-// (chrome's "page-is-unresponsive" watchdog had fired). This version moves
-// the FaceLandmarker into a dedicated Web Worker:
-//
-//   main thread:
-//     - rVFC (or rAF fallback) at ≤MAX_UPDATE_HZ
-//     - createImageBitmap(videoEl) → postMessage(transfer) → worker
-//     - on result: rebuild FaceLandmark[], mirror, One-Euro filter, derive
-//       FaceState, emit events
-//
-//   worker (face-worker.ts):
-//     - owns FaceLandmarker
-//     - runs detectForVideo on the ImageBitmap
-//     - posts back lean payload (Float32Array landmarks + matrix + blends)
-//
-// The choice to keep One-Euro / mirror / state derivation on main is
-// deliberate (strategy "A" — inference-only worker): those steps are cheap,
-// the visualizer needs the landmark array anyway, and synchronous post-
-// processing is much easier to debug. See face-worker.ts header for the full
-// rationale.
-//
-// Public API (FaceTracker contract from contracts.ts) is unchanged.
+// MediaPipe Tasks Vision FaceLandmarker wrapper. Runs face-landmark inference
+// per video frame, maintains One-Euro smoothing state, derives `FaceState`,
+// and emits events. Mirrors the structure of HandTracker — same threading
+// model (rVFC + rAF fallback), same emitter pattern, same lifecycle. Shares
+// the `<video>` element with HandTracker; we do not call getUserMedia here.
 
-import type { FaceLandmarkerResult } from '@mediapipe/tasks-vision';
+import {
+  FaceLandmarker,
+  FilesetResolver,
+  type FaceLandmarkerResult,
+} from '@mediapipe/tasks-vision';
 import type {
   FaceLandmark,
   FaceState,
@@ -44,12 +27,6 @@ import {
   faceCenter,
   mouthOpenFromLandmarks,
 } from './face-gestures';
-import FaceWorker from './face-worker.ts?worker';
-import type {
-  ResultMessage,
-  WorkerInbound,
-  WorkerOutbound,
-} from './face-worker';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -66,22 +43,17 @@ const NUM_FACE_LANDMARKS = 478;
 const FACE_LOST_EDGE_SECONDS = 1.5;
 
 /**
- * Defensive update throttle (Hz). Even with the worker absorbing inference
- * cost, we still cap the rate at which we ship ImageBitmaps across the wire.
- * Head poses are slow signals; 12 Hz with One-Euro smoothing is plenty.
+ * Defensive update throttle (Hz). Face inference is expensive and runs on
+ * the main thread alongside HandLandmarker. The user's audio kept
+ * stuttering at 20 Hz — even after capping. Drop to 12 Hz: head poses
+ * move slowly, the mouth-open value smooths through One Euro filter,
+ * and the visualizer tolerates stale face state for 80 ms.
  */
 const MAX_UPDATE_HZ = 12;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 /** Filter resets after this re-entry gap. */
 const FACE_GAP_RESET_MS = 700;
-
-/**
- * Cap the number of frames in flight at once. If the worker is slow we'd
- * otherwise queue up bitmaps faster than it can drain them. The cap also
- * protects against runaway memory if the worker stalls.
- */
-const MAX_INFLIGHT_FRAMES = 2;
 
 // ---------------------------------------------------------------------------
 // Tiny typed event emitter (mirrors HandTrackerEmitter shape).
@@ -182,7 +154,7 @@ function clamp01(v: number): number {
   return v;
 }
 
-/** Pull the named blendshape score from a result, or null. */
+/** Pull the named blendshape score from a Classifications result, or null. */
 function blendshapeScore(
   result: FaceLandmarkerResult,
   name: string,
@@ -198,81 +170,13 @@ function blendshapeScore(
 type VideoElementWithRVFC = HTMLVideoElement;
 
 // ---------------------------------------------------------------------------
-// Build a synthetic FaceLandmarkerResult from a worker ResultMessage. The
-// downstream `deriveState` was originally written against the MediaPipe type;
-// rebuilding the same shape is the cheapest way to keep the post-processing
-// code unchanged. Allocates ~478 landmark objects per detected frame at 12
-// Hz — ~5700 objects/sec, well within budget.
-// ---------------------------------------------------------------------------
-
-function resultFromWorker(msg: ResultMessage): FaceLandmarkerResult {
-  if (!msg.landmarks || msg.numLandmarks <= 0) {
-    return {
-      faceLandmarks: [],
-      faceBlendshapes: [],
-      facialTransformationMatrixes: [],
-    } as unknown as FaceLandmarkerResult;
-  }
-  const lms = new Array(msg.numLandmarks);
-  for (let i = 0; i < msg.numLandmarks; i += 1) {
-    const o = i * 3;
-    lms[i] = {
-      x: msg.landmarks[o] ?? 0,
-      y: msg.landmarks[o + 1] ?? 0,
-      z: msg.landmarks[o + 2] ?? 0,
-      visibility: 1,
-    };
-  }
-  const blends =
-    msg.blendshapes.length > 0
-      ? [
-          {
-            categories: msg.blendshapes.map((b, i) => ({
-              score: b.score,
-              index: i,
-              categoryName: b.name,
-              displayName: b.name,
-            })),
-            headIndex: 0,
-            headName: 'face',
-          },
-        ]
-      : [];
-  const matrixes =
-    msg.matrixData && msg.matrixData.length >= 16
-      ? [
-          {
-            rows: 4,
-            columns: 4,
-            // MediaPipe consumers iterate by index; either Float32Array or
-            // number[] works. Convert to a regular array so existing helpers
-            // (extractEulerFromMatrix expects number[]) don't trip.
-            data: Array.from(msg.matrixData),
-          },
-        ]
-      : [];
-  return {
-    faceLandmarks: [lms],
-    faceBlendshapes: blends,
-    facialTransformationMatrixes: matrixes,
-  } as unknown as FaceLandmarkerResult;
-}
-
-// ---------------------------------------------------------------------------
 // FaceTrackerImpl
 // ---------------------------------------------------------------------------
 
 export class FaceTrackerImpl implements FaceTracker {
   private emitter = new FaceTrackerEmitter();
+  private landmarker: FaceLandmarker | null = null;
   private videoEl: VideoElementWithRVFC | null = null;
-
-  private worker: Worker | null = null;
-  private workerReady = false;
-  private workerFailed = false;
-  private nextFrameId = 1;
-  /** Highest result-id we've already consumed — newer ids only. */
-  private lastConsumedId = 0;
-  private inflight = 0;
 
   private running = false;
   private rvfcHandle: number | null = null;
@@ -281,8 +185,7 @@ export class FaceTrackerImpl implements FaceTracker {
   private slot: FaceFilterSlot = makeFaceFilterSlot();
 
   private lastFrameMs: number | null = null;
-  /** Timestamp (ms) of the most recent ImageBitmap we sent to the worker. */
-  private lastSentMs = 0;
+  private lastEmitMs = 0;
 
   private noFaceAccumSec = 0;
   private faceLostEmitted = false;
@@ -302,74 +205,42 @@ export class FaceTrackerImpl implements FaceTracker {
   async init(videoEl: HTMLVideoElement): Promise<void> {
     this.videoEl = videoEl as VideoElementWithRVFC;
 
-    // Construct the worker. If the env can't construct one (e.g. tests, or a
-    // browser with workers disabled), we don't crash — we surface an error
-    // and stay faceless. The architectural decision is intentional: there is
-    // no main-thread fallback (that's what was overrunning the audio
-    // scheduler in the first place).
-    let worker: Worker;
+    let vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
     try {
-      worker = new FaceWorker();
+      vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_BASE);
     } catch (err) {
-      this.workerFailed = true;
-      const e =
-        err instanceof Error
-          ? err
-          : new Error('FaceTracker: failed to construct face worker');
+      const e = err instanceof Error ? err : new Error(String(err));
       this.emitter.emit('error', e);
       throw e;
     }
-    this.worker = worker;
 
-    worker.addEventListener('message', (ev: MessageEvent<WorkerOutbound>) =>
-      this.onWorkerMessage(ev),
-    );
-    worker.addEventListener('error', (ev: ErrorEvent) => {
-      this.workerFailed = true;
-      const e = new Error(
-        `FaceTracker worker error: ${ev.message || 'unknown'}`,
-      );
+    try {
+      this.landmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: FACE_LANDMARKER_MODEL_URL,
+          delegate: 'GPU',
+        },
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: true,
+        runningMode: 'VIDEO',
+        numFaces: 1,
+      });
+    } catch (err) {
+      const e =
+        err instanceof Error
+          ? err
+          : new Error('FaceLandmarker creation failed');
       this.emitter.emit('error', e);
-    });
-    worker.addEventListener('messageerror', () => {
-      this.emitter.emit(
-        'error',
-        new Error('FaceTracker worker received an unstructurable message'),
-      );
-    });
-
-    // Send the init message, await `ready` (or `error`).
-    await new Promise<void>((resolve, reject) => {
-      const onReady = (ev: MessageEvent<WorkerOutbound>) => {
-        const msg = ev.data;
-        if (msg.type === 'ready') {
-          worker.removeEventListener('message', onReady as EventListener);
-          this.workerReady = true;
-          resolve();
-        } else if (msg.type === 'error') {
-          worker.removeEventListener('message', onReady as EventListener);
-          this.workerFailed = true;
-          reject(new Error(`FaceTracker worker init: ${msg.message}`));
-        }
-        // Ignore other message types until we get ready/error.
-      };
-      worker.addEventListener('message', onReady as EventListener);
-      const initMsg: WorkerInbound = {
-        type: 'init',
-        wasmBase: MEDIAPIPE_WASM_BASE,
-        modelUrl: FACE_LANDMARKER_MODEL_URL,
-        delegate: 'GPU',
-      };
-      worker.postMessage(initMsg);
-    });
-
-    // We deliberately do NOT call getUserMedia here — the HandTracker owns
-    // the webcam stream and the same <video> element is reused.
+      throw e;
+    }
+    // We deliberately do NOT call getUserMedia here — the HandTracker owns the
+    // webcam stream and the same <video> element is reused. Caller is
+    // responsible for ensuring the video has a stream before start().
   }
 
   start(): void {
     if (this.running) return;
-    if (!this.videoEl || !this.worker || !this.workerReady) {
+    if (!this.videoEl || !this.landmarker) {
       const e = new Error('FaceTracker.start() called before init()');
       this.emitter.emit('error', e);
       return;
@@ -393,28 +264,9 @@ export class FaceTrackerImpl implements FaceTracker {
     }
     this.rafHandle = null;
 
-    if (this.worker) {
-      try {
-        const closeMsg: WorkerInbound = { type: 'close' };
-        this.worker.postMessage(closeMsg);
-      } catch {
-        // Worker may already be terminated.
-      }
-      try {
-        this.worker.terminate();
-      } catch {
-        // Same.
-      }
-      this.worker = null;
-      this.workerReady = false;
-    }
-
     this.lastFrameMs = null;
     this.noFaceAccumSec = 0;
     this.faceLostEmitted = false;
-    this.inflight = 0;
-    this.nextFrameId = 1;
-    this.lastConsumedId = 0;
     resetSlot(this.slot);
   }
 
@@ -436,8 +288,7 @@ export class FaceTrackerImpl implements FaceTracker {
   // Public extras
   // -------------------------------------------------------------------------
 
-  /** Last raw FaceLandmarker-shaped result (rebuilt from the worker payload).
-   *  May be null. Kept for visualizer overlay compatibility. */
+  /** Last raw FaceLandmarker result, for visualizer overlay. May be null. */
   getLastDetectionResult(): FaceLandmarkerResult | null {
     return this.lastDetection;
   }
@@ -450,18 +301,16 @@ export class FaceTrackerImpl implements FaceTracker {
     if (!this.running || !this.videoEl) return;
     const v = this.videoEl;
     if (typeof v.requestVideoFrameCallback === 'function') {
-      this.rvfcHandle = v.requestVideoFrameCallback((now) =>
-        void this.tick(now),
-      );
+      this.rvfcHandle = v.requestVideoFrameCallback((now) => this.tick(now));
     } else {
-      this.rafHandle = requestAnimationFrame((now) => void this.tick(now));
+      this.rafHandle = requestAnimationFrame((now) => this.tick(now));
     }
   }
 
-  private async tick(nowMs: number): Promise<void> {
+  private tick(nowMs: number): void {
     if (!this.running) return;
     try {
-      await this.dispatchFrame(nowMs);
+      this.runFrame(nowMs);
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
       this.emitter.emit('error', e);
@@ -470,81 +319,24 @@ export class FaceTrackerImpl implements FaceTracker {
     }
   }
 
-  /** Capture the current video frame as an ImageBitmap and ship it to the
-   *  worker. Throttled by MIN_UPDATE_INTERVAL_MS and by the inflight cap. */
-  private async dispatchFrame(nowMs: number): Promise<void> {
+  private runFrame(nowMs: number): void {
     const v = this.videoEl;
-    const w = this.worker;
-    if (!v || !w || !this.workerReady || this.workerFailed) return;
+    const lm = this.landmarker;
+    if (!v || !lm) return;
     if (v.readyState < 2 || v.paused || v.ended) return;
-    if (nowMs - this.lastSentMs < MIN_UPDATE_INTERVAL_MS) return;
-    if (this.inflight >= MAX_INFLIGHT_FRAMES) return;
+    if (nowMs - this.lastEmitMs < MIN_UPDATE_INTERVAL_MS) return;
 
-    let bitmap: ImageBitmap;
+    let result: FaceLandmarkerResult;
     try {
-      bitmap = await createImageBitmap(v);
+      result = lm.detectForVideo(v, nowMs);
     } catch (err) {
       const e =
-        err instanceof Error
-          ? err
-          : new Error('FaceTracker: createImageBitmap failed');
+        err instanceof Error ? err : new Error('FaceLandmarker.detectForVideo failed');
       this.emitter.emit('error', e);
       return;
     }
-
-    const id = this.nextFrameId;
-    this.nextFrameId += 1;
-    this.lastSentMs = nowMs;
-    this.inflight += 1;
-
-    const msg: WorkerInbound = {
-      type: 'frame',
-      id,
-      bitmap,
-      timestamp: nowMs,
-    };
-    try {
-      w.postMessage(msg, [bitmap]);
-    } catch (err) {
-      this.inflight -= 1;
-      try {
-        bitmap.close();
-      } catch {
-        // ignore
-      }
-      const e =
-        err instanceof Error
-          ? err
-          : new Error('FaceTracker: failed to post frame to worker');
-      this.emitter.emit('error', e);
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Worker → main thread handler
-  // -------------------------------------------------------------------------
-
-  private onWorkerMessage(ev: MessageEvent<WorkerOutbound>): void {
-    const msg = ev.data;
-    if (msg.type === 'error') {
-      this.emitter.emit('error', new Error(msg.message));
-      return;
-    }
-    if (msg.type !== 'result') return;
-
-    // Result accounting — drop stale results (out-of-order is rare since
-    // postMessage preserves order, but if MAX_INFLIGHT > 1 a slow first
-    // frame could overlap a faster second).
-    this.inflight = Math.max(0, this.inflight - 1);
-    if (msg.id <= this.lastConsumedId) return;
-    this.lastConsumedId = msg.id;
-
-    if (!this.running) return;
-
-    const result = resultFromWorker(msg);
     this.lastDetection = result;
 
-    const nowMs = msg.timestamp;
     const dt = this.lastFrameMs === null ? 0 : (nowMs - this.lastFrameMs) / 1000;
     this.lastFrameMs = nowMs;
     const tSec = nowMs / 1000;
@@ -565,6 +357,7 @@ export class FaceTrackerImpl implements FaceTracker {
       this.emitter.emit('face:back');
     }
 
+    this.lastEmitMs = nowMs;
   }
 
   // -------------------------------------------------------------------------
@@ -574,7 +367,7 @@ export class FaceTrackerImpl implements FaceTracker {
   /**
    * Build the smoothed FaceState. Public on the class so tests can drive it
    * directly with a synthetic FaceLandmarkerResult without spinning up the
-   * MediaPipe runtime (or the worker).
+   * MediaPipe runtime.
    */
   deriveStateFromResult(
     result: FaceLandmarkerResult,
@@ -620,7 +413,11 @@ export class FaceTrackerImpl implements FaceTracker {
 
     // Convert NormalizedLandmark[] -> FaceLandmark[] (strip visibility/presence)
     // for downstream helpers. ALSO apply selfie x-mirror in place when
-    // mirrorEnabled is true.
+    // mirrorEnabled is true, so the visualizer's face skeleton lives in the
+    // same selfie-mirrored frame as the CSS-flipped <video> element. This
+    // matches the convention used by HandTracker. Without this flip, the
+    // face skeleton tracks the user's actual head movement but appears on
+    // the OPPOSITE side of the screen — same kind of bug we fixed for hands.
     const mirror = this.mirrorEnabled;
     const lms: FaceLandmark[] = new Array(rawLandmarks!.length);
     for (let i = 0; i < rawLandmarks!.length; i += 1) {
@@ -639,10 +436,7 @@ export class FaceTrackerImpl implements FaceTracker {
     let roll = 0;
     let depth = 0;
     if (matrix && matrix.data) {
-      const data = Array.isArray(matrix.data)
-        ? matrix.data
-        : Array.from(matrix.data as Iterable<number>);
-      const e = extractEulerFromMatrix(data);
+      const e = extractEulerFromMatrix(matrix.data);
       yaw = e.yaw;
       pitch = e.pitch;
       roll = e.roll;
@@ -650,7 +444,8 @@ export class FaceTrackerImpl implements FaceTracker {
     }
 
     // Face center is computed from the (already-mirrored when applicable)
-    // lms, so pass through.
+    // lms, so pass through. The earlier double-flip was wrong now that
+    // landmarks are mirrored at population.
     const rawCenter = faceCenter(lms);
     const mirroredCenterX = rawCenter.x;
 
@@ -703,4 +498,3 @@ export class FaceTrackerImpl implements FaceTracker {
     return state;
   }
 }
-
