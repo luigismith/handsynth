@@ -65,6 +65,16 @@ const MOOD_MIN_HOLD_MS = 250;
 /** No-hands fallback engages at this elapsed time. */
 const NO_HANDS_FALLBACK_SECONDS = 2.0;
 
+/**
+ * Lower bound on the intensity pushed into MusicBrain. Re-maps the gesture's
+ * meanHeight ∈ [0, 1] to [INTENSITY_FLOOR, 1] so the music has continuous
+ * presence even when the user's hands rest at chest level. Tested at 0.45 in
+ * the autonomous browser harness — at that floor, density=2 (eighths) +
+ * mood='rising' (non-sparse leads) produces a rich, continuous bed; lifting
+ * hands toward the top of the frame still escalates to peak/sixteenths.
+ */
+const INTENSITY_FLOOR = 0.45;
+
 /** Drone-mode targets (engaged when no hands detected for >2s). */
 const DRONE_PARAMS: Partial<AudioEngineParams> = {
   filterCutoff: 800,
@@ -403,7 +413,13 @@ export class InteractionMapperImpl implements InteractionMapper {
 
     // Continuous mappings.
     const cutoff = mapDistanceToCutoff(state.handsDistance);
-    const intensity = clamp01(state.meanHeight);
+    // Intensity floor: even with hands resting at chest level the music
+    // should feel rich, not skeletal. Re-map [0, 1] → [INTENSITY_FLOOR, 1]
+    // so users can still raise hands for density but never hit the dead
+    // zone where leads/bass barely fire.
+    const intensity = clamp01(
+      INTENSITY_FLOOR + (1 - INTENSITY_FLOOR) * state.meanHeight,
+    );
     const brightness = clamp01(state.meanHeight);
     const { reverbWet, delayFeedback } = mapRightOpenness(state.rightOpenness);
     const { saturatorDrive, filterResonance } = mapLeftOpenness(

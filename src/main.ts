@@ -258,6 +258,27 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
   // 5. Visualizer mounts last so analyser tap is hot.
   visual.mount(canvasEl, { audio, hands, music });
 
+  // DEV-ONLY: expose subsystems on window so DevTools / Claude Preview can
+  // probe live state. Also instrument MusicBrain to bump a counter each
+  // emit so we can verify the brain is ticking from outside.
+  if (import.meta.env?.DEV) {
+    const counters = { lead: 0, bass: 0, chord: 0, kick: 0, hat: 0, perc: 0, beat: 0 };
+    music.on({
+      onLead: () => { counters.lead += 1; },
+      onBass: () => { counters.bass += 1; },
+      onChord: () => { counters.chord += 1; },
+      onKick: () => { counters.kick += 1; },
+      onHat: () => { counters.hat += 1; },
+      onPerc: () => { counters.perc += 1; },
+      onBeat: () => { counters.beat += 1; },
+    });
+    interface DebugWindow {
+      __hs?: Record<string, unknown>;
+    }
+    const w = window as unknown as DebugWindow;
+    w.__hs = { audio, music, hands, mapper, visual, Tone, counters };
+  }
+
   // 6. Smoke test — schedule a quiet pad chord 200ms in so the user gets
   //    immediate audible feedback even before MusicBrain's first beat.
   setTimeout(() => {

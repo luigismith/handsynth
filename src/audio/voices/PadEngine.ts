@@ -99,7 +99,10 @@ export class PadEngine {
         sustain: SUSTAIN,
         release: RELEASE,
       },
-      volume: -10,
+      // -6 dB per layer (was -10) so the doubled stack lands around -3 dB
+      // pre-FX — present enough to feel like a continuous bed without
+      // dominating the lead.
+      volume: -6,
     });
     poly.set({ detune: detuneCents });
     return poly;
