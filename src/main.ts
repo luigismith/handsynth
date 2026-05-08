@@ -32,6 +32,8 @@ import { VibeSelectorImpl } from '@ui/VibeSelector';
 import { ErrorOverlayImpl } from '@ui/ErrorOverlay';
 import { SettingsPanelImpl } from '@ui/SettingsPanel';
 import { TerminalImpl } from '@ui/Terminal';
+import { HelpPanelImpl } from '@ui/HelpPanel';
+import { HudControlsImpl } from '@ui/HudControls';
 import { injectStyles } from '@ui/styles';
 
 function $(id: string): HTMLElement {
@@ -157,6 +159,61 @@ async function bootstrap(): Promise<void> {
     }),
   });
 
+  // Phase 3.7: in-app manual + bottom-right HUD controls. Help panel renders
+  // USER_MANUAL.md (imported via Vite ?raw); the HUD strip surfaces three
+  // tiny icons for STOP / TERMINAL / HELP that mirror the keyboard
+  // shortcuts (Esc / ` / F1).
+  const helpHost = $('help-host');
+  const hudHost = $('hud-controls-host');
+
+  const help = new HelpPanelImpl();
+  help.mount(helpHost);
+
+  // Track terminal visibility locally so the HUD's terminal button can flip
+  // it. The Terminal owns the actual visibility state — we just remember
+  // what we last asked for so the icon's click toggles correctly even when
+  // the user used the backtick key in between.
+  let terminalVisible = false;
+
+  // Track mute state locally (AudioEngine doesn't emit mute events). HUD
+  // owns its own copy too — we keep them in sync via setMuted().
+  let isMuted = false;
+
+  const hud = new HudControlsImpl();
+  hud.mount(hudHost, {
+    audio,
+    toggleTerminal: () => {
+      terminalVisible = !terminalVisible;
+      terminal.setVisible(terminalVisible);
+    },
+    toggleHelp: () => help.setVisible(!help.isVisible()),
+  });
+
+  // Global key bindings for the new icons. The HelpPanel handles F1 / ? /
+  // Esc-while-open itself; we only intercept Escape-as-mute (when help is
+  // closed) here.
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (isTypingTarget(e.target)) return;
+    if (e.key === 'Escape' && !help.isVisible()) {
+      isMuted = !isMuted;
+      audio.setMute(isMuted);
+      hud.setMuted(isMuted);
+      e.preventDefault();
+    }
+  });
+
+  // Sync HUD's terminal-visibility tracking with the user's backtick key
+  // toggles by listening on the same key. We only flip our cached boolean;
+  // the Terminal already toggled itself in response to the same event.
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (isTypingTarget(e.target)) return;
+    if (e.key === '`') {
+      terminalVisible = !terminalVisible;
+    }
+  });
+
   // Mirror toggle: 'm' key flips the selfie mirror on the <video> + the
   // HandTracker data flip + the FaceTracker mirror. Use this if the visible
   // webcam image and the skeleton/face overlay show on opposite sides
@@ -231,6 +288,16 @@ async function bootstrap(): Promise<void> {
     }
     try {
       terminal.unmount();
+    } catch {
+      /* noop */
+    }
+    try {
+      help.unmount();
+    } catch {
+      /* noop */
+    }
+    try {
+      hud.unmount();
     } catch {
       /* noop */
     }

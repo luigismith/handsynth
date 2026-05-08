@@ -100,6 +100,14 @@ const NO_HANDS_FALLBACK_SECONDS = 2.0;
 //                 filterResonance Q boost (+FACE_EYES_WIDE_Q_GAIN, clamped).
 //                 "Explosive" sound when the user widens their eyes — pairs
 //                 with the Superman laser-eye visual.
+//   smile      -> brightness lift +FACE_SMILE_BRIGHTNESS_GAIN, masterDuck
+//                 reduction -FACE_SMILE_DUCK_REDUCE (smile = brighter, louder).
+//   frown      -> filterCutoff cap toward FACE_FROWN_CUTOFF_FLOOR Hz at full
+//                 frown (sound darkens / introverted).
+//   surprise   -> reverbWet boost +FACE_SURPRISE_REVERB_GAIN, delayFeedback
+//                 boost +FACE_SURPRISE_DELAY_FB_GAIN (sound opens up).
+//   anger      -> saturatorDrive boost +FACE_ANGER_DRIVE_GAIN (clamped),
+//                 filterResonance peak +FACE_ANGER_Q_GAIN (clamped to Q_MAX).
 //   noFaceDuration > face-lost threshold -> masterDuck += FACE_LOST_DUCK
 // ---------------------------------------------------------------------------
 
@@ -182,6 +190,24 @@ const FACE_MOUTH_BRIGHTNESS_GAIN = 0.4;
  */
 const FACE_EYES_WIDE_REVERB_GAIN = 0.25;
 const FACE_EYES_WIDE_Q_GAIN = 4;
+
+/**
+ * Expression contributions. Each is layered AFTER the eyesWide / mouth / pose
+ * blocks so the four discrete expressions are the loudest interpretive layer.
+ * Calibrations:
+ *   - smile: at full smile, brightness gets +0.2 and masterDuck is reduced
+ *     by 0.15 — so smiling literally makes the room brighter and louder.
+ *   - frown: at full frown, master cutoff is pulled toward 1500 Hz (dark).
+ *   - surprise: +0.3 reverbWet, +0.1 delayFeedback at full surprise (opens up).
+ *   - anger: +0.6 saturatorDrive (clamped to DRIVE_MAX), +5 Q (clamped to Q_MAX).
+ */
+const FACE_SMILE_BRIGHTNESS_GAIN = 0.2;
+const FACE_SMILE_DUCK_REDUCE = 0.15;
+const FACE_FROWN_CUTOFF_FLOOR = 1500;
+const FACE_SURPRISE_REVERB_GAIN = 0.3;
+const FACE_SURPRISE_DELAY_FB_GAIN = 0.1;
+const FACE_ANGER_DRIVE_GAIN = 0.6;
+const FACE_ANGER_Q_GAIN = 5;
 
 /**
  * Lower bound on the intensity pushed into MusicBrain. Re-maps the gesture's
@@ -947,6 +973,73 @@ export class InteractionMapperImpl implements InteractionMapper {
         Q_MIN,
         Q_MAX,
       );
+
+      // -----------------------------------------------------------------
+      // Expression layer — smile / frown / surprise / anger. Layered last
+      // so an expression always wins over the underlying gesture mix.
+      // -----------------------------------------------------------------
+
+      // Smile: brighter + louder. Reduces masterDuck (so smiling pushes
+      // the mix forward) and lifts brightness directly.
+      const smile = clamp01(f.smile);
+      if (smile > 0) {
+        const baseBright =
+          typeof out.brightness === 'number' ? out.brightness : 0.5;
+        out.brightness = clamp01(
+          baseBright + smile * FACE_SMILE_BRIGHTNESS_GAIN,
+        );
+        const baseDuckSmile =
+          typeof out.masterDuck === 'number' ? out.masterDuck : 0;
+        out.masterDuck = clamp01(
+          baseDuckSmile - smile * FACE_SMILE_DUCK_REDUCE,
+        );
+      }
+
+      // Frown: darkens. Pulls master cutoff toward FACE_FROWN_CUTOFF_FLOOR
+      // — fully frowning lerps the cutoff between its current value and
+      // the floor by `frown`.
+      const frown = clamp01(f.frown);
+      if (frown > 0) {
+        const baseCutoff =
+          typeof out.filterCutoff === 'number' ? out.filterCutoff : 8000;
+        out.filterCutoff = lerp(baseCutoff, FACE_FROWN_CUTOFF_FLOOR, frown);
+      }
+
+      // Surprise: opens up. +reverb, +delay feedback.
+      const surprise = clamp01(f.surprise);
+      if (surprise > 0) {
+        const baseReverbS =
+          typeof out.reverbWet === 'number' ? out.reverbWet : 0.4;
+        out.reverbWet = clamp01(
+          baseReverbS + surprise * FACE_SURPRISE_REVERB_GAIN,
+        );
+        const baseFbS =
+          typeof out.delayFeedback === 'number' ? out.delayFeedback : DELAY_FB_MIN;
+        out.delayFeedback = clamp(
+          baseFbS + surprise * FACE_SURPRISE_DELAY_FB_GAIN,
+          DELAY_FB_MIN,
+          DELAY_FB_MAX,
+        );
+      }
+
+      // Anger: drive + resonance peak.
+      const anger = clamp01(f.anger);
+      if (anger > 0) {
+        const baseDriveA =
+          typeof out.saturatorDrive === 'number' ? out.saturatorDrive : DRIVE_MIN;
+        out.saturatorDrive = clamp(
+          baseDriveA + anger * FACE_ANGER_DRIVE_GAIN,
+          DRIVE_MIN,
+          DRIVE_MAX,
+        );
+        const baseQA =
+          typeof out.filterResonance === 'number' ? out.filterResonance : 1;
+        out.filterResonance = clamp(
+          baseQA + anger * FACE_ANGER_Q_GAIN,
+          Q_MIN,
+          Q_MAX,
+        );
+      }
     }
 
     // Face-lost duck (additive). Independent of detected/undetected snapshot

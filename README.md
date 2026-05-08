@@ -9,7 +9,7 @@ Cyberpunk visualizer · MediaPipe webcam tracking · Tone.js audio engine.
 
 ![hero](docs/hero.png)
 
-[![tests](https://img.shields.io/badge/tests-190%20passing-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-215%20passing-brightgreen)]()
 [![license](https://img.shields.io/badge/license-MIT-blue)]()
 [![platform](https://img.shields.io/badge/platform-web%20%7C%20windows%20%7C%20macos-lightgrey)]()
 
@@ -30,6 +30,7 @@ A web app + Electron desktop app that turns your body into an expressive musical
 - **Pinch left** advances the chord progression
 - **Mouth open** sweeps delay wet, filter cutoff, reverb, and brightness simultaneously
 - **Eyes wide** boosts reverb and filter resonance — and shoots Superman-style laser beams from your eyes
+- **Smile / frown / surprise / anger** modulate brightness, cutoff, drive, and resonance — your face is the fourth controller
 - **Both fists** mutes; **both hands above head** is the "drop"
 
 The music brain stays inside the active scale — **it is impossible to play a wrong note** — and four built-in vibes (Tycho, Bonobo, Hopkins, Floating Points) set tonality, BPM, and timbre. Eight factory PATCH presets (LUSH, ACID, DUB, BRIGHT, DARK, TAPE, SPACE, INIT) let you flip whole-sound character with one click. Save your own patches to `localStorage`.
@@ -92,6 +93,10 @@ See [`electron/BUILD.md`](./electron/BUILD.md) for code-signing + notarization n
 | Mouth open | Delay wet + filter cutoff +6k + reverb +0.3 + brightness +0.4 | Mouth-emit particles |
 | Mouth open (rising edge) | Lead chord-tone stab | — |
 | Eyes wide (deliberate) | Reverb wet +0.25 + filter Q +4 | Superman laser beams |
+| Smile | Brightness +0.2, masterDuck −0.15 (brighter, louder) | — |
+| Frown | Filter cutoff pulled toward 1.5 kHz (darkens) | — |
+| Surprise | Reverb +0.3, delay feedback +0.1 (opens up) | — |
+| Anger | Saturator drive +0.6 (clamped), filter Q +5 (clamped) | — |
 | Face lost > 1.5 s | Master duck +0.15 | — |
 
 ### Keyboard
@@ -101,6 +106,10 @@ See [`electron/BUILD.md`](./electron/BUILD.md) for code-signing + notarization n
 | `` ` `` | Toggle the live event terminal (left side) |
 | `p` | Toggle the PATCH editor |
 | `m` | Flip the selfie mirror (only if your webcam stream is already pre-mirrored) |
+| `Escape` | Mute / unmute the audio (also exposed as the bottom-right STOP icon) |
+| `F1` or `?` | Toggle the in-app manual (also exposed as the bottom-right help icon) |
+
+A small bottom-right HUD strip surfaces these as three tiny icon buttons (STOP / TERMINAL / HELP) for users who prefer a click. See [`USER_MANUAL.md`](./USER_MANUAL.md) for the long-form user guide.
 
 ## Architecture
 

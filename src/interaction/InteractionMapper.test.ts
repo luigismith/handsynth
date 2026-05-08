@@ -197,6 +197,10 @@ function blankFace(over: Partial<FaceState> = {}): FaceState {
     eyeOpenLeft: 0.5,
     eyeOpenRight: 0.5,
     eyesWide: 0,
+    smile: 0,
+    frown: 0,
+    surprise: 0,
+    anger: 0,
     noFaceDuration: 0,
     ...over,
   };
@@ -733,6 +737,163 @@ describe('InteractionMapper face integration', () => {
         .filter((v): v is number => typeof v === 'number')
         .pop() ?? 0;
     expect(clamped).toBeCloseTo(14, 5);
+    mapper.stop();
+  });
+
+  // -------------------------------------------------------------------------
+  // Expression mapping: smile / frown / surprise / anger.
+  // -------------------------------------------------------------------------
+
+  it('smile=1 lifts brightness and reduces masterDuck', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    const face = makeFaceStub();
+    mapper.attach({ audio, music, hands, face });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Baseline: no smile.
+    face.emit('face:update', blankFace({ smile: 0 }));
+    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState());
+    const baseBright =
+      audio.paramCalls
+        .map((p) => p.brightness)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    // Smile=1 -> brightness rises by 0.2 (clamped to 1).
+    face.emit('face:update', blankFace({ smile: 1 }));
+    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState());
+    const smileBright =
+      audio.paramCalls
+        .map((p) => p.brightness)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(smileBright - baseBright).toBeGreaterThan(0.15);
+
+    // masterDuck should be at or below 0 (clamped to 0 since no other lift).
+    const lastDuck =
+      audio.paramCalls
+        .map((p) => p.masterDuck)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 1;
+    expect(lastDuck).toBeLessThanOrEqual(0.001);
+    mapper.stop();
+  });
+
+  it('frown=1 pulls filterCutoff toward 1500 Hz floor', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    const face = makeFaceStub();
+    mapper.attach({ audio, music, hands, face });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    face.emit('face:update', blankFace({ frown: 1 }));
+    // Hands wide apart so the baseline cutoff would be high (~12 kHz).
+    hands.emit('gesture:update', blankState({ handsDistance3D: 1 }));
+    hands.emit('gesture:update', blankState({ handsDistance3D: 1 }));
+
+    const cutoff =
+      audio.paramCalls
+        .map((p) => p.filterCutoff)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    // Full frown -> cutoff = lerp(baseline, 1500, 1) = 1500.
+    expect(cutoff).toBeCloseTo(1500, 0);
+    mapper.stop();
+  });
+
+  it('surprise=1 boosts reverbWet and delayFeedback', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    const face = makeFaceStub();
+    mapper.attach({ audio, music, hands, face });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Baseline (surprise=0).
+    face.emit('face:update', blankFace({ surprise: 0 }));
+    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState());
+    const baseReverb =
+      audio.paramCalls
+        .map((p) => p.reverbWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    const baseFb =
+      audio.paramCalls
+        .map((p) => p.delayFeedback)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    face.emit('face:update', blankFace({ surprise: 1 }));
+    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState());
+    const wReverb =
+      audio.paramCalls
+        .map((p) => p.reverbWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    const wFb =
+      audio.paramCalls
+        .map((p) => p.delayFeedback)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(wReverb - baseReverb).toBeGreaterThan(0.2);
+    expect(wFb - baseFb).toBeGreaterThan(0.05);
+    mapper.stop();
+  });
+
+  it('anger=1 lifts saturatorDrive and filterResonance (clamped)', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    const face = makeFaceStub();
+    mapper.attach({ audio, music, hands, face });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    face.emit('face:update', blankFace({ anger: 0 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    const baseDrive =
+      audio.paramCalls
+        .map((p) => p.saturatorDrive)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    const baseQ =
+      audio.paramCalls
+        .map((p) => p.filterResonance)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    face.emit('face:update', blankFace({ anger: 1 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    const wDrive =
+      audio.paramCalls
+        .map((p) => p.saturatorDrive)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    const wQ =
+      audio.paramCalls
+        .map((p) => p.filterResonance)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(wDrive - baseDrive).toBeGreaterThan(0.4);
+    expect(wDrive).toBeLessThanOrEqual(2.6); // DRIVE_MAX
+    expect(wQ - baseQ).toBeGreaterThan(4);
+    expect(wQ).toBeLessThanOrEqual(14); // Q_MAX
     mapper.stop();
   });
 

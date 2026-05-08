@@ -893,13 +893,238 @@ export const UI_STYLES = `
   letter-spacing: 0.4px;
 }
 
+/* =========================================================================
+ * HUD controls (bottom-right power / terminal / help strip)
+ * ========================================================================= */
+
+.hs-hud {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 11;
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+.hs-hud-btn {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hs-bg-panel-2);
+  color: var(--hs-text);
+  border: 1px solid var(--hs-grey-2);
+  border-radius: 0;
+  font-family: var(--hs-mono);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+  padding: 0;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease,
+    background 120ms ease;
+}
+.hs-hud-btn:hover {
+  opacity: 1;
+  color: var(--hs-orange);
+  border-color: var(--hs-orange);
+}
+.hs-hud-btn:focus-visible {
+  outline: 2px solid var(--hs-orange);
+  outline-offset: 2px;
+  opacity: 1;
+}
+.hs-hud-btn.hs-hud-active {
+  /* STOP button when audio is muted — filled orange so the user can tell
+   * at a glance. */
+  background: var(--hs-orange);
+  border-color: var(--hs-orange);
+  color: #0a0a0c;
+  opacity: 1;
+}
+.hs-hud-btn.hs-hud-active:hover {
+  background: var(--hs-amber);
+  border-color: var(--hs-amber);
+}
+
+/* =========================================================================
+ * Help panel (modal manual)
+ * ========================================================================= */
+
+.hs-help-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 12, 0.62);
+  pointer-events: auto;
+  transition: opacity 200ms ease;
+  opacity: 1;
+}
+.hs-help-overlay[hidden] { display: none; }
+.hs-help-overlay.hs-collapsed {
+  opacity: 0;
+  pointer-events: none;
+}
+.hs-help-card {
+  position: relative;
+  width: min(720px, 90vw);
+  max-height: 82vh;
+  overflow: auto;
+  background: var(--hs-bg-panel);
+  border: 1px solid var(--hs-grey-2);
+  color: var(--hs-text);
+  font: 13px var(--hs-mono);
+  padding: 22px 26px 18px 26px;
+  pointer-events: auto;
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+  box-shadow: 0 0 32px rgba(0, 0, 0, 0.55);
+}
+.hs-help-card:focus { outline: none; }
+.hs-help-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--hs-orange);
+  pointer-events: none;
+}
+.hs-help-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.hs-help-title {
+  margin: 0;
+  font-family: var(--hs-mono);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--hs-text-bright);
+  text-transform: uppercase;
+}
+.hs-help-sub {
+  font-family: var(--hs-mono);
+  font-size: 9px;
+  color: var(--hs-text-dim);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.hs-help-close {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--hs-text-dim);
+  font: 18px var(--hs-mono);
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  transition: color 120ms ease;
+}
+.hs-help-close:hover { color: var(--hs-orange); }
+.hs-help-close:focus-visible {
+  outline: 2px solid var(--hs-orange);
+  outline-offset: 2px;
+  color: var(--hs-orange);
+}
+.hs-help-body {
+  font-family: var(--hs-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--hs-text);
+}
+.hs-help-body h1,
+.hs-help-body h2,
+.hs-help-body h3 {
+  font-family: var(--hs-mono);
+  color: var(--hs-text-bright);
+  letter-spacing: 0.6px;
+  margin: 18px 0 8px 0;
+  text-transform: uppercase;
+}
+.hs-help-body h1 { font-size: 18px; letter-spacing: 1.5px; }
+.hs-help-body h2 {
+  font-size: 14px;
+  letter-spacing: 1.2px;
+  border-left: 3px solid var(--hs-orange);
+  padding-left: 8px;
+  color: var(--hs-orange);
+}
+.hs-help-body h3 { font-size: 12px; color: var(--hs-amber); }
+.hs-help-body p { margin: 8px 0; }
+.hs-help-body ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+.hs-help-body li { margin: 3px 0; }
+.hs-help-body strong {
+  color: var(--hs-text-bright);
+  font-weight: 600;
+}
+.hs-help-body code {
+  font-family: var(--hs-mono);
+  font-size: 11.5px;
+  background: var(--hs-bg-deep);
+  border: 1px solid var(--hs-grey);
+  color: var(--hs-amber);
+  padding: 1px 5px;
+  border-radius: 0;
+}
+.hs-help-body a {
+  color: var(--hs-orange);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--hs-orange-dim);
+}
+.hs-help-body a:hover { color: var(--hs-amber); border-bottom-color: var(--hs-amber); }
+.hs-help-body hr {
+  border: 0;
+  border-top: 1px solid var(--hs-grey);
+  margin: 16px 0;
+}
+.hs-help-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 11.5px;
+}
+.hs-help-body th,
+.hs-help-body td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hs-grey);
+  vertical-align: top;
+}
+.hs-help-body th {
+  color: var(--hs-orange);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-size: 10px;
+  border-bottom: 1px solid var(--hs-orange-dim);
+}
+.hs-help-body td { color: var(--hs-text); }
+
 @media (prefers-reduced-motion: reduce) {
   .hs-onboard-card::after,
   .hs-onboard-btn,
   .hs-term-status .hs-term-rec,
   .hs-terminal,
-  .hs-preset-chip.hs-preset-flash {
+  .hs-preset-chip.hs-preset-flash,
+  .hs-help-overlay,
+  .hs-hud-btn {
     animation: none !important;
+    transition: none !important;
   }
 }
 `;

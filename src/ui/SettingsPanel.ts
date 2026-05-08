@@ -108,7 +108,7 @@ export class SettingsPanelImpl {
     title.textContent = 'PATCH';
     const sub = document.createElement('span');
     sub.className = 'hs-settings-sub';
-    sub.textContent = 'EDIT · SAVE · LOAD';
+    sub.textContent = 'P · ESC MUTE · F1 HELP';
     header.append(title, sub);
     card.appendChild(header);
 

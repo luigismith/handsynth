@@ -168,7 +168,10 @@ export class TerminalImpl {
     };
     window.addEventListener('keydown', this.keydownHandler);
 
-    this.appendLine('info', 'handsynth terminal ready · press ` to toggle');
+    this.appendLine(
+      'info',
+      'handsynth terminal ready · ` toggle · esc mute · F1 help',
+    );
   }
 
   unmount(): void {

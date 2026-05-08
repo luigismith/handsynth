@@ -365,6 +365,14 @@ export interface FaceState {
    * (1 - EYE_REST). The threshold lets normal blinks not register; only
    * deliberate wide-open eyes light up the lasers. */
   eyesWide: number;
+  /** Smile, 0..1. Mean of mouthSmileLeft + mouthSmileRight blendshapes. */
+  smile: number;
+  /** Frown, 0..1. Mean of mouthFrownLeft + mouthFrownRight blendshapes. */
+  frown: number;
+  /** Surprise, 0..1. Combination of jawOpen + browInnerUp + eyeWide hints. */
+  surprise: number;
+  /** Anger, 0..1. browDownLeft + browDownRight + (no smile). */
+  anger: number;
   /** Time since face last seen, seconds. 0 if currently detected. */
   noFaceDuration: number;
   /** Optional: full landmark array for visualizer overlay (478 points). */

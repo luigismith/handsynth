@@ -9,6 +9,7 @@ import {
   apparentFaceWidth,
   apparentSizeToCloseness,
   browRaiseFromLandmarks,
+  deriveExpressions,
   extractEulerFromMatrix,
   eyeAspectRatioLeft,
   eyeAspectRatioRight,
@@ -318,5 +319,92 @@ describe('normalizeEyeOpenness', () => {
 
   it('returns 0 for non-finite input', () => {
     expect(normalizeEyeOpenness(Number.NaN)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveExpressions — smile / frown / surprise / anger from blendshapes.
+// ---------------------------------------------------------------------------
+
+describe('deriveExpressions', () => {
+  it('returns all-zero scalars for an empty blendshape list', () => {
+    const e = deriveExpressions([]);
+    expect(e.smile).toBe(0);
+    expect(e.frown).toBe(0);
+    expect(e.surprise).toBe(0);
+    expect(e.anger).toBe(0);
+  });
+
+  it('averages mouthSmileLeft + mouthSmileRight into smile', () => {
+    const e = deriveExpressions([
+      { name: 'mouthSmileLeft', score: 0.8 },
+      { name: 'mouthSmileRight', score: 0.6 },
+    ]);
+    expect(e.smile).toBeCloseTo(0.7, 5);
+    expect(e.frown).toBe(0);
+  });
+
+  it('averages mouthFrownLeft + mouthFrownRight into frown', () => {
+    const e = deriveExpressions([
+      { name: 'mouthFrownLeft', score: 0.5 },
+      { name: 'mouthFrownRight', score: 0.5 },
+    ]);
+    expect(e.frown).toBeCloseTo(0.5, 5);
+  });
+
+  it('combines jawOpen + browInnerUp + eyeWide into surprise (mean of 4)', () => {
+    const e = deriveExpressions([
+      { name: 'jawOpen', score: 1 },
+      { name: 'browInnerUp', score: 1 },
+      { name: 'eyeWideLeft', score: 1 },
+      { name: 'eyeWideRight', score: 1 },
+    ]);
+    expect(e.surprise).toBeCloseTo(1, 5);
+    // Only one hint -> 0.25.
+    const partial = deriveExpressions([{ name: 'jawOpen', score: 1 }]);
+    expect(partial.surprise).toBeCloseTo(0.25, 5);
+  });
+
+  it('anger = browDown mean × (1 - smile) so a grin suppresses anger', () => {
+    const angryOnly = deriveExpressions([
+      { name: 'browDownLeft', score: 0.8 },
+      { name: 'browDownRight', score: 0.8 },
+    ]);
+    expect(angryOnly.anger).toBeCloseTo(0.8, 5);
+
+    const angryGrin = deriveExpressions([
+      { name: 'browDownLeft', score: 0.8 },
+      { name: 'browDownRight', score: 0.8 },
+      { name: 'mouthSmileLeft', score: 1 },
+      { name: 'mouthSmileRight', score: 1 },
+    ]);
+    // Smile=1 -> anger fully suppressed.
+    expect(angryGrin.anger).toBeCloseTo(0, 5);
+  });
+
+  it('clamps each output to [0, 1]', () => {
+    const e = deriveExpressions([
+      { name: 'mouthSmileLeft', score: 1.5 },
+      { name: 'mouthSmileRight', score: 1.5 },
+      { name: 'jawOpen', score: 2 },
+      { name: 'browInnerUp', score: 2 },
+      { name: 'eyeWideLeft', score: 2 },
+      { name: 'eyeWideRight', score: 2 },
+    ]);
+    expect(e.smile).toBeLessThanOrEqual(1);
+    expect(e.surprise).toBeLessThanOrEqual(1);
+    expect(e.smile).toBeGreaterThanOrEqual(0);
+    expect(e.surprise).toBeGreaterThanOrEqual(0);
+  });
+
+  it('ignores unknown blendshape names', () => {
+    const e = deriveExpressions([
+      { name: 'browFlavor', score: 1 },
+      { name: 'someOtherName', score: 1 },
+    ]);
+    expect(e.smile).toBe(0);
+    expect(e.frown).toBe(0);
+    expect(e.surprise).toBe(0);
+    expect(e.anger).toBe(0);
   });
 });

@@ -23,6 +23,7 @@ import {
   apparentFaceWidth,
   apparentSizeToCloseness,
   browRaiseFromLandmarks,
+  deriveExpressions,
   extractEulerFromMatrix,
   eyeAspectRatioLeft,
   eyeAspectRatioRight,
@@ -121,6 +122,11 @@ interface FaceFilterSlot {
   /** eyesWide is the value the visualizer reads each frame. Slightly
    * higher mincutoff so the lasers don't shimmer. */
   eyesWide: OneEuroFilter;
+  /** Expression filters — same params as mouthOpen / browRaise. */
+  smile: OneEuroFilter;
+  frown: OneEuroFilter;
+  surprise: OneEuroFilter;
+  anger: OneEuroFilter;
   lastSeenMs: number;
 }
 
@@ -145,6 +151,10 @@ function makeFaceFilterSlot(): FaceFilterSlot {
     eyeOpenLeft: pose(),
     eyeOpenRight: pose(),
     eyesWide: centroid(),
+    smile: pose(),
+    frown: pose(),
+    surprise: pose(),
+    anger: pose(),
     lastSeenMs: 0,
   };
 }
@@ -161,6 +171,10 @@ function resetSlot(slot: FaceFilterSlot): void {
   slot.eyeOpenLeft.reset();
   slot.eyeOpenRight.reset();
   slot.eyesWide.reset();
+  slot.smile.reset();
+  slot.frown.reset();
+  slot.surprise.reset();
+  slot.anger.reset();
 }
 
 /** Calibration: average eye openness at rest. Above this peg `eyesWide`
@@ -427,6 +441,10 @@ export class FaceTrackerImpl implements FaceTracker {
         eyeOpenLeft: 0,
         eyeOpenRight: 0,
         eyesWide: 0,
+        smile: 0,
+        frown: 0,
+        surprise: 0,
+        anger: 0,
         noFaceDuration: this.noFaceAccumSec,
       };
     }
@@ -524,6 +542,17 @@ export class FaceTrackerImpl implements FaceTracker {
     const eyesWideRaw =
       EYE_REST < 1 ? Math.max(0, (eyeMean - EYE_REST) / (1 - EYE_REST)) : 0;
 
+    // Expressions: smile / frown / surprise / anger derived from blendshapes.
+    // The helper tolerates an empty list (returns zeros) so we don't need to
+    // guard the call here. We still pass an empty array if blendshapes were
+    // not produced this frame.
+    const blendCats = result.faceBlendshapes?.[0]?.categories ?? [];
+    const blendList = blendCats.map((c) => ({
+      name: c.categoryName ?? '',
+      score: c.score ?? 0,
+    }));
+    const expr = deriveExpressions(blendList);
+
     // Apply One-Euro filtering. Negate yaw/roll for selfie-mirrored
     // coordinates (pitch sign stays).
     const cx = clamp01(this.slot.centerX.filter(mirroredCenterX, tSec));
@@ -540,6 +569,10 @@ export class FaceTrackerImpl implements FaceTracker {
     const eolF = clamp01(this.slot.eyeOpenLeft.filter(eyeOpenLeftRaw, tSec));
     const eorF = clamp01(this.slot.eyeOpenRight.filter(eyeOpenRightRaw, tSec));
     const ewF = clamp01(this.slot.eyesWide.filter(eyesWideRaw, tSec));
+    const smileF = clamp01(this.slot.smile.filter(expr.smile, tSec));
+    const frownF = clamp01(this.slot.frown.filter(expr.frown, tSec));
+    const surpriseF = clamp01(this.slot.surprise.filter(expr.surprise, tSec));
+    const angerF = clamp01(this.slot.anger.filter(expr.anger, tSec));
 
     const state: FaceState = {
       detected: true,
@@ -551,6 +584,10 @@ export class FaceTrackerImpl implements FaceTracker {
       eyeOpenLeft: eolF,
       eyeOpenRight: eorF,
       eyesWide: ewF,
+      smile: smileF,
+      frown: frownF,
+      surprise: surpriseF,
+      anger: angerF,
       noFaceDuration: 0,
       landmarks: lms,
     };

@@ -309,6 +309,94 @@ export function normalizeEyeOpenness(raw: number): number {
 // Face center (un-mirrored). The FaceTracker x-flips at emit time.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Expression derivation from MediaPipe blendshapes.
+//
+// MediaPipe FaceLandmarker emits ~52 blendshape categories per frame. We pick
+// a curated subset and combine them into four "expression scalars" that map
+// cleanly onto musical parameters in InteractionMapper. The helper is pure —
+// it takes the raw blendshape array and returns the derived 0..1 scores.
+// Caller is responsible for One-Euro filtering downstream.
+//
+// Calibration notes:
+//   - smile: mean of mouthSmileLeft + mouthSmileRight. Both already saturate
+//     near 1 on a deliberate grin. Mean keeps asymmetric smiles honest.
+//   - frown: mean of mouthFrownLeft + mouthFrownRight. Geometric pull-down.
+//   - surprise: mean of jawOpen, browInnerUp, eyeWideLeft, eyeWideRight. The
+//     combination is what reads as "surprise" — none alone is enough (jaw
+//     drop without raised brows = yawn; raised brows alone = curiosity).
+//   - anger: mean of browDownLeft + browDownRight, suppressed by smile so
+//     a grin can't trip the anger lamp accidentally.
+// ---------------------------------------------------------------------------
+
+interface BlendshapeMap {
+  [name: string]: number;
+}
+
+function blendMap(
+  blendshapes: { name: string; score: number }[],
+): BlendshapeMap {
+  const out: BlendshapeMap = {};
+  for (const b of blendshapes) {
+    out[b.name] = b.score;
+  }
+  return out;
+}
+
+function pick(map: BlendshapeMap, name: string): number {
+  const v = map[name];
+  return typeof v === 'number' ? clamp01(v) : 0;
+}
+
+/**
+ * Derive expression scalars (smile / frown / surprise / anger) from a
+ * MediaPipe blendshape array. Each output is 0..1.
+ *
+ * The blendshape array can be passed directly from
+ * `FaceLandmarkerResult.faceBlendshapes[0].categories` mapped to
+ * `{ name: c.categoryName, score: c.score }` — the helper reads only what it
+ * needs and tolerates missing entries (returns 0 for absent shapes).
+ */
+export function deriveExpressions(
+  blendshapes: { name: string; score: number }[],
+): { smile: number; frown: number; surprise: number; anger: number } {
+  if (!blendshapes || blendshapes.length === 0) {
+    return { smile: 0, frown: 0, surprise: 0, anger: 0 };
+  }
+  const m = blendMap(blendshapes);
+
+  const smileL = pick(m, 'mouthSmileLeft');
+  const smileR = pick(m, 'mouthSmileRight');
+  const smile = (smileL + smileR) * 0.5;
+
+  const frownL = pick(m, 'mouthFrownLeft');
+  const frownR = pick(m, 'mouthFrownRight');
+  const frown = (frownL + frownR) * 0.5;
+
+  // Surprise: jawOpen + browInnerUp + eyeWide(L|R). Equal-weight mean keeps
+  // the signal honest when only some hints fire (e.g. eyes-wide-only is
+  // half a surprise; jaw-drop-only is a quarter).
+  const jawOpen = pick(m, 'jawOpen');
+  const browInner = pick(m, 'browInnerUp');
+  const eyeWideL = pick(m, 'eyeWideLeft');
+  const eyeWideR = pick(m, 'eyeWideRight');
+  const surprise = (jawOpen + browInner + eyeWideL + eyeWideR) * 0.25;
+
+  // Anger: brows pulled down. Suppressed by smile so a grimacing grin
+  // doesn't read as anger.
+  const browDownL = pick(m, 'browDownLeft');
+  const browDownR = pick(m, 'browDownRight');
+  const browDown = (browDownL + browDownR) * 0.5;
+  const anger = clamp01(browDown * (1 - smile));
+
+  return {
+    smile: clamp01(smile),
+    frown: clamp01(frown),
+    surprise: clamp01(surprise),
+    anger,
+  };
+}
+
 /**
  * Centroid of a representative subset of landmarks. Cheap and stable: average
  * of forehead, chin, both tragi.
