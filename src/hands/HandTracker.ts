@@ -50,7 +50,16 @@ const HAND_GAP_RESET_MS = 500;
 const NO_HANDS_EDGE_SECONDS = 2.0;
 
 /** Defensive update throttle (Hz) — rVFC already caps at refresh rate. */
-const MAX_UPDATE_HZ = 60;
+/**
+ * Hand inference cap. Was 60 Hz; that's *too* greedy on the main thread when
+ * we're also running FaceLandmarker (and Tone's scheduler, p5, the FFT pull,
+ * UI listeners...). At 60 Hz on a mid-tier laptop both inferences combined
+ * starved the audio scheduler and eventually triggered Chrome's
+ * 'page-is-unresponsive' watchdog. 30 Hz is still buttery for hand
+ * gestures (One Euro filter smooths the gaps) and frees ~half the
+ * main-thread budget.
+ */
+const MAX_UPDATE_HZ = 30;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 // ---------------------------------------------------------------------------
