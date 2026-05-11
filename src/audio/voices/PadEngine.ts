@@ -31,7 +31,17 @@ import type { VoiceShape } from '../voice-shape';
 const ATTACK = 2.5;
 const DECAY = 0.8;
 const SUSTAIN = 0.7;
-const RELEASE = 4.0;
+// PERF FIX (live capture: V climbing 8→16→22 over 45 s + freezes after
+// ~1 min sustained play): the previous 4 s release made notes from
+// successive chord changes overlap heavily. With chord cycles ~1/s, up
+// to 4 chords' worth of voices linger in the PolySynth pool → audio
+// thread mixing cost climbs → freezes under cumulative MediaPipe load.
+// 2 s release halves the overlap window without changing the pad's
+// "smooth bloom" character meaningfully (the attack and decay
+// dominate the perceived envelope). maxPolyphony cap was tried first
+// but `poly.maxPolyphony = X` post-construction silences the synth
+// in Tone.js 15.x — see commit f052fa0.
+const RELEASE = 2.0;
 
 const LFO_RATE = 0.15; // Hz
 const LFO_LOW = 600; // Hz
