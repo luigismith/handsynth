@@ -37,6 +37,7 @@
     "eslint-config-prettier": "^9.1.0",
     "happy-dom": "^15.11.7",
     "prettier": "^3.4.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "vitest": "^2.1.8",
@@ -69,7 +70,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "electron/icons/icon.png",
@@ -87,7 +90,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64", "x64"]
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "category": "public.app-category.music",
@@ -102,7 +108,9 @@
       "artifactName": "HandSynth-${version}-${arch}.${ext}"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "icon": "electron/icons/icon.png",
       "category": "AudioVideo"
     }
