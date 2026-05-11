@@ -459,14 +459,14 @@ export class TerminalImpl {
       }
     })();
 
-    const compact = `${subs}/${lines}/${voices}/${q}/${at}s`;
+    // Named labels — cryptic slashes (`5/60/8/1/19.3s`) were unreadable
+    // mid-play. Format prefers space-separated `S5 L60 V8 Q1 19.3s` so
+    // the user can scan each metric without having to remember the slash
+    // order. Header DIAG cell stays pinned at the top of the Terminal HUD;
+    // the body line was removed because it added noise to the scrolling
+    // log (the user complained "DIAG scorre veloce, non riesco a vederlo").
+    const compact = `S${subs} L${lines} V${voices} Q${q} ${at}s`;
     this.statusEls.diag.textContent = compact;
-    // Also drop one line into the body so the user has scrollable history.
-    // Format: `[diag] subs=12 lines=58 voices=8 notes-q=4 audio-time=143.2s`.
-    this.appendLine(
-      'diag',
-      `[diag] subs=${subs} lines=${lines} voices=${voices} notes-q=${q} audio-time=${at}s`,
-    );
   }
 
   private isTypingTarget(t: EventTarget | null): boolean {

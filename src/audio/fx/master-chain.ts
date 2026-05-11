@@ -62,6 +62,9 @@ export interface MasterChain {
   applyVibe(v: VibePreset): void;
   triggerDrop(active: boolean): void;
   setMute(m: boolean): void;
+  /** Briefly dip the master output to absorb voice-level oscillator swaps
+   *  during a vibe transition. Total ~200 ms round-trip. */
+  dipForTransition(): void;
   dispose(): void;
 }
 
@@ -237,6 +240,9 @@ export async function createMasterChain(): Promise<MasterChain> {
       filterCutoff: DEFAULTS.filterCutoff,
     },
     dropActive: false,
+    /** Tracks the user's intended mute state so dipForTransition restores
+     *  to the correct target (0 if muted, 1 otherwise). */
+    muted: false,
   };
 
   // -- Helpers --------------------------------------------------------------
@@ -357,7 +363,31 @@ export async function createMasterChain(): Promise<MasterChain> {
       }
     },
     setMute(m: boolean): void {
+      state.muted = m;
       masterGain.gain.rampTo(m ? 0 : 1, MUTE_FADE_S);
+    },
+    dipForTransition(): void {
+      // GLITCH FIX (audio audit): vibe switch was causing audible clicks
+      // because applyVibeNow synchronously fires loadVibe on 4 voice
+      // engines, each potentially recreating their OmniOscillator on type
+      // swap. The applyVoiceShape 50 ms fade gate only protects factory
+      // preset clicks (which go through applyVoiceShape); raw loadVibe
+      // doesn't. So we dip the master output instead, absorbing every
+      // voice-level click in one go. ~200 ms round-trip: 60 ms down →
+      // 50 ms held at 0 (cascade runs during) → 90 ms back up. If the
+      // user is muted, restore to 0 instead of 1.
+      const target = state.muted ? 0 : 1;
+      const t0 = Tone.now();
+      try {
+        masterGain.gain.cancelScheduledValues(t0);
+        masterGain.gain.linearRampToValueAtTime(0, t0 + 0.06);
+        masterGain.gain.setValueAtTime(0, t0 + 0.11);
+        masterGain.gain.linearRampToValueAtTime(target, t0 + 0.2);
+      } catch (e) {
+        // Defensive: if the scheduling fails for any reason we don't
+        // want the vibe switch itself to throw.
+        console.warn('[master-chain] dipForTransition failed', e);
+      }
     },
     dispose(): void {
       try {

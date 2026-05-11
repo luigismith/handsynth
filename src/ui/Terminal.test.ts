@@ -265,22 +265,25 @@ describe('TerminalImpl', () => {
     expect(labelEl?.textContent).toBe('DIAG');
     const valueEl = diagRow.querySelector('span:last-child') as HTMLElement;
     expect(valueEl).not.toBeNull();
-    // The format is `subs/lines/voices/q/at`. We don't pin exact values
-    // (Tone may not be initialised in tests) — just that something
-    // slash-separated landed there, not the placeholder dash.
+    // The format is `S<subs> L<lines> V<voices> Q<q> <at>s` — named-label
+    // form (cryptic slash-separated was unreadable mid-play per user
+    // feedback). We don't pin exact values (Tone may not be initialised
+    // in tests) — just that the named-label form landed, not the
+    // placeholder dash.
     expect(valueEl.textContent ?? '').not.toBe('—');
-    expect((valueEl.textContent ?? '')).toContain('/');
+    expect((valueEl.textContent ?? '')).toMatch(/^S\d+ L\d+ V/);
     term.unmount();
   });
 
-  it('writes a [diag] line into the body on each refresh', () => {
-    // refreshDiag also drops a body line so the user has scroll-back
-    // history. After mount() (which runs refreshDiag once) at least one
-    // line with data-kind="diag" should exist.
+  it('does NOT spam the body with [diag] lines (user complaint: scrolls too fast)', () => {
+    // Was: refreshDiag wrote one [diag] line per 5 s into the scrolling
+    // body, but the user reported "scorre veloce, non riesco a vederlo".
+    // The header DIAG cell is enough — we deliberately drop the body
+    // emit to keep the log clean.
     const term = new TerminalImpl();
     term.mount(parent, makeDeps());
     const diagLines = parent.querySelectorAll('.hs-term-line[data-kind="diag"]');
-    expect(diagLines.length).toBeGreaterThanOrEqual(1);
+    expect(diagLines.length).toBe(0);
     term.unmount();
   });
 });

@@ -221,6 +221,12 @@ export class AudioEngineImpl implements AudioEngine {
     if (!this.master || !this.pad || !this.lead || !this.bass || !this.perc) {
       return;
     }
+    // GLITCH FIX (audio audit): vibe switch was clicking because the
+    // cascade of voice loadVibe() calls below each potentially recreates
+    // their OmniOscillator on type swap. Dip the master output for ~200 ms
+    // around the cascade so the user hears one smooth transition instead
+    // of N voice-level clicks.
+    this.master.dipForTransition();
     this.master.applyVibe(vibe);
     this.pad.loadVibe(vibe);
     this.lead.loadVibe(vibe);
