@@ -4,6 +4,16 @@
 // ±7 cents for chorus-like width, fed through a 24dB low-pass with a slow
 // LFO modulating the cutoff for a "breathing" feel.
 //
+// As of the intelligent-voicing pass, the pad runs TWO complete A/B stacks —
+// each a pair of detuned PolySynths — and mixes them through a Tone.CrossFade.
+// The A side (layerA + layerB, the historical names) carries whatever waveform
+// the vibe / VoiceShape sets; the B side (layerC + layerD) is a hard-coded
+// `sine` morph destination — the clean, harmonic counterpart. The `timbre`
+// knob (0..1) controls the crossfade: 0 = pure A, 1 = pure B, 0.5 = balanced
+// equal-power mix. Continuous, never abrupt — the analog-synth "WAVE" feel.
+// When `timbre` isn't set the CrossFade default of 0 leaves the pad sounding
+// exactly as before this refactor.
+//
 // Sound-design notes:
 //   * Layering two detuned Tone.PolySynth instances creates lush stereo width
 //     without needing a separate chorus stage. Each layer uses the vibe's
@@ -32,6 +42,9 @@ const FILTER_Q = 1;
 // "supersaw" feel without hard beating.
 const DETUNE_CENTS = 7;
 
+/** The hard-coded "morph destination" waveform for the B side of the crossfade. */
+const PAD_MORPH_DESTINATION = 'sine';
+
 /**
  * The OmniOscillator type union accepted by Tone.Synth/PolySynth. Tone exports
  * `ToneOscillatorType` (sine/square/...) but NOT the wider OmniOscillatorType
@@ -53,8 +66,15 @@ function setOscType(
 }
 
 export class PadEngine {
+  // A side — owns the "current" waveform set by vibe / VoiceShape.
   private layerA: Tone.PolySynth;
   private layerB: Tone.PolySynth;
+  // B side of the crossfade — hard-coded sine morph destination.
+  private layerC: Tone.PolySynth;
+  private layerD: Tone.PolySynth;
+  private aBus: Tone.Gain;
+  private bBus: Tone.Gain;
+  private xfade: Tone.CrossFade;
   private filter: Tone.Filter;
   private lfo: Tone.LFO;
   private out: Tone.Gain;
@@ -71,6 +91,14 @@ export class PadEngine {
 
     this.layerA = this.makeLayer('fatsawtooth', +DETUNE_CENTS);
     this.layerB = this.makeLayer('fatsawtooth', -DETUNE_CENTS);
+    this.layerC = this.makeLayer(PAD_MORPH_DESTINATION, +DETUNE_CENTS);
+    this.layerD = this.makeLayer(PAD_MORPH_DESTINATION, -DETUNE_CENTS);
+
+    // Per-side bus so each layer pair can be addressed as a single signal at
+    // the CrossFade input. Two PolySynths → Gain → CrossFade.a (or .b).
+    this.aBus = new Tone.Gain(1);
+    this.bBus = new Tone.Gain(1);
+    this.xfade = new Tone.CrossFade(0); // default: 100% A (legacy behavior)
 
     this.lfo = new Tone.LFO({
       frequency: LFO_RATE,
@@ -83,8 +111,13 @@ export class PadEngine {
     // filter.frequency Param.)
     this.lfo.connect(this.filter.frequency);
 
-    this.layerA.connect(this.filter);
-    this.layerB.connect(this.filter);
+    this.layerA.connect(this.aBus);
+    this.layerB.connect(this.aBus);
+    this.layerC.connect(this.bBus);
+    this.layerD.connect(this.bBus);
+    this.aBus.connect(this.xfade.a);
+    this.bBus.connect(this.xfade.b);
+    this.xfade.connect(this.filter);
     this.filter.connect(this.out);
     // Tone.connect accepts both ToneAudioNode and raw AudioNode destinations.
     Tone.connect(this.out, destination);
@@ -114,6 +147,7 @@ export class PadEngine {
     const w = this.normalizeWaveform(vibe.pad.waveform);
     setOscType(this.layerA, w);
     setOscType(this.layerB, w);
+    // B-side morph destination stays on `sine` — vibe never overrides it.
 
     // Per-vibe LFO rate (use the preset value, but clamp to a sensible band).
     const rate = Math.max(0.05, Math.min(1.0, vibe.pad.lfoRate * 0.6));
@@ -123,6 +157,8 @@ export class PadEngine {
     const cents = Math.max(2, Math.min(24, vibe.pad.detuneCents)) / 2;
     this.layerA.set({ detune: +cents });
     this.layerB.set({ detune: -cents });
+    this.layerC.set({ detune: +cents });
+    this.layerD.set({ detune: -cents });
   }
 
   /**
@@ -133,6 +169,9 @@ export class PadEngine {
    *
    * `detuneCents` is the TOTAL spread (both layers combined); the engine
    * splits it ±half. Clamped to [2..40] to avoid pathological detune.
+   *
+   * `timbre` is the continuous A/B crossfade morph; it ramps smoothly so it
+   * does NOT need the 30 ms fade gate (the crossfade IS the fade).
    */
   applyVoiceShape(shape: VoiceShape['pad'] | undefined): void {
     if (!shape) return;
@@ -157,16 +196,25 @@ export class PadEngine {
       const c = Math.max(2, Math.min(40, shape.detuneCents)) / 2;
       this.layerA.set({ detune: +c });
       this.layerB.set({ detune: -c });
+      this.layerC.set({ detune: +c });
+      this.layerD.set({ detune: -c });
     }
     if (typeof shape.attack === 'number') {
       const a = Math.max(0.001, Math.min(6, shape.attack));
       this.layerA.set({ envelope: { attack: a } });
       this.layerB.set({ envelope: { attack: a } });
+      this.layerC.set({ envelope: { attack: a } });
+      this.layerD.set({ envelope: { attack: a } });
     }
     if (typeof shape.release === 'number') {
       const r = Math.max(0.05, Math.min(10, shape.release));
       this.layerA.set({ envelope: { release: r } });
       this.layerB.set({ envelope: { release: r } });
+      this.layerC.set({ envelope: { release: r } });
+      this.layerD.set({ envelope: { release: r } });
+    }
+    if (typeof shape.timbre === 'number') {
+      this.setTimbre(shape.timbre);
     }
     if (willSwapType) {
       // Fade back up to nominal pad level (0.7) after a brief silence.
@@ -175,9 +223,25 @@ export class PadEngine {
   }
 
   /**
+   * Set the A↔B crossfade morph (0..1). 0 = 100% A (the vibe/preset
+   * waveform); 1 = 100% B (sine destination). Tone.CrossFade uses
+   * equal-power curves so 0.5 = balanced mix. Smoothed over 80 ms so the
+   * morph is audible-as-motion, not a click.
+   */
+  setTimbre(value: number): void {
+    const v = Math.max(0, Math.min(1, value));
+    this.xfade.fade.rampTo(v, 0.08);
+  }
+
+  /**
    * Trigger a chord. The caller passes voicing-aware notes (the MusicBrain
    * is responsible for choosing voicings; the pad just plays whatever it's
    * given). `time` is optional — defaults to "now".
+   *
+   * Both A and B stacks always fire — the CrossFade controls audibility. We
+   * deliberately do NOT gate B's triggers when timbre==0, because a future
+   * morph mid-note must crossfade into already-sounding audio rather than
+   * swelling in from silence.
    */
   triggerChord(event: ChordEvent): void {
     const t = event.time ?? Tone.now();
@@ -186,6 +250,8 @@ export class PadEngine {
     // the doubled hits feel less stiff).
     this.layerA.triggerAttackRelease(event.notes, event.duration, t, 0.65);
     this.layerB.triggerAttackRelease(event.notes, event.duration, t, 0.55);
+    this.layerC.triggerAttackRelease(event.notes, event.duration, t, 0.65);
+    this.layerD.triggerAttackRelease(event.notes, event.duration, t, 0.55);
   }
 
   private normalizeWaveform(w: string): OscTypeStr {
@@ -201,6 +267,7 @@ export class PadEngine {
       'square',
       'sawtooth',
       'triangle',
+      'pulse',
       'fatsawtooth',
       'fatsquare',
       'fatsine',
@@ -224,6 +291,11 @@ export class PadEngine {
       this.lfo.dispose();
       this.layerA.dispose();
       this.layerB.dispose();
+      this.layerC.dispose();
+      this.layerD.dispose();
+      this.aBus.dispose();
+      this.bBus.dispose();
+      this.xfade.dispose();
       this.filter.dispose();
       this.out.dispose();
     } catch (e) {

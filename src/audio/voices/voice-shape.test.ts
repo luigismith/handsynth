@@ -111,6 +111,25 @@ vi.mock('tone', () => {
     connect(_: unknown): void {}
     dispose(): void {}
   }
+  // Tone.CrossFade — two Gain inputs `a`/`b`, equal-power mix controlled by
+  // the `fade` Signal. We expose only the surface the engines touch: `a`,
+  // `b` (connectable nodes), `fade.rampTo` for setTimbre, `connect()` for
+  // wiring into the FX chain, `dispose()` for teardown.
+  class CrossFade {
+    public a = { connect(_: unknown): void {} };
+    public b = { connect(_: unknown): void {} };
+    public fade = {
+      _value: 0,
+      rampToCalls: [] as Array<{ value: number; time?: number }>,
+      rampTo(value: number, time?: number): void {
+        this._value = value;
+        this.rampToCalls.push({ value, time });
+      },
+    };
+    constructor(_fade?: number) {}
+    connect(_: unknown): void {}
+    dispose(): void {}
+  }
   function connect(_a: unknown, _b: unknown): void {}
   function now(): number {
     return 0;
@@ -128,6 +147,7 @@ vi.mock('tone', () => {
     LFO,
     Gain,
     Vibrato,
+    CrossFade,
     connect,
     now,
     Frequency,
@@ -349,11 +369,56 @@ describe('factory-presets uniqueness', () => {
 // Make `VoiceShape` reference resolve so importing it in the test contributes
 // to coverage of the module surface.
 const _shapeProbe: VoiceShape = {
-  pad: { waveform: 'sine', detuneCents: 4, attack: 0.1, release: 1 },
-  lead: { oscType: 'sine', modIndex: 0, harmonicity: 1, attack: 0.01, release: 0.5 },
-  bass: { waveform: 'sine', subLevel: 0.5 },
+  pad: { waveform: 'sine', detuneCents: 4, attack: 0.1, release: 1, timbre: 0.5 },
+  lead: { oscType: 'sine', modIndex: 0, harmonicity: 1, attack: 0.01, release: 0.5, timbre: 0.5 },
+  bass: { waveform: 'sine', subLevel: 0.5, timbre: 0.5 },
 };
 void _shapeProbe;
+
+// ---------------------------------------------------------------------------
+// Timbre crossfade — VoiceShape.{pad,lead,bass}.timbre must ramp the
+// underlying CrossFade.fade signal.
+// ---------------------------------------------------------------------------
+
+interface XfadeSpy {
+  fade: { _value: number; rampToCalls: Array<{ value: number; time?: number }> };
+}
+
+describe('applyVoiceShape timbre crossfade', () => {
+  it('PadEngine.applyVoiceShape({timbre}) ramps the xfade fade signal', () => {
+    const pad = new PadEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const x = (pad as any).xfade as XfadeSpy;
+    pad.applyVoiceShape({ timbre: 0.8 });
+    expect(x.fade._value).toBeCloseTo(0.8, 6);
+  });
+
+  it('LeadEngine.applyVoiceShape({timbre}) ramps the xfade fade signal', () => {
+    const lead = new LeadEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const x = (lead as any).xfade as XfadeSpy;
+    lead.applyVoiceShape({ timbre: 0.3 });
+    expect(x.fade._value).toBeCloseTo(0.3, 6);
+  });
+
+  it('BassEngine.applyVoiceShape({timbre}) ramps the xfade fade signal', () => {
+    const bass = new BassEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const x = (bass as any).xfade as XfadeSpy;
+    bass.applyVoiceShape({ timbre: 0.2 });
+    expect(x.fade._value).toBeCloseTo(0.2, 6);
+  });
+
+  it('setTimbre clamps out-of-range values to [0..1]', () => {
+    const pad = new PadEngine({} as never);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const x = (pad as any).xfade as XfadeSpy;
+    pad.setTimbre(-1);
+    expect(x.fade._value).toBe(0);
+    pad.setTimbre(2);
+    expect(x.fade._value).toBe(1);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Click-suppression — applyVoiceShape must fade the engine output to 0

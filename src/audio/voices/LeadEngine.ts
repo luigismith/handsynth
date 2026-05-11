@@ -3,11 +3,17 @@
 // Lead voice — singing, vocal-flavored melodic line.
 //
 // Architecture:
-//   * Tone.MonoSynth (with FM oscillator when the vibe asks for FM, otherwise
-//     a triangle/sawtooth). This gives us portamento + a built-in filter +
-//     filter envelope for snappy phrasing.
-//   * 12dB band-pass filter @ Q=4 sits AFTER the synth — adds a nasal-but-
-//     focused character that helps the lead sit above the pad without
+//   * Two Tone.MonoSynths run side-by-side through a Tone.CrossFade. `mono`
+//     (the A side) carries the vibe/VoiceShape oscillator — typically
+//     `fmsawtooth`, `sawtooth`, or `fmsine`. `monoB` (the B side) is a
+//     hard-coded `pulse` morph destination — a resonant, hollow tone that
+//     contrasts the A side's harmonic richness. The `timbre` knob (0..1)
+//     drives the crossfade: 0 = pure A, 1 = pure B, 0.5 = balanced mix.
+//     Both MonoSynths receive every trigger so morphing mid-phrase
+//     crossfades into already-sounding audio rather than starting from
+//     silence.
+//   * 12dB band-pass filter @ Q=4 sits AFTER the crossfade — adds a nasal-
+//     but-focused character that helps the lead sit above the pad without
 //     stepping on the bass.
 //   * Vibrato @ 5.5Hz / 8 cents — Tone.Vibrato uses an internal LFO modulating
 //     the delay time, which is what real instruments do.
@@ -30,8 +36,13 @@ const VIBRATO_DEPTH = 0.06; // 0..1; ~6% ≈ 8 cents on Tone.Vibrato
 const FILTER_Q = 4;
 const FILTER_FREQ = 1800;
 
+/** The hard-coded "morph destination" oscillator for the B side of the crossfade. */
+const LEAD_MORPH_DESTINATION = 'pulse';
+
 export class LeadEngine {
   private mono: Tone.MonoSynth;
+  private monoB: Tone.MonoSynth;
+  private xfade: Tone.CrossFade;
   private bp: Tone.Filter;
   private vibrato: Tone.Vibrato;
   private out: Tone.Gain;
@@ -42,11 +53,39 @@ export class LeadEngine {
   constructor(destination: Tone.ToneAudioNode | AudioNode) {
     this.out = new Tone.Gain(0.85);
 
-    this.mono = new Tone.MonoSynth({
+    this.mono = this.makeMono('fmsawtooth');
+    this.monoB = this.makeMono(LEAD_MORPH_DESTINATION);
+
+    this.xfade = new Tone.CrossFade(0); // default: 100% A (legacy behavior)
+
+    this.bp = new Tone.Filter({
+      type: 'bandpass',
+      frequency: FILTER_FREQ,
+      Q: FILTER_Q,
+      rolloff: -12,
+    });
+
+    this.vibrato = new Tone.Vibrato({
+      frequency: VIBRATO_HZ,
+      depth: VIBRATO_DEPTH,
+    });
+
+    this.mono.connect(this.xfade.a);
+    this.monoB.connect(this.xfade.b);
+    this.xfade.connect(this.vibrato);
+    this.vibrato.connect(this.bp);
+    this.bp.connect(this.out);
+
+    // Tone.connect accepts both ToneAudioNode and raw AudioNode destinations.
+    Tone.connect(this.out, destination);
+  }
+
+  private makeMono(oscType: string): Tone.MonoSynth {
+    return new Tone.MonoSynth({
       // OmniOscillator accepts richer types ('fmsawtooth', 'fatsine', etc.)
       // than `ToneOscillatorType`, but the field type isn't exported.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      oscillator: { type: 'fmsawtooth' } as any,
+      oscillator: { type: oscType } as any,
       envelope: {
         attack: 0.02,
         decay: 0.3,
@@ -69,25 +108,6 @@ export class LeadEngine {
       portamento: PORTAMENTO,
       volume: -8,
     });
-
-    this.bp = new Tone.Filter({
-      type: 'bandpass',
-      frequency: FILTER_FREQ,
-      Q: FILTER_Q,
-      rolloff: -12,
-    });
-
-    this.vibrato = new Tone.Vibrato({
-      frequency: VIBRATO_HZ,
-      depth: VIBRATO_DEPTH,
-    });
-
-    this.mono.connect(this.vibrato);
-    this.vibrato.connect(this.bp);
-    this.bp.connect(this.out);
-
-    // Tone.connect accepts both ToneAudioNode and raw AudioNode destinations.
-    Tone.connect(this.out, destination);
   }
 
   loadVibe(vibe: VibePreset): void {
@@ -107,6 +127,7 @@ export class LeadEngine {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.mono.set({ oscillator: { type: oscType as any } });
+    // B-side stays on the morph destination — vibe never overrides it.
 
     // Mod-index / harmonicity live on the OmniOscillator's FM variants. We
     // pass them as part of an `oscillator` patch — the `set()` machinery
@@ -136,7 +157,9 @@ export class LeadEngine {
     }
   }
 
-  /** Trigger a single melodic note. */
+  /** Trigger a single melodic note. Both A and B MonoSynths fire so the
+   * crossfade always has live audio on either side; the CrossFade.fade
+   * controls audibility. */
   trigger(
     note: string,
     duration: string,
@@ -146,6 +169,7 @@ export class LeadEngine {
     const v = Math.max(0.01, Math.min(1, velocity));
     const t = time ?? Tone.now();
     this.mono.triggerAttackRelease(note, duration, t, v);
+    this.monoB.triggerAttackRelease(note, duration, t, v);
   }
 
   /** Convenience — accept a NoteEvent. */
@@ -175,6 +199,12 @@ export class LeadEngine {
         octaves: oct,
       },
     });
+    this.monoB.set({
+      filterEnvelope: {
+        baseFrequency: baseFreq,
+        octaves: oct,
+      },
+    });
     // Also scale band-pass cutoff for a subtle "open up" feel.
     this.bp.frequency.rampTo(1200 + this.brightness * 2400, 0.05);
   }
@@ -190,6 +220,9 @@ export class LeadEngine {
    * Only the fields explicitly set on `shape` are applied. modIndex /
    * harmonicity flow through OmniOscillator's set() for FM/AM types and are
    * silently ignored on plain types — no need to gate by oscType here.
+   *
+   * `timbre` morphs the crossfade A↔B continuously; it does NOT need the
+   * 30 ms fade gate because the crossfade itself is the fade.
    */
   applyVoiceShape(shape: VoiceShape['lead'] | undefined): void {
     if (!shape) return;
@@ -222,10 +255,15 @@ export class LeadEngine {
     if (typeof shape.attack === 'number') {
       const a = Math.max(0.001, Math.min(4, shape.attack));
       this.mono.set({ envelope: { attack: a } });
+      this.monoB.set({ envelope: { attack: a } });
     }
     if (typeof shape.release === 'number') {
       const r = Math.max(0.05, Math.min(6, shape.release));
       this.mono.set({ envelope: { release: r } });
+      this.monoB.set({ envelope: { release: r } });
+    }
+    if (typeof shape.timbre === 'number') {
+      this.setTimbre(shape.timbre);
     }
     if (willSwapType) {
       // Restore nominal lead level (0.85, matching the constructor default).
@@ -233,9 +271,20 @@ export class LeadEngine {
     }
   }
 
+  /**
+   * Set the A↔B crossfade morph (0..1). 0 = 100% A (vibe/preset
+   * oscillator); 1 = 100% B (pulse destination). Smoothed over 80 ms.
+   */
+  setTimbre(value: number): void {
+    const v = Math.max(0, Math.min(1, value));
+    this.xfade.fade.rampTo(v, 0.08);
+  }
+
   dispose(): void {
     try {
       this.mono.dispose();
+      this.monoB.dispose();
+      this.xfade.dispose();
       this.bp.dispose();
       this.vibrato.dispose();
       this.out.dispose();

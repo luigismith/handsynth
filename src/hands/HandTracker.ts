@@ -31,6 +31,7 @@ import {
   computePalmPitch,
   computePalmRoll,
   computePinch,
+  fingerCurls,
   isFist,
 } from './gestures';
 import { classifyHandShape } from './gesture-classifier';
@@ -85,9 +86,31 @@ interface SmoothingSlot {
   rollF: OneEuroFilter;
   /** Filter for palm pitch (radians). */
   pitchF: OneEuroFilter;
+  /**
+   * Per-finger curl filters (thumb, index, middle, ring, pinky). Each finger
+   * is its own continuous control surface in the audio mapper — see
+   * `InteractionMapper.applyPerFingerMappings`. beta=0.08 is intentionally
+   * DOUBLE the scalar landmark beta (0.04); a per-finger signal carries less
+   * inherent jitter than a 3D landmark (it's a single scalar derived from
+   * three landmarks via a smooth distance ratio) so we can afford a snappier
+   * adaptive cutoff. The trade-off: marginally more reactive jitter at rest,
+   * but the user reported wanting "smaller deliberate finger motions to
+   * produce audible audio change" — beta=0.08 gets them that.
+   */
+  fingerThumbF: OneEuroFilter;
+  fingerIndexF: OneEuroFilter;
+  fingerMiddleF: OneEuroFilter;
+  fingerRingF: OneEuroFilter;
+  fingerPinkyF: OneEuroFilter;
   /** Last time (ms) this slot was updated — used to detect re-entry gaps. */
   lastSeenMs: number;
 }
+
+/**
+ * One-Euro beta used for per-finger curl smoothing. DOUBLE the scalar
+ * filter beta (0.04) — see `SmoothingSlot.fingerThumbF` for rationale.
+ */
+const FINGER_CURL_BETA = 0.08;
 
 function makeSlot(): SmoothingSlot {
   const landmarks: OneEuroVec3[] = [];
@@ -107,6 +130,11 @@ function makeSlot(): SmoothingSlot {
     depthF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
     rollF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
     pitchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
+    fingerThumbF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
+    fingerIndexF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
+    fingerMiddleF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
+    fingerRingF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
+    fingerPinkyF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
     lastSeenMs: 0,
   };
 }
@@ -118,6 +146,11 @@ function resetSlot(slot: SmoothingSlot): void {
   slot.depthF.reset();
   slot.rollF.reset();
   slot.pitchF.reset();
+  slot.fingerThumbF.reset();
+  slot.fingerIndexF.reset();
+  slot.fingerMiddleF.reset();
+  slot.fingerRingF.reset();
+  slot.fingerPinkyF.reset();
 }
 
 function makeHandsDistanceFilter(): OneEuroFilter {
@@ -578,6 +611,20 @@ export class HandTrackerImpl implements HandTracker {
       // The classifier is pure and runs in O(landmarks) — cheap relative to
       // the MediaPipe inference.
       hand.shape = classifyHandShape(smoothed);
+
+      // Per-finger curl with a dedicated One-Euro per finger. Five filters
+      // per hand so each finger acts as an independent control surface in
+      // the audio mapping layer (filter cutoff, drive, reverb wet…). beta
+      // is doubled vs the scalar baseline to give the user more sensitivity
+      // — small deliberate flexions move the audio meaningfully.
+      const rawCurls = fingerCurls(smoothed);
+      hand.fingers = {
+        thumb: clamp01(slot.fingerThumbF.filter(rawCurls.thumb, tSec)),
+        index: clamp01(slot.fingerIndexF.filter(rawCurls.index, tSec)),
+        middle: clamp01(slot.fingerMiddleF.filter(rawCurls.middle, tSec)),
+        ring: clamp01(slot.fingerRingF.filter(rawCurls.ring, tSec)),
+        pinky: clamp01(slot.fingerPinkyF.filter(rawCurls.pinky, tSec)),
+      };
 
       slot.lastSeenMs = nowMs;
       out.push(hand);

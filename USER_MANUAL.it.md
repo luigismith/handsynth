@@ -2,11 +2,17 @@
 
 ## Benvenuto
 
-HandSynth è un sintetizzatore gestuale che si suona con il corpo. Muovi le mani,
-gira la testa, apri la bocca, sorridi, aggrotta le ciglia: ogni movimento entra
-a far parte del suono. Non ci sono tasti da imparare, né scale da memorizzare.
-Il cervello musicale dentro l'app rimane sempre nella tonalità attiva, quindi è
-genuinamente impossibile suonare una nota sbagliata. Il tuo lavoro è sentire.
+HandSynth è un **sintetizzatore gestuale per live performance** che si suona
+con il corpo. Muovi le mani, gira la testa, apri la bocca, sorridi, aggrotta
+le ciglia, punta, swipa: ogni movimento entra a far parte del suono. Non ci
+sono tasti da imparare, né scale da memorizzare. Il cervello musicale dentro
+l'app rimane sempre nella tonalità attiva, quindi è genuinamente impossibile
+suonare una nota sbagliata. Il tuo lavoro è sentire.
+
+Pensato per il palco: un laptop, una webcam, e le tue mani. Output dalle casse
+del laptop, da un'interfaccia USB audio, o instradato via BlackHole dentro un
+DAW per mix e registrazione. La guida di installazione per macOS — Gatekeeper,
+routing audio, e tips per il palco — è in [`INSTALL.it.md`](./INSTALL.it.md).
 
 L'estetica è cyberpunk per scelta. Arancione su antracite, scheletri low-poly,
 una scia di scanline sottile sopra i pannelli. Questo manuale percorre ogni
@@ -69,6 +75,53 @@ mappature base.
 Il "roll" è quando ruoti il polso intorno all'asse dell'avambraccio: palmo in
 giù — palmo in su. Il "pitch" è inclinare il palmo avanti e indietro, dita
 verso e dalla camera.
+
+## Controlli per singolo dito
+
+HandSynth legge ogni dito in modo indipendente. Oltre all'"apertura"
+aggregata di una mano intera, ogni singolo dito emette uno scalare di curl
+continuo 0..1 (0 = completamente esteso, 1 = completamente piegato) che
+guida la propria dimensione audio.
+
+Il livello per-dito è **additivo sopra la mappatura aggregata di apertura**
+con un peso del 35%: una mano completamente estesa suona come prima, ma
+piegare un singolo dito produce un cambio audibile su una dimensione
+specifica. La sensibilità è tarata alta (One-Euro `beta=0.08`, il doppio
+dello smoothing scalare standard) così piccoli movimenti deliberati si
+registrano.
+
+### Mano destra — la mano FX
+
+| Dito | Effetto audio | Range (esteso → piegato) |
+|---|---|---|
+| Pollice | Feedback delay | 0,7 ripetizioni bagnate → 0,1 secco |
+| Indice | Cutoff filtro (log) | 14 kHz brillante → 600 Hz scuro |
+| Medio | Riverbero wet | 0,85 hall → 0,05 asciutto |
+| Anulare | Offset luminosità | +0,15 → −0,15 (additivo) |
+| Mignolo | Delay wet | 0,6 → 0,05 |
+
+### Mano sinistra — la mano drive
+
+| Dito | Effetto audio | Range (esteso → piegato) |
+|---|---|---|
+| Pollice | Drive saturatore | 2,6 grit → 0,8 pulito |
+| Indice | Q risonanza filtro | 12 → 1,5 |
+| Medio | Riverbero wet (livello extra) | 0,7 → 0,05 |
+| Anulare | Offset volume master | +0,10 più forte → −0,10 più piano |
+| Mignolo | Profondità tremolo (LFO luminosità 5 Hz) | 0 → 1 |
+
+**Nota di calibrazione.** Il curl per-dito usa la geometria del dito
+(rapporto tra distanze tip-PIP-MCP) anziché la posizione assoluta, perciò
+funziona indipendentemente dalla dimensione della mano o dalla distanza
+dalla camera. Se un dito non sembra registrare, esagera il movimento
+piegandolo oltre l'articolazione PIP, poi estendilo completamente — la
+calibrazione vede tutto il range.
+
+**Nota sui livelli.** Poiché ogni dito mappa a un parametro unico, puoi
+"suonare" l'audio come uno strumento. Prova: tieni la mano destra
+prevalentemente aperta, poi piega solo il medio — sentirai il riverbero
+cadere mentre tutto il resto resta fermo. Oppure piega il mignolo sinistro
+per aggiungere un wobble di tremolo costante.
 
 ## Controlli del viso
 
@@ -185,6 +238,45 @@ rimuoverla.
 
 Il pulsante **Ripristina vibe** riporta ogni manopola ai default del vibe
 attivo senza perdere le patch salvate.
+
+### Sezione Voce — manopole WAVE in stile analogico
+
+Sotto le manopole FX principali c'è una sezione **Voce** con tre piccole
+manopole:
+
+- **Pad Wave** — crossfade fra l'oscillatore del pad (impostato dal vibe o
+  dal preset, es. `fatsawtooth`) e una sinusoide pulita.
+- **Lead Wave** — crossfade fra l'oscillatore del lead (tipicamente
+  `fmsawtooth` o `fmsine`) e un pulse cavo.
+- **Bass Wave** — crossfade fra l'oscillatore del basso (es. `fatsquare`)
+  e una triangola calda.
+
+Ogni manopola è continua (0..1, default 0.5 = mix bilanciato) e usa un
+crossfade a potenza costante, così la transizione è fluida — il feeling
+della manopola "WAVE" analogica, mai brusco. Entrambi gli stack di
+oscillatori suonano sempre; il crossfade controlla solo l'udibilità,
+così il morph a metà nota scivola tra i due timbri invece di stacchettare.
+
+### Pill SMART — router di voicing intelligente
+
+A destra dell'intestazione della sezione **Voce** c'è una piccola pill
+**SMART**, **ON di default**. Quando è attiva, HandSynth sposta il
+`timbre` di ogni voce verso una destinazione musicalmente sensata in
+base allo stato degli FX:
+
+| Condizione | Spostamento | Motivo |
+|---|---|---|
+| Cutoff filtro < 800 Hz | pad → +0.15 verso sinusoide; basso → -0.15 (mantiene armoniche) | filtro scuro vuole un pad pulito e un basso presente |
+| Cutoff filtro > 10 kHz | lead → -0.15 (verso oscillatore ricco di armoniche) | filtro brillante ha bisogno di armoniche |
+| Drive > 2.0 | tutte le voci → -0.15 (verso lato A) | il saturatore vuole armoniche su cui mordere |
+| Drive < 1.0 | tutte le voci → +0.15 (verso sinusoide/pulse/triangola) | drive pulito vuole un tono morbido |
+| Q filtro > 8 | lead → +0.15 (verso pulse) | Q risonante + pulse = honk vocale |
+| Riverbero > 0.7 | pad → +0.15 (verso sinusoide) | la sinusoide si lava bene nel riverbero |
+
+Ogni regola contribuisce al massimo ±0.15 e il totale per ogni voce è
+clampato a ±0.15 — il router è una spinta sottile, **mai un override**.
+La tua manopola resta il segnale dominante. Clicca la pill SMART per
+disattivare il router e sentire solo il timbro impostato a mano.
 
 ## Tonalità & scala
 

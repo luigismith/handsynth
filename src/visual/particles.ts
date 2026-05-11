@@ -54,6 +54,13 @@ export interface ParticleField {
   /** Toggle reduced-motion. Must be cheap; called rarely. */
   setReducedMotion(reduced: boolean): void;
   /**
+   * Set the idle "drift" multiplier 0..1. 1 = full speed (default).
+   * 0.3 = slow drift (used when no hands have been detected for >2s).
+   * The visualizer lerps this value over ~800ms when state flips so
+   * particles ease into / out of the resting drift speed.
+   */
+  setIdleDrift(scale: number): void;
+  /**
    * Emit particles from the mouth at (mx, my) screen coords. `intensity` is
    * the mouthOpen value 0..1 — drives both the rate and the average particle
    * size. The visualizer calls this from drawFaceSkeleton each frame; we
@@ -73,15 +80,29 @@ const BASE_SIZE = 4;
 // Cyberpunk palette stops (HSB triples). All particles live in the
 // orange/amber/grey family — no cool tones.
 //   - low band   → ORANGE_DARK (subdued, ember)
-//   - mid band   → ORANGE_GLOW (warm middle)
 //   - high band  → ORANGE_HOT  (peak accent)
 //   - high warm  → AMBER_BEAT  (rare focus accent)
 //   - ambient    → GREY_DIM    (distant data points)
+//   - glow       → ORANGE_GLOW (warm secondary, used in HUE_CYCLE)
+//   - pale       → ORANGE_PALE (rare bright highlight, used in HUE_CYCLE)
 const PALETTE_LOW = { hue: 18, sat: 95, bri: 78 } as const;        // ORANGE_DARK
-const PALETTE_MID = { hue: 28, sat: 75, bri: 100 } as const;       // ORANGE_GLOW
 const PALETTE_HIGH = { hue: 22, sat: 92, bri: 100 } as const;      // ORANGE_HOT
 const PALETTE_HIGH_AMBER = { hue: 35, sat: 75, bri: 100 } as const; // AMBER_BEAT
 const PALETTE_AMBIENT = { hue: 240, sat: 10, bri: 42 } as const;   // GREY_DIM
+const PALETTE_GLOW = { hue: 28, sat: 75, bri: 100 } as const;      // ORANGE_GLOW
+const PALETTE_PALE = { hue: 30, sat: 45, bri: 100 } as const;      // ORANGE_PALE
+// Internal-contrast palette cycle for ambient top-ups. The swarm walks
+// this list so it isn't a flat ORANGE_HOT note — multiple warm tones
+// in close adjacency give the field perceived depth without breaking
+// the cyberpunk read.
+//   PRIMARY (~50%)   → ORANGE_HOT
+//   SECONDARY (~33%) → ORANGE_GLOW
+//   HIGHLIGHT (~17%) → ORANGE_PALE
+const HUE_CYCLE = [
+  PALETTE_HIGH, PALETTE_HIGH, PALETTE_HIGH,
+  PALETTE_GLOW, PALETTE_GLOW,
+  PALETTE_PALE,
+] as const;
 
 // FFT band ranges — analyser is 1024 bins by AudioEngine spec, but we read
 // whatever buffer length we're given. Assume a standard 1024-bin layout.
@@ -149,6 +170,11 @@ export function createParticleField(width: number, height: number): ParticleFiel
   let cw = width;
   let ch = height;
   let reducedMotion = false;
+  // Idle drift multiplier (0..1). Defaults to 1 (full speed). Visualizer
+  // lerps this toward 0.3 when hands have been absent for >2s.
+  let idleDrift = 1;
+  // Rotating cursor so ambient top-ups walk through HUE_CYCLE evenly.
+  let hueCursor = 0;
   seedAmbient(pool, cw, ch, MAX_PARTICLES / 2);
 
   function spawn(
@@ -192,6 +218,12 @@ export function createParticleField(width: number, height: number): ParticleFiel
   return {
     setReducedMotion(reduced: boolean): void {
       reducedMotion = reduced;
+    },
+
+    setIdleDrift(scale: number): void {
+      // Clamp to [0.3, 1] — too slow looks frozen.
+      const s = Math.max(0.3, Math.min(1, scale));
+      idleDrift = s;
     },
 
     emitFromMouth(mx: number, my: number, intensity: number): void {
@@ -291,9 +323,10 @@ export function createParticleField(width: number, height: number): ParticleFiel
         const p = pool[i]!;
         if (!p.alive) continue;
 
-        // Integrate.
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
+        // Integrate. Apply idle drift as a velocity scaling — particles
+        // move slower when the user is away.
+        p.x += p.vx * dt * idleDrift;
+        p.y += p.vy * dt * idleDrift;
         p.vx *= drag;
         p.vy *= drag;
 
@@ -315,20 +348,34 @@ export function createParticleField(width: number, height: number): ParticleFiel
         p.size = p.size * 0.9 + (0.7 + lowPulse * 0.3) * 0.1;
       }
 
-      // Top up to keep ambient density alive (slow trickle). Ambient
-      // particles use the GREY_DIM palette so they read like distant data
-      // points rather than competing with the foreground orange. Spawn at
+      // Top up to keep ambient density alive (slow trickle). Spawn at
       // RANDOM canvas positions (not concentrated near center) so the
       // field feels like a starfield, not an emitter.
+      //
+      // PALETTE: ambient particles now cycle through the warm HUE_CYCLE
+      // (3× ORANGE_HOT : 2× ORANGE_GLOW : 1× ORANGE_PALE) so the swarm has
+      // internal contrast — flat orange-on-orange reads as a single mass,
+      // the cycle gives it depth at swarm scale. The previous GREY_DIM
+      // ambient is reserved for resting/idle distant data points (still
+      // emitted at low probability so the field has both warm + cool
+      // tones, never just one).
       void cx; void cy;
       if (aliveCount < MAX_PARTICLES * 0.4 && Math.random() < 0.2) {
         const sx = Math.random() * cw;
         const sy = Math.random() * ch;
-        // Rare warm-amber accent when high band is loud — the field
-        // sparkles in time with hi-hats / bright synths.
-        const palette = !reducedMotion && high > 0.6 && Math.random() < 0.15
-          ? PALETTE_HIGH_AMBER
-          : PALETTE_AMBIENT;
+        let palette: { hue: number; sat: number; bri: number };
+        if (!reducedMotion && high > 0.6 && Math.random() < 0.15) {
+          // Rare warm-amber accent when high band is loud (hi-hats etc).
+          palette = PALETTE_HIGH_AMBER;
+        } else if (Math.random() < 0.18) {
+          // 18% of ambient top-ups remain grey distant-data-points so the
+          // field doesn't oversaturate.
+          palette = PALETTE_AMBIENT;
+        } else {
+          // Otherwise cycle the warm palette.
+          palette = HUE_CYCLE[hueCursor % HUE_CYCLE.length]!;
+          hueCursor = (hueCursor + 1) % HUE_CYCLE.length;
+        }
         spawn(sx, sy, palette, 1.5, speedScale);
       }
     },
@@ -378,9 +425,16 @@ function seedAmbient(
     p.vx = (Math.random() - 0.5) * 20;
     p.vy = (Math.random() - 0.5) * 20;
     p.size = 0.5 + Math.random() * 0.5;
-    // Ambient seed favors dim grey so the resting-state field reads as
-    // distant data points on a charcoal panel, not as space stars.
-    const palette = PALETTE_AMBIENT;
+    // Seed mixes ~70% warm-orange / 30% dim-grey. The warm tones give the
+    // resting field a glow base; the grey points keep tonal contrast so
+    // the swarm never reads as a single saturated mass.
+    let palette: { hue: number; sat: number; bri: number };
+    const r = Math.random();
+    if (r < 0.18) {
+      palette = PALETTE_AMBIENT;
+    } else {
+      palette = HUE_CYCLE[placed % HUE_CYCLE.length]!;
+    }
     p.hue = palette.hue + (Math.random() - 0.5) * 12;
     p.sat = palette.sat + (Math.random() - 0.5) * 6;
     p.bri = palette.bri + (Math.random() - 0.5) * 10;

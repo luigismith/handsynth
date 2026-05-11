@@ -10,6 +10,12 @@
 // users complained about, so post-fix every non-INIT preset ships a
 // distinct VoiceShape.
 //
+// As of the intelligent-voicing pass, each VoiceShape additionally carries
+// per-voice `timbre` values 0..1 — the user-facing analog "WAVE" knob — so
+// each preset has a sensible spot on the A↔B crossfade by default. The
+// smart router then layers ±0.15 contextual nudges on top (see
+// `src/audio/smart-voicing.ts`).
+//
 // These are NOT user-savable; user patches live in `patches.ts` and a
 // separate localStorage key. Factory presets ship in code so they can evolve
 // with the synth and never go stale. They are applied as one-shots: clicking
@@ -27,6 +33,8 @@
 //   masterDuck       0 (presets shouldn't duck)
 //   bpm              optional — only set when tempo is part of the identity
 //   voice            optional VoiceShape — see `src/audio/voice-shape.ts`
+//   voice.{pad,lead,bass}.timbre  0..1 — crossfade A (oscillator) ↔ B
+//                                      (sine / pulse / triangle morph dest)
 
 import type { AudioEngineParams } from '@contracts/contracts';
 import type { VoiceShape } from '@audio/voice-shape';
@@ -74,6 +82,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // off the harsh top end. Drive is dialed back so the pad stays glassy.
   // Voice: huge supersaw pad with very long attack/release, sine-FM lead
   // for that glassy Tycho top, fatsquare bass with a moderate sub.
+  // Timbres lean toward B for pad/lead (sine/pulse glass) and stay near A
+  // for bass (we want the square punch as the harmonic counterpart to all
+  // that reverb wash).
   {
     id: 'lush',
     name: 'LUSH',
@@ -89,9 +100,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       masterDuck: 0,
     },
     voice: {
-      pad: { waveform: 'fatsawtooth', detuneCents: 24, attack: 1.5, release: 4 },
-      lead: { oscType: 'fmsine', modIndex: 1.5, harmonicity: 1, attack: 0.05, release: 1.2 },
-      bass: { waveform: 'fatsquare', subLevel: 0.5 },
+      pad: { waveform: 'fatsawtooth', detuneCents: 24, attack: 1.5, release: 4, timbre: 0.65 },
+      lead: { oscType: 'fmsine', modIndex: 1.5, harmonicity: 1, attack: 0.05, release: 1.2, timbre: 0.4 },
+      bass: { waveform: 'fatsquare', subLevel: 0.5, timbre: 0.25 },
     },
   },
 
@@ -101,6 +112,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // Voice: tight fatsquare pad (short attack — pad is more rhythmic than
   // ambient here), 303-style sawtooth lead with snappy envelope and high
   // mod index for a buzzy edge, square bass with light sub.
+  // Timbres lean toward A across the board — we want the harmonic content
+  // (saw / square) to feed the resonant filter. Pad slightly toward B for
+  // a subtle inner sine to keep it readable through the screaming Q.
   {
     id: 'acid',
     name: 'ACID',
@@ -116,9 +130,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       masterDuck: 0,
     },
     voice: {
-      pad: { waveform: 'fatsquare', detuneCents: 6, attack: 0.1, release: 0.6 },
-      lead: { oscType: 'sawtooth', modIndex: 8, harmonicity: 1, attack: 0.005, release: 0.3 },
-      bass: { waveform: 'square', subLevel: 0.3 },
+      pad: { waveform: 'fatsquare', detuneCents: 6, attack: 0.1, release: 0.6, timbre: 0.3 },
+      lead: { oscType: 'sawtooth', modIndex: 8, harmonicity: 1, attack: 0.005, release: 0.3, timbre: 0.2 },
+      bass: { waveform: 'square', subLevel: 0.3, timbre: 0.15 },
     },
   },
 
@@ -144,10 +158,13 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // soft FM-sine lead with sub-octave harmonicity (octave-down modulator)
     // for a deeper-than-it-looks tone, bold fatsawtooth bass with the sub
     // pushed near unity — dub is felt as much as heard.
+    // Timbres: pad and lead a touch toward B (the long delay tail wants a
+    // round, low-harmonic body so the repeats don't pile up into mud); bass
+    // stays near A so the fatsaw harmonic skeleton survives the wash.
     voice: {
-      pad: { waveform: 'fmsquare', detuneCents: 18, attack: 0.8, release: 5 },
-      lead: { oscType: 'fmsine', modIndex: 2, harmonicity: 0.5, attack: 0.1, release: 1.5 },
-      bass: { waveform: 'fatsawtooth', subLevel: 0.85 },
+      pad: { waveform: 'fmsquare', detuneCents: 18, attack: 0.8, release: 5, timbre: 0.6 },
+      lead: { oscType: 'fmsine', modIndex: 2, harmonicity: 0.5, attack: 0.1, release: 1.5, timbre: 0.55 },
+      bass: { waveform: 'fatsawtooth', subLevel: 0.85, timbre: 0.3 },
     },
   },
 
@@ -157,6 +174,8 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // high-modulation FM saw lead (clangy / metallic at modIndex 12,
   // harmonicity 2 puts the modulator an octave above), saw bass with a
   // small sub.
+  // Timbres: all toward A — bright = harmonic-rich, we want the saws to
+  // sing through the open filter without sine washing them out.
   {
     id: 'bright',
     name: 'BRIGHT',
@@ -172,9 +191,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       masterDuck: 0,
     },
     voice: {
-      pad: { waveform: 'fatsawtooth', detuneCents: 14, attack: 0.4, release: 2 },
-      lead: { oscType: 'fmsawtooth', modIndex: 12, harmonicity: 2, attack: 0.01, release: 0.7 },
-      bass: { waveform: 'fatsawtooth', subLevel: 0.4 },
+      pad: { waveform: 'fatsawtooth', detuneCents: 14, attack: 0.4, release: 2, timbre: 0.2 },
+      lead: { oscType: 'fmsawtooth', modIndex: 12, harmonicity: 2, attack: 0.01, release: 0.7, timbre: 0.2 },
+      bass: { waveform: 'fatsawtooth', subLevel: 0.4, timbre: 0.25 },
     },
   },
 
@@ -184,6 +203,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // Voice: pure triangle pad (warm, no buzz), a soft FM-sine lead that
   // barely modulates (modIndex 0.8 ≈ subtle inharmonic shimmer), full-sub
   // fatsaw bass — dark = boomy, not just dim.
+  // Timbres: heavy toward B for pad/lead (we want sine/pulse softness with
+  // the closed filter); bass stays slightly toward A so the fatsaw harmonics
+  // still poke through the low cutoff for definition.
   {
     id: 'dark',
     name: 'DARK',
@@ -199,9 +221,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       masterDuck: 0,
     },
     voice: {
-      pad: { waveform: 'triangle', detuneCents: 8, attack: 1.2, release: 5 },
-      lead: { oscType: 'fmsine', modIndex: 0.8, harmonicity: 1, attack: 0.15, release: 1.2 },
-      bass: { waveform: 'fatsawtooth', subLevel: 1.0 },
+      pad: { waveform: 'triangle', detuneCents: 8, attack: 1.2, release: 5, timbre: 0.7 },
+      lead: { oscType: 'fmsine', modIndex: 0.8, harmonicity: 1, attack: 0.15, release: 1.2, timbre: 0.65 },
+      bass: { waveform: 'fatsawtooth', subLevel: 1.0, timbre: 0.3 },
     },
   },
 
@@ -228,10 +250,13 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // lead with FM modulation for that "out-of-tune chorused tape head"
     // wobble (harmonicity 1.5), fatsquare bass with mid sub. Pulse leads
     // were a 70s-tape-era staple — Genesis / Floyd territory.
+    // Timbres: balanced near 0.5 — tape sound is the SUM of harmonics
+    // (the saw) and a softening pole (saturation rolloff approximated by
+    // partial morph toward B's sine/pulse).
     voice: {
-      pad: { waveform: 'amsawtooth', detuneCents: 12, attack: 0.6, release: 3 },
-      lead: { oscType: 'pulse', modIndex: 4, harmonicity: 1.5, attack: 0.02, release: 0.9 },
-      bass: { waveform: 'fatsquare', subLevel: 0.6 },
+      pad: { waveform: 'amsawtooth', detuneCents: 12, attack: 0.6, release: 3, timbre: 0.45 },
+      lead: { oscType: 'pulse', modIndex: 4, harmonicity: 1.5, attack: 0.02, release: 0.9, timbre: 0.5 },
+      bass: { waveform: 'fatsquare', subLevel: 0.6, timbre: 0.5 },
     },
   },
 
@@ -258,10 +283,13 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // breathy tremolo-vocal feel, sine bass with near-full sub for
     // sub-rumble — SPACE is all about the low end you feel through the
     // floor.
+    // Timbres: full toward B — sine/pulse/triangle on all three voices is
+    // exactly the "vacuum" character; the user-set knob can still pull it
+    // back toward A if they want more harmonic edge.
     voice: {
-      pad: { waveform: 'fmsine', detuneCents: 28, attack: 2.5, release: 6 },
-      lead: { oscType: 'amsine', modIndex: 5, harmonicity: 0.75, attack: 0.4, release: 2.5 },
-      bass: { waveform: 'sine', subLevel: 0.95 },
+      pad: { waveform: 'fmsine', detuneCents: 28, attack: 2.5, release: 6, timbre: 0.85 },
+      lead: { oscType: 'amsine', modIndex: 5, harmonicity: 0.75, attack: 0.4, release: 2.5, timbre: 0.8 },
+      bass: { waveform: 'sine', subLevel: 0.95, timbre: 0.7 },
     },
   },
 ] as const;

@@ -294,7 +294,11 @@ export class DebugPanelImpl implements DebugPanelApi {
       this.deps.setManualIntensity(v);
       return;
     }
-    this.overrides[id] = v;
+    // Cast through `unknown`: AudioEngineParams now carries a non-numeric
+    // field (`smartVoicing: boolean`) so the indexed assignment widens to
+    // `number | boolean | undefined`. The DebugPanel only ever drives the
+    // numeric sliders; the boolean is set via its own toggle elsewhere.
+    (this.overrides as Record<keyof AudioEngineParams, unknown>)[id] = v;
     this.deps.audio.setParams({ [id]: v } as Partial<AudioEngineParams>);
   }
 

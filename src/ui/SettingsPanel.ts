@@ -29,12 +29,17 @@ import {
  * The contract `AudioEngine` interface (in `@contracts/contracts`) is owned
  * by another agent and we deliberately don't extend it here. The concrete
  * `AudioEngineImpl` exposes `applyVoiceShape` for factory-preset timbre
- * overlays; we widen the dep type via this intersection so SettingsPanel can
- * call it without depending on the impl class. If `applyVoiceShape` happens
- * not to exist (older mock, partial test stub), the call site guards.
+ * overlays plus per-voice `setVoiceTimbre`/`getVoiceTimbre`/`getSmartVoicing`
+ * for the analog "WAVE" knobs. We widen the dep type via this intersection
+ * so SettingsPanel can call them without depending on the impl class. Each
+ * call site guards in case the dep is a partial test stub.
  */
-type AudioEngineWithVoiceShape = AudioEngine & {
+type VoiceKey = 'pad' | 'lead' | 'bass';
+type AudioEngineExtended = AudioEngine & {
   applyVoiceShape?: (shape: VoiceShape | undefined) => void;
+  setVoiceTimbre?: (voice: VoiceKey, value: number) => void;
+  getVoiceTimbre?: (voice: VoiceKey) => number;
+  getSmartVoicing?: () => boolean;
 };
 import { injectStyles } from './styles';
 import { Knob, type KnobOpts } from './Knob';
@@ -102,10 +107,28 @@ function clearMusicSettings(): void {
   }
 }
 
-type KnobSection = 'Filter' | 'Drive' | 'Time FX' | 'Mix' | 'Tempo';
+type KnobSection = 'Filter' | 'Drive' | 'Time FX' | 'Mix' | 'Tempo' | 'Voice';
+
+/**
+ * Knob ids fall into a few buckets:
+ *   * AudioEngineParams keys (filterCutoff / Q / drive / verb / ...) → routed
+ *     through audio.setParams.
+ *   * 'bpm' → routed to Tone.Transport.
+ *   * 'intensity' → routed to deps.setManualIntensity.
+ *   * 'padTimbre' / 'leadTimbre' / 'bassTimbre' → the analog "WAVE" knobs,
+ *     routed to audio.setVoiceTimbre(voice, v). They're NOT
+ *     AudioEngineParams keys because they're per-voice (not master-level).
+ */
+type KnobId =
+  | keyof AudioEngineParams
+  | 'bpm'
+  | 'intensity'
+  | 'padTimbre'
+  | 'leadTimbre'
+  | 'bassTimbre';
 
 interface KnobDef {
-  id: keyof AudioEngineParams | 'bpm' | 'intensity';
+  id: KnobId;
   /** English fallback label — also the assertion target in tests. */
   label: string;
   /** i18n key for the localized label. Resolved at render time. */
@@ -132,9 +155,15 @@ const KNOB_DEFS: KnobDef[] = [
   { id: 'masterDuck', label: 'Duck', labelKey: 'panel.patch.knob.duck', section: 'Mix', sectionKey: 'panel.patch.section.mix', min: 0, max: 1, step: 0.01, fallback: 0 },
   { id: 'intensity', label: 'Intens.', labelKey: 'panel.patch.knob.intens', section: 'Mix', sectionKey: 'panel.patch.section.mix', min: 0, max: 1, step: 0.01, fallback: 0.5 },
   { id: 'bpm', label: 'BPM', labelKey: 'panel.patch.knob.bpm', section: 'Tempo', sectionKey: 'panel.patch.section.tempo', min: 60, max: 180, step: 1, fallback: 92, digits: 0 },
+  // Per-voice analog "WAVE" knobs — crossfade A (vibe/preset oscillator)
+  // toward B (sine for pad, pulse for lead, triangle for bass). The
+  // continuous WAVE feel: 0..1, default 0.5 = balanced mix.
+  { id: 'padTimbre', label: 'Pad Wave', labelKey: 'panel.patch.knob.padTimbre', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
+  { id: 'leadTimbre', label: 'Lead Wave', labelKey: 'panel.patch.knob.leadTimbre', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
+  { id: 'bassTimbre', label: 'Bass Wave', labelKey: 'panel.patch.knob.bassTimbre', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
 ];
 
-const SECTION_ORDER: KnobSection[] = ['Filter', 'Drive', 'Time FX', 'Mix', 'Tempo'];
+const SECTION_ORDER: KnobSection[] = ['Filter', 'Drive', 'Time FX', 'Mix', 'Tempo', 'Voice'];
 
 const SECTION_KEY_BY_NAME: Record<KnobSection, DictKey> = {
   Filter: 'panel.patch.section.filter',
@@ -142,6 +171,14 @@ const SECTION_KEY_BY_NAME: Record<KnobSection, DictKey> = {
   'Time FX': 'panel.patch.section.timefx',
   Mix: 'panel.patch.section.mix',
   Tempo: 'panel.patch.section.tempo',
+  Voice: 'panel.patch.section.voice',
+};
+
+/** Map voice-knob ids → underlying voice key for audio.setVoiceTimbre. */
+const VOICE_KNOB_TO_VOICE: Partial<Record<KnobId, VoiceKey>> = {
+  padTimbre: 'pad',
+  leadTimbre: 'lead',
+  bassTimbre: 'bass',
 };
 
 function paramKnobInitial(
@@ -150,6 +187,14 @@ function paramKnobInitial(
 ): number {
   if (def.id === 'bpm') return current.bpm ?? def.fallback;
   if (def.id === 'intensity') return def.fallback; // mapper does not expose snapshot
+  // Voice timbre knobs are per-voice state on the AudioEngine, not on the
+  // AudioEngineParams snapshot. We seed from the fallback (0.5) at mount;
+  // the caller can sync from audio.getVoiceTimbre via a separate path if
+  // needed (today the engine's userTimbre defaults to 0.5 too, so they
+  // already agree).
+  if (def.id === 'padTimbre' || def.id === 'leadTimbre' || def.id === 'bassTimbre') {
+    return def.fallback;
+  }
   const v = (current as Partial<AudioEngineParams>)[def.id];
   return typeof v === 'number' ? v : def.fallback;
 }
@@ -178,6 +223,11 @@ export class SettingsPanelImpl {
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private intensityOverride: number | null = null;
   private bpmCurrent = 92;
+  /** The SMART pill button + its on/off state mirror. The audio engine is
+   * the source of truth (via getSmartVoicing); this mirror is just so the
+   * pill aria/class doesn't have to round-trip through the engine. */
+  private smartPillEl: HTMLButtonElement | null = null;
+  private smartOn = true;
   private unsubLang: (() => void) | null = null;
 
   mount(parent: HTMLElement, deps: SettingsPanelDeps): void {
@@ -240,6 +290,34 @@ export class SettingsPanelImpl {
       lbl.className = 'hs-settings-section-label';
       sec.appendChild(lbl);
       this.sectionLabelEls.set(section, lbl);
+
+      // The Voice section gets a SMART toggle pill anchored to the header.
+      // It controls the intelligent-voicing router — when ON (default), the
+      // AudioEngine nudges each voice's timbre by ±0.15 based on the
+      // running FX state (low cutoff → sine, high drive → square, etc.).
+      // When OFF, the nudge collapses to zero and only the user-set
+      // timbre knobs apply.
+      if (section === 'Voice') {
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'hs-smart-pill';
+        pill.dataset.smartPill = '';
+        const initialSmart =
+          (this.deps?.audio as AudioEngineExtended).getSmartVoicing?.() ?? true;
+        this.smartOn = initialSmart;
+        pill.setAttribute('aria-pressed', String(initialSmart));
+        if (initialSmart) pill.classList.add('hs-smart-pill-on');
+        pill.addEventListener('click', () => this.toggleSmartVoicing());
+        this.smartPillEl = pill;
+        // Wrap label + pill on the same row so the pill floats right.
+        const header = document.createElement('div');
+        header.className = 'hs-settings-section-header';
+        // Move the label into the header row.
+        sec.removeChild(lbl);
+        header.appendChild(lbl);
+        header.appendChild(pill);
+        sec.appendChild(header);
+      }
 
       const grid = document.createElement('div');
       grid.className = 'hs-knob-grid';
@@ -470,6 +548,15 @@ export class SettingsPanelImpl {
     const musicGroup = this.cardEl?.querySelector('.hs-music-row');
     musicGroup?.setAttribute('aria-label', t('panel.patch.scaleKeyAria'));
 
+    // SMART pill label + aria.
+    if (this.smartPillEl) {
+      this.smartPillEl.textContent = this.smartOn
+        ? t('panel.patch.smartOn')
+        : t('panel.patch.smartOff');
+      this.smartPillEl.setAttribute('aria-label', t('panel.patch.smartAria'));
+      this.smartPillEl.title = t('panel.patch.smartTooltip');
+    }
+
     // Refresh the patch list so the empty state + Load/Del buttons follow
     // the new lang.
     this.refreshPatchList();
@@ -501,6 +588,7 @@ export class SettingsPanelImpl {
     this.patchSaveBtn = null;
     this.patchNameInputEl = null;
     this.patchResetVibeBtn = null;
+    this.smartPillEl = null;
     this.sectionLabelEls.clear();
     this.presetChips = [];
     if (this.keydownHandler) {
@@ -723,6 +811,15 @@ export class SettingsPanelImpl {
       this.deps.setManualIntensity(v);
       return;
     }
+    // Voice timbre knobs — route to audio.setVoiceTimbre (the analog "WAVE"
+    // morph axis). Guarded so test stubs without the impl method don't
+    // crash.
+    const voice = VOICE_KNOB_TO_VOICE[def.id];
+    if (voice) {
+      const audio = this.deps.audio as AudioEngineExtended;
+      audio.setVoiceTimbre?.(voice, v);
+      return;
+    }
     const partial: Partial<AudioEngineParams> = {
       [def.id]: v,
     } as Partial<AudioEngineParams>;
@@ -755,7 +852,7 @@ export class SettingsPanelImpl {
     // baseline oscillator — which is exactly the "i preset sembrano tutti
     // uguali" complaint that motivated this feature.
     if (preset.voice) {
-      const audio = this.deps.audio as AudioEngineWithVoiceShape;
+      const audio = this.deps.audio as AudioEngineExtended;
       audio.applyVoiceShape?.(preset.voice);
     }
 
@@ -777,6 +874,17 @@ export class SettingsPanelImpl {
     // Mirror knob visuals — fire=false so we don't double-push to audio.
     for (const def of KNOB_DEFS) {
       if (def.id === 'intensity') continue;
+      // Voice-timbre knobs: mirror from preset.voice.{pad,lead,bass}.timbre
+      // — `preset.params` doesn't carry those.
+      const voice = VOICE_KNOB_TO_VOICE[def.id];
+      if (voice) {
+        const tv = preset.voice?.[voice]?.timbre;
+        if (typeof tv === 'number') {
+          const k = this.knobs.get(def.id);
+          k?.setValue(tv, false);
+        }
+        continue;
+      }
       const k = this.knobs.get(def.id);
       if (!k) continue;
       const v = (preset.params as Record<string, number | undefined>)[def.id];
@@ -803,6 +911,9 @@ export class SettingsPanelImpl {
     const out: Partial<AudioEngineParams> = {};
     for (const def of KNOB_DEFS) {
       if (def.id === 'bpm' || def.id === 'intensity') continue;
+      // Voice timbres are saved separately as `timbre` on the Patch object,
+      // not as AudioEngineParams — skip them here.
+      if (VOICE_KNOB_TO_VOICE[def.id]) continue;
       const k = this.knobs.get(def.id);
       if (!k) continue;
       // We read the numeric value through the dial's aria-valuenow, which the
@@ -819,15 +930,37 @@ export class SettingsPanelImpl {
     return out;
   }
 
+  /**
+   * Capture the three voice-timbre knob values into a Patch.timbre block.
+   * Skips knobs that haven't been mounted (e.g. test stubs that mounted
+   * a subset of the panel).
+   */
+  private currentTimbreSnapshot(): { pad?: number; lead?: number; bass?: number } {
+    const out: { pad?: number; lead?: number; bass?: number } = {};
+    for (const [knobId, voice] of Object.entries(VOICE_KNOB_TO_VOICE)) {
+      if (!voice) continue;
+      const k = this.knobs.get(knobId as KnobId);
+      if (!k) continue;
+      const dial = k.el.querySelector('.hs-knob-dial');
+      const raw = dial?.getAttribute('aria-valuenow');
+      if (raw === null || raw === undefined) continue;
+      const n = Number(raw);
+      if (Number.isFinite(n)) out[voice] = n;
+    }
+    return out;
+  }
+
   private handleSavePatch(name: string): void {
     if (!this.deps) return;
     const vibe = this.deps.getCurrentVibeId();
     const params = this.currentParamsSnapshot();
+    const timbre = this.currentTimbreSnapshot();
     const patch: Patch = {
       id: makePatchId(),
       name,
       vibe,
       params,
+      timbre: Object.keys(timbre).length > 0 ? timbre : undefined,
       bpm: this.bpmCurrent,
       createdAt: Date.now(),
     };
@@ -849,11 +982,25 @@ export class SettingsPanelImpl {
         continue;
       }
       if (def.id === 'intensity') continue;
+      // Voice-timbre knobs are restored from p.timbre separately below.
+      if (VOICE_KNOB_TO_VOICE[def.id]) continue;
       const v = (p.params as Record<string, number | undefined>)[def.id];
       if (typeof v === 'number') {
         const k = this.knobs.get(def.id);
         k?.setValue(v, true);
       }
+    }
+
+    // Restore per-voice timbre knobs (analog "WAVE" trio). Patches saved
+    // before this feature ship without `timbre` — leave the knobs at their
+    // current value in that case.
+    if (p.timbre) {
+      if (typeof p.timbre.pad === 'number')
+        this.knobs.get('padTimbre')?.setValue(p.timbre.pad, true);
+      if (typeof p.timbre.lead === 'number')
+        this.knobs.get('leadTimbre')?.setValue(p.timbre.lead, true);
+      if (typeof p.timbre.bass === 'number')
+        this.knobs.get('bassTimbre')?.setValue(p.timbre.bass, true);
     }
   }
 
@@ -890,6 +1037,23 @@ export class SettingsPanelImpl {
       });
       row.append(name, loadBtn, delBtn);
       list.appendChild(row);
+    }
+  }
+
+  /**
+   * Flip the SMART pill. Writes the new state into the audio engine via
+   * setParams({ smartVoicing }) — the engine is the source of truth, the
+   * pill's visual mirror updates afterwards.
+   */
+  private toggleSmartVoicing(): void {
+    if (!this.deps) return;
+    this.smartOn = !this.smartOn;
+    this.deps.audio.setParams({ smartVoicing: this.smartOn } as Partial<AudioEngineParams>);
+    if (this.smartPillEl) {
+      this.smartPillEl.setAttribute('aria-pressed', String(this.smartOn));
+      this.smartPillEl.classList.toggle('hs-smart-pill-on', this.smartOn);
+      // Refresh label to follow the on/off state.
+      this.smartPillEl.textContent = this.smartOn ? t('panel.patch.smartOn') : t('panel.patch.smartOff');
     }
   }
 

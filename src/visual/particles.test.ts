@@ -105,4 +105,47 @@ describe('ParticleField', () => {
     expect(() => field.setReducedMotion(true)).not.toThrow();
     expect(() => field.setReducedMotion(false)).not.toThrow();
   });
+
+  it('setIdleDrift is callable and clamps out-of-range input', () => {
+    const field = createParticleField(800, 600);
+    // Idle drift drives the particles' visible velocity scaling. The
+    // contract clamps to [0.3, 1] — passing 0 should not throw and
+    // should not produce frozen particles on the next draw step.
+    expect(() => field.setIdleDrift(0)).not.toThrow();
+    expect(() => field.setIdleDrift(2)).not.toThrow();
+    expect(() => field.setIdleDrift(0.5)).not.toThrow();
+    // Sanity: a single update step with idleDrift=0 should still produce
+    // drawable particles — they shouldn't all become invisible.
+    const fft = new Uint8Array(1024);
+    field.setIdleDrift(0);
+    field.update({ fft, width: 800, height: 600, dt: 0.05 });
+    const stub = createStub();
+    field.draw(stub as unknown as p5);
+    const triCount = stub.calls.filter((c) => c.fn === 'triangle').length;
+    expect(triCount).toBeGreaterThan(0);
+  });
+
+  it('ambient swarm contains multiple warm hues (palette internal contrast)', () => {
+    // The redesigned ambient cycle walks ORANGE_HOT → ORANGE_GLOW →
+    // ORANGE_PALE so the swarm reads with internal contrast. We can't
+    // observe color directly, but each fill() call gets recorded —
+    // count distinct hue values to verify >1 stop is in use.
+    const field = createParticleField(800, 600);
+    const stub = createStub();
+    field.draw(stub as unknown as p5);
+    const hues = new Set<number>();
+    for (const c of stub.calls) {
+      if (c.fn !== 'fill') continue;
+      const h = c.args[0];
+      if (typeof h === 'number') {
+        // Bucket hues into ~5° bins so per-particle jitter doesn't
+        // make every particle look like a unique hue.
+        hues.add(Math.round(h / 5) * 5);
+      }
+    }
+    // We expect at least 3 distinct hue buckets (multiple warm stops +
+    // the rare grey/ambient point). Pre-redesign the field landed on
+    // a single grey stop — this assertion would have failed.
+    expect(hues.size).toBeGreaterThanOrEqual(3);
+  });
 });

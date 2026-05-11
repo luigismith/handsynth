@@ -2,14 +2,15 @@
 
 # HandSynth
 
-**A gestural synthesizer you play with your hands, mouth, and eyes.**
+**A gestural synthesizer for live performance — play with your hands, mouth, and face.**
 
-Move your hands, open your mouth, widen your eyes — a generative music brain responds in real time.
+Move your hands, open your mouth, smile, frown, point, swipe — a generative music brain responds in real time.
+Designed for stage: webcam in, low-latency audio out, no MIDI hardware needed.
 Cyberpunk visualizer · MediaPipe webcam tracking · Tone.js audio engine.
 
 ![hero](docs/hero.png)
 
-[![tests](https://img.shields.io/badge/tests-275%20passing-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-438%20passing-brightgreen)]()
 [![license](https://img.shields.io/badge/license-MIT-blue)]()
 [![platform](https://img.shields.io/badge/platform-web%20%7C%20windows%20%7C%20macos-lightgrey)]()
 
@@ -19,13 +20,16 @@ Cyberpunk visualizer · MediaPipe webcam tracking · Tone.js audio engine.
 
 ## What it is
 
-A web app + Electron desktop app that turns your body into an expressive musical instrument. No keys, no knobs to learn — your hands, head, mouth, and eyes are the interface.
+A web app + Electron desktop app that turns your body into an expressive musical instrument **for live performance**. No keys, no knobs to learn — your hands, head, mouth, and face are the interface. Setup is a webcam and a browser. The audio output works through any system route (laptop speakers, USB interface, BlackHole into a DAW, mixer).
+
+📖 **Install on macOS:** [INSTALL.md](./INSTALL.md) (🇮🇹 [italiano](./INSTALL.it.md)) — detailed walkthrough including Gatekeeper, audio routing for stage, webcam choice tips.
 
 - **Hand position** sweeps the master filter
 - **Hand height** drives note density and brightness
 - **Hand openness** controls reverb, delay, drive, and resonance
 - **Hand depth** (toward / away from camera) raises and lowers the master volume
 - **Palm rotation** modulates brightness and grit
+- **Per-finger curl** — each of the 10 fingers maps to its own audio dimension (right hand: delay feedback, filter cutoff, reverb, brightness, delay wet; left hand: drive, Q, reverb extra, master volume, tremolo). Play your hands like an instrument.
 - **Pinch right** triggers a harmony-aware lead stab
 - **Pinch left** advances the chord progression
 - **Mouth open** sweeps delay wet, filter cutoff, reverb, and brightness simultaneously
@@ -33,6 +37,8 @@ A web app + Electron desktop app that turns your body into an expressive musical
 - **Both fists** mutes; **both hands above head** is the "drop"
 
 The music brain stays inside the active scale — **it is impossible to play a wrong note** — and four built-in vibes (Tycho, Bonobo, Hopkins, Floating Points) set tonality, BPM, and timbre. The PATCH editor lets you override the **key** (12 chromatic roots) and **scale** (Major, Minor, Harmonic / Melodic Minor, the seven church modes, Pentatonic Major / Minor, Blues, Chromatic) independently of the vibe — keep the Bonobo style but play in C-minor, or run Tycho through Phrygian for a darker drift. Eight factory PATCH presets (LUSH, ACID, DUB, BRIGHT, DARK, TAPE, SPACE, INIT) flip whole-sound character with one click — each preset re-shapes the **oscillators and envelopes** of the pad/lead/bass voices on top of the FX chain, so they sound genuinely different (not just "same patch through different reverb"). Save your own patches to `localStorage`.
+
+**Intelligent voicing.** Each pitched voice (pad/lead/bass) runs two oscillator stacks through a Tone.js CrossFade — the analog-synth "WAVE" knob feel. Three per-voice **Pad/Lead/Bass Wave** knobs in the PATCH editor crossfade continuously between the preset's waveform (saw, square, fmsine, etc.) and a clean morph destination (sine for pad, pulse for lead, triangle for bass). On top of that, a **SMART** toggle (ON by default) nudges each voice's timbre by up to ±0.15 based on the running FX state — low cutoff biases the pad toward sine, high drive pulls everything toward harmonic-rich waveforms for the saturator to bite, high reverb pushes the pad glassy. Subtle, never an override — your knob always wins.
 
 ## Quick start (web)
 
@@ -43,7 +49,9 @@ pnpm dev
 
 Open `http://localhost:5173`, click **Allow webcam and begin** (or **Permetti webcam e iniziare** if your browser is set to Italian), raise your hands.
 
-Tested in Chrome, Edge, Safari 15+, Firefox 114+. Webcam permission required.
+For live shows, run `pnpm build && pnpm preview` instead — production mode, no HMR overhead, much steadier audio.
+
+Tested in Chrome, Edge, Safari 15+, Firefox 114+. Webcam permission required. Full Mac install walkthrough including Gatekeeper, audio routing, and stage tips: [INSTALL.md](./INSTALL.md) · [INSTALL.it.md](./INSTALL.it.md).
 
 ### Bilingual UI (English / Italian)
 
@@ -90,6 +98,20 @@ See [`electron/BUILD.md`](./electron/BUILD.md) for code-signing + notarization n
 | Right palm roll | Brightness fine-tune (±0.15) | additive |
 | Left palm roll | Saturator drive fine-tune (±0.4) | additive |
 | Mean palm pitch | Delay feedback fine-tune (±0.15) | additive |
+
+### Per-finger (additive, 35% weight on top of openness)
+
+Each finger on each hand emits its own continuous 0..1 curl scalar and drives
+its own audio dimension. Tuned high-sensitivity (One-Euro β=0.08) so small
+deliberate motions register.
+
+| Finger | Right (FX hand) | Left (drive hand) |
+|---|---|---|
+| Thumb | Delay feedback 0.7 → 0.1 | Saturator drive 2.6 → 0.8 |
+| Index | Filter cutoff 14 kHz → 600 Hz (log) | Filter Q 12 → 1.5 |
+| Middle | Reverb wet 0.85 → 0.05 | Reverb wet extra 0.7 → 0.05 |
+| Ring | Brightness offset +0.15 → −0.15 | Master volume offset +0.10 → −0.10 |
+| Pinky | Delay wet 0.6 → 0.05 | Tremolo depth (brightness LFO @5 Hz) 0 → 1 |
 
 ### Discrete gestures (right hand unless noted)
 

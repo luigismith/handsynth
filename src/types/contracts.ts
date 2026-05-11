@@ -105,6 +105,15 @@ export interface AudioEngineParams {
   brightness: number;
   /** Master ducking amount, 0..1 (1 = full mute / silent). */
   masterDuck: number;
+  /**
+   * Intelligent voicing router enable. When true (default), the AudioEngine
+   * watches the running FX params (cutoff, drive, Q, reverb wet) and nudges
+   * each pitched voice's `timbre` morph axis ±0.15 toward a musically
+   * sensible destination (sine for low cutoff, square for high drive, etc.).
+   * When false the nudges are bypassed and only the user-set per-voice
+   * timbre is applied. Conceptually grouped under "master" controls.
+   */
+  smartVoicing: boolean;
 }
 
 /**
@@ -283,6 +292,29 @@ export interface Hand {
    * `classifyHandShape` in `src/hands/gesture-classifier.ts`.
    */
   shape?: HandShape;
+  /**
+   * Per-finger curl scalars, each in [0..1] where 0 = fully extended and
+   * 1 = fully curled. Populated by `HandTracker.buildHands` using the
+   * `fingerCurl` helper from `gesture-classifier.ts` and smoothed with a
+   * dedicated One-Euro filter per finger (5 slots × 2 hands).
+   *
+   * Optional — legacy callers and the synthetic-fixture tests may omit
+   * this field; consumers should treat the absence as "no per-finger
+   * data, fall back to aggregate `openness`".
+   *
+   * The aggregate `openness` scalar is still emitted unchanged and equals
+   * roughly `1 - mean(fingers.{index,middle,ring,pinky})` after the
+   * existing OPEN_MIN/OPEN_MAX calibration window; per-finger consumers
+   * (the per-finger mapping layer in InteractionMapper) layer on top of
+   * the aggregate signal without replacing it.
+   */
+  fingers?: {
+    thumb: number;
+    index: number;
+    middle: number;
+    ring: number;
+    pinky: number;
+  };
 }
 
 /**

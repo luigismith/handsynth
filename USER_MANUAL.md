@@ -6,11 +6,17 @@
 
 ## Welcome
 
-HandSynth is a gestural synthesizer you play with your body. Move your hands,
-turn your head, open your mouth, widen your eyes, smile, frown — every motion
-becomes part of the sound. There are no keys to learn and no scales to memorize.
-The music brain inside the app stays inside the active key, so it is genuinely
-impossible to play a wrong note. Your job is to feel.
+HandSynth is a **gestural synthesizer for live performance** that you play with
+your body. Move your hands, turn your head, open your mouth, smile, frown,
+point, swipe — every motion becomes part of the sound. There are no keys to
+learn and no scales to memorize. The music brain inside the app stays inside
+the active key, so it is genuinely impossible to play a wrong note. Your job
+is to feel.
+
+Designed for stage: a laptop, a webcam, and your hands. Output through laptop
+speakers, a USB audio interface, or routed via BlackHole into a DAW for mix
+and record. Installation walkthrough for macOS — including Gatekeeper, audio
+routing, and stage tips — lives in [`INSTALL.md`](./INSTALL.md).
 
 The aesthetic is cyberpunk on purpose. Orange-on-charcoal, low-poly skeletons,
 a thin scanline sweep over the panels. This manual walks through every gesture,
@@ -69,6 +75,50 @@ HandSynth reads depth too. These are layered on top of the basic mappings.
 "Roll" is when you twist your wrist around the forearm axis — palm-down to
 palm-up. "Pitch" is tilting the palm forward and back, fingers toward and away
 from the camera.
+
+## Per-finger controls
+
+HandSynth reads each finger independently. Beyond the aggregate "openness"
+of a whole hand, every individual finger emits a continuous 0..1 curl scalar
+(0 = fully extended, 1 = fully curled) that drives its own audio dimension.
+
+The per-finger layer is **additive on top of the aggregate openness mapping**
+with a 35% weight: a fully-extended hand sounds the same as before, but
+flexing a single finger produces an audible per-dimension change. Sensitivity
+is tuned high (One-Euro `beta=0.08`, double the standard scalar smoothing)
+so small deliberate motions register.
+
+### Right hand — the FX hand
+
+| Finger | Audio effect | Range (extended → curled) |
+|---|---|---|
+| Thumb | Delay feedback | 0.7 wet repeats → 0.1 dry |
+| Index | Filter cutoff (log) | 14 kHz bright → 600 Hz dark |
+| Middle | Reverb wet | 0.85 hall → 0.05 dry |
+| Ring | Brightness offset | +0.15 → −0.15 (additive) |
+| Pinky | Delay wet | 0.6 → 0.05 |
+
+### Left hand — the drive hand
+
+| Finger | Audio effect | Range (extended → curled) |
+|---|---|---|
+| Thumb | Saturator drive | 2.6 grit → 0.8 clean |
+| Index | Filter resonance Q | 12 → 1.5 |
+| Middle | Reverb wet (extra layer) | 0.7 → 0.05 |
+| Ring | Master volume offset | +0.10 louder → −0.10 quieter |
+| Pinky | Tremolo depth (brightness LFO at 5 Hz) | 0 → 1 |
+
+**Tip on calibration.** The per-finger curl uses the finger geometry
+(tip-vs-PIP-vs-MCP distance ratio) rather than absolute position, so it
+works regardless of hand size or distance from the camera. If a finger
+doesn't seem to register, exaggerate the flex by curling it past the PIP
+joint, then extending it fully — the calibration sees the full range.
+
+**Tip on layering.** Because every finger maps to a unique parameter, you
+can "play" the audio like an instrument. Try: hold the right hand mostly
+open, then curl just the middle finger — you'll hear the reverb drop out
+while everything else stays put. Or curl the left pinky to add a steady
+tremolo wobble.
 
 ## Face controls
 
@@ -181,6 +231,43 @@ Your patches persist in `localStorage` and re-appear next session. Click
 
 The **Reset to vibe** button returns every knob to the active vibe's defaults
 without losing your saved patches.
+
+### Voice section — the analog WAVE knobs
+
+Below the main FX knobs lives a **Voice** section with three small dials:
+
+- **Pad Wave** — crossfades the pad between its current waveform (set by the
+  vibe / factory preset, e.g. `fatsawtooth`) and a clean sine destination.
+- **Lead Wave** — crossfades the lead between its current oscillator
+  (typically `fmsawtooth` or `fmsine`) and a hollow pulse destination.
+- **Bass Wave** — crossfades the bass between its current waveform (e.g.
+  `fatsquare`) and a warm triangle destination.
+
+Each knob is continuous (0..1, default 0.5 = balanced mix) and uses an
+equal-power crossfade, so dragging through the morph is smooth — analog-synth
+"WAVE" knob feel, never abrupt. Both oscillator stacks are always sounding;
+the crossfade just controls audibility, so morphing mid-note cleanly slides
+between the two timbres instead of cutting in.
+
+### SMART pill — intelligent voicing router
+
+To the right of the **Voice** section header sits a small **SMART** pill,
+**ON by default**. When ON, HandSynth nudges each voice's `timbre` toward a
+musically-sensible destination based on the running FX state:
+
+| Trigger | Nudge | Why |
+|---|---|---|
+| Filter cutoff < 800 Hz | pad → +0.15 toward sine; bass → -0.15 (keep harmonics) | dark filter wants a clean pad and a present bass |
+| Filter cutoff > 10 kHz | lead → -0.15 (toward harmonic-rich oscillator) | bright filter needs harmonics to shine |
+| Drive > 2.0 | all voices → -0.15 (toward A side) | saturator wants harmonics to bite |
+| Drive < 1.0 | all voices → +0.15 (toward sine/pulse/triangle) | clean drive wants soft tone |
+| Filter Q > 8 | lead → +0.15 (toward pulse) | resonant Q + pulse = vocal honk |
+| Reverb wet > 0.7 | pad → +0.15 (toward sine) | sine washes glassy through reverb |
+
+Each rule contributes at most ±0.15, and the per-voice total is clamped to
+±0.15 — the router is a subtle nudge, **never an override**. Your knob value
+is always the dominant signal. Click the SMART pill to turn the router off
+and hear only the user-set timbre.
 
 ## Scale & key
 

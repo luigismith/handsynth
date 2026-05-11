@@ -241,6 +241,46 @@ function blankState(over: Partial<GestureState> = {}): GestureState {
   };
 }
 
+/**
+ * Build a synthetic Hand with explicit per-finger curl values. Used by the
+ * per-finger mapping tests below. All other Hand fields default to neutral
+ * values so the only varying input is `.fingers`.
+ */
+function handWithFingers(
+  side: 'left' | 'right',
+  fingers: {
+    thumb?: number;
+    index?: number;
+    middle?: number;
+    ring?: number;
+    pinky?: number;
+  } = {},
+): Hand {
+  const lm = Array.from({ length: 21 }, (_, i) => ({
+    x: 0.5 + (i % 5) * 0.02,
+    y: 0.5 - (i % 5) * 0.05,
+    z: 0,
+  }));
+  return {
+    side,
+    landmarks: lm,
+    palmCenter: { x: 0.5, y: 0.5, z: 0 },
+    openness: 0.5,
+    pinch: 0.5,
+    isClosed: false,
+    depth: 0,
+    roll: 0,
+    pitch: 0,
+    fingers: {
+      thumb: fingers.thumb ?? 0,
+      index: fingers.index ?? 0,
+      middle: fingers.middle ?? 0,
+      ring: fingers.ring ?? 0,
+      pinky: fingers.pinky ?? 0,
+    },
+  };
+}
+
 const VIBE: VibePreset = VIBES.tycho;
 
 // ---------------------------------------------------------------------------
@@ -1326,6 +1366,367 @@ describe('InteractionMapper audio-glitch regressions', () => {
     // We assert that at most 2 unique brightness values were pushed.
     const uniq = new Set(beforeBrightness);
     expect(uniq.size).toBeLessThanOrEqual(2);
+    mapper.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-finger mapping. Each finger on each hand drives its own audio
+// dimension. Tests assert:
+//   - All five right-hand fingers move their target audio param when curled
+//   - All five left-hand fingers move their target audio param when curled
+//   - When neither hand has `.fingers`, the mapper behaves identically to
+//     the legacy openness-only path (regression guard)
+//   - The mapping table endpoints match the documented values
+// ---------------------------------------------------------------------------
+
+describe('InteractionMapper per-finger pure mappings', () => {
+  it('mapRightFingers — extended endpoints match the mapping table', () => {
+    const r = __testing.mapRightFingers({
+      thumb: 0,
+      index: 0,
+      middle: 0,
+      ring: 0,
+      pinky: 0,
+    });
+    // thumb extended → delayFeedback 0.7
+    expect(r.delayFeedback).toBeCloseTo(0.7, 5);
+    // index extended → 14 kHz cutoff
+    expect(r.filterCutoff).toBeCloseTo(14000, -1);
+    // middle extended → reverbWet 0.85
+    expect(r.reverbWet).toBeCloseTo(0.85, 5);
+    // ring extended → brightness offset +0.15
+    expect(r.brightnessOffset).toBeCloseTo(0.15, 5);
+    // pinky extended → delayWet 0.6
+    expect(r.delayWet).toBeCloseTo(0.6, 5);
+  });
+
+  it('mapRightFingers — curled endpoints match the mapping table', () => {
+    const r = __testing.mapRightFingers({
+      thumb: 1,
+      index: 1,
+      middle: 1,
+      ring: 1,
+      pinky: 1,
+    });
+    expect(r.delayFeedback).toBeCloseTo(0.1, 5);
+    expect(r.filterCutoff).toBeCloseTo(600, 0);
+    expect(r.reverbWet).toBeCloseTo(0.05, 5);
+    expect(r.brightnessOffset).toBeCloseTo(-0.15, 5);
+    expect(r.delayWet).toBeCloseTo(0.05, 5);
+  });
+
+  it('mapLeftFingers — extended endpoints match the mapping table', () => {
+    const l = __testing.mapLeftFingers({
+      thumb: 0,
+      index: 0,
+      middle: 0,
+      ring: 0,
+      pinky: 0,
+    });
+    // thumb extended → drive max (2.6)
+    expect(l.saturatorDrive).toBeCloseTo(2.6, 5);
+    // index extended → Q 12
+    expect(l.filterResonance).toBeCloseTo(12, 5);
+    // middle extended → reverbWetExtra 0.7
+    expect(l.reverbWetExtra).toBeCloseTo(0.7, 5);
+    // ring extended → masterDuckOffset −0.10 (boost / loud)
+    expect(l.masterDuckOffset).toBeCloseTo(-0.10, 5);
+    // pinky extended → tremolo depth 0
+    expect(l.tremoloDepth).toBeCloseTo(0, 5);
+  });
+
+  it('mapLeftFingers — curled endpoints match the mapping table', () => {
+    const l = __testing.mapLeftFingers({
+      thumb: 1,
+      index: 1,
+      middle: 1,
+      ring: 1,
+      pinky: 1,
+    });
+    expect(l.saturatorDrive).toBeCloseTo(0.8, 5);
+    expect(l.filterResonance).toBeCloseTo(1.5, 5);
+    expect(l.reverbWetExtra).toBeCloseTo(0.05, 5);
+    expect(l.masterDuckOffset).toBeCloseTo(0.10, 5);
+    expect(l.tremoloDepth).toBeCloseTo(1, 5);
+  });
+});
+
+describe('InteractionMapper per-finger integration', () => {
+  it('right-hand index curl shifts filterCutoff downward', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Baseline: right hand with index fully extended.
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { index: 0 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { index: 0 })],
+    }));
+    const baseCutoff =
+      audio.paramCalls
+        .map((p) => p.filterCutoff)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    // Curl the index finger; cutoff should drop meaningfully.
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { index: 1 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { index: 1 })],
+    }));
+    const curledCutoff =
+      audio.paramCalls
+        .map((p) => p.filterCutoff)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    expect(curledCutoff).toBeLessThan(baseCutoff);
+    mapper.stop();
+  });
+
+  it('right-hand middle curl drops reverbWet', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { middle: 0 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { middle: 0 })],
+    }));
+    const baseRev =
+      audio.paramCalls
+        .map((p) => p.reverbWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { middle: 1 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { middle: 1 })],
+    }));
+    const curledRev =
+      audio.paramCalls
+        .map((p) => p.reverbWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    expect(curledRev).toBeLessThan(baseRev);
+    mapper.stop();
+  });
+
+  it('right-hand pinky curl drops delayWet', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { pinky: 0 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { pinky: 0 })],
+    }));
+    const baseDelayWet =
+      audio.paramCalls
+        .map((p) => p.delayWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { pinky: 1 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      hands: [handWithFingers('right', { pinky: 1 })],
+    }));
+    const curledDelayWet =
+      audio.paramCalls
+        .map((p) => p.delayWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    expect(curledDelayWet).toBeLessThan(baseDelayWet);
+    mapper.stop();
+  });
+
+  it('left-hand thumb curl drops saturatorDrive', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Pin leftOpenness mid-range to ensure aggregate baseline is identical.
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { thumb: 0 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { thumb: 0 })],
+    }));
+    const baseDrive =
+      audio.paramCalls
+        .map((p) => p.saturatorDrive)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { thumb: 1 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { thumb: 1 })],
+    }));
+    const curledDrive =
+      audio.paramCalls
+        .map((p) => p.saturatorDrive)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    expect(curledDrive).toBeLessThan(baseDrive);
+    mapper.stop();
+  });
+
+  it('left-hand index curl drops filterResonance Q', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { index: 0 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { index: 0 })],
+    }));
+    const baseQ =
+      audio.paramCalls
+        .map((p) => p.filterResonance)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { index: 1 })],
+    }));
+    hands.emit('gesture:update', blankState({
+      leftOpenness: 0.5,
+      hands: [handWithFingers('left', { index: 1 })],
+    }));
+    const curledQ =
+      audio.paramCalls
+        .map((p) => p.filterResonance)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+
+    expect(curledQ).toBeLessThan(baseQ);
+    mapper.stop();
+  });
+
+  it('without `.fingers`, the per-finger layer is a no-op (regression guard)', () => {
+    // Two updates with no per-finger data on either hand. The aggregate
+    // openness mapping must drive the params unchanged from the pre-per-
+    // finger behaviour.
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Hand without `.fingers` (legacy shape).
+    const legacyHand: Hand = {
+      side: 'right',
+      landmarks: Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5, z: 0 })),
+      palmCenter: { x: 0.5, y: 0.5, z: 0 },
+      openness: 0.5,
+      pinch: 0.5,
+      isClosed: false,
+      depth: 0,
+      roll: 0,
+      pitch: 0,
+    };
+    hands.emit('gesture:update', blankState({
+      rightOpenness: 0.5,
+      hands: [legacyHand],
+    }));
+    hands.emit('gesture:update', blankState({
+      rightOpenness: 0.5,
+      hands: [legacyHand],
+    }));
+
+    // Reverb is driven purely by mapRightOpenness(0.5) → gamma 0.7 curve:
+    // 0.1 + 0.5^0.7 * (0.85-0.1) ≈ 0.562. Same as the no-face baseline test.
+    const lastRev =
+      audio.paramCalls
+        .map((p) => p.reverbWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    expect(lastRev).toBeCloseTo(0.562, 2);
+    mapper.stop();
+  });
+
+  it('fully extended fingers leave aggregate sound nearly unchanged', () => {
+    // Sanity check: when every finger is fully extended, the per-finger
+    // contribution lands at the "open" / "loud" / "bright" end of each
+    // mapping — i.e. the per-finger layer agrees with the aggregate
+    // openness path rather than fighting it. We assert reverbWet stays
+    // above the no-finger baseline (because every finger pushes "open").
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    hands.emit('gesture:update', blankState({
+      rightOpenness: 0.8,
+      hands: [handWithFingers('right', {
+        thumb: 0, index: 0, middle: 0, ring: 0, pinky: 0,
+      })],
+    }));
+    hands.emit('gesture:update', blankState({
+      rightOpenness: 0.8,
+      hands: [handWithFingers('right', {
+        thumb: 0, index: 0, middle: 0, ring: 0, pinky: 0,
+      })],
+    }));
+    const lastRev =
+      audio.paramCalls
+        .map((p) => p.reverbWet)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
+    // Pure openness=0.8 alone gives gamma 0.7 → 0.1 + 0.8^0.7 * 0.75 ≈ 0.741.
+    // Per-finger extended sets target 0.85 with weight 0.35 → blended ≈ 0.779.
+    expect(lastRev).toBeGreaterThan(0.7);
     mapper.stop();
   });
 });

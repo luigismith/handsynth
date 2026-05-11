@@ -100,6 +100,14 @@ export interface SketchState {
    * intent" rather than a continuous value.
    */
   pulse: number;
+  /**
+   * One-shot trigger for beat-1 only (downbeats — first beat of each bar).
+   * Visualizer sets this to 1.0 when the incoming `onBeat` index is a
+   * multiple of 4; the sketch consumes it for a quick 60ms hex-grid
+   * brightness burst, then clears the flag. Reduced-motion safe (sketch
+   * skips the burst when reducedMotion is set).
+   */
+  downbeatPulse: number;
   /** FFT bins (Uint8, 0..255). Visualizer fills this once per draw. */
   fftBins: Uint8Array;
   /** True when the analyser tap is wired up. */
@@ -110,6 +118,14 @@ export interface SketchState {
    * `prefers-reduced-motion`.
    */
   reducedMotion: boolean;
+  /**
+   * Idle fade-in factor 0..1 — 1 = hands present (full alpha grid +
+   * full-speed particles), 0 = no hands seen for >2s (grid alpha drops
+   * to ~30%, particles drift slower). The Visualizer lerps this over
+   * ~800ms on state change so the transition reads as "sleep / wake"
+   * rather than a hard snap.
+   */
+  presence: number;
 }
 
 // MediaPipe hand-landmark topology. Each pair = a connection to draw.
@@ -235,6 +251,16 @@ export function createSketch(
   let lastFrameMs = performance.now();
   let elapsed = 0;
   let bloomTick = 0;
+  // Smoothed mean hand-x (canvas-relative, -1..1) for hex-grid parallax.
+  // Lerped each frame toward the actual position so the world panning
+  // motion stays gentle — no jitter when hands stutter.
+  let smoothedHandX = 0;
+  // Downbeat (beat-1) flash timer. Counts down ~60ms after each downbeat;
+  // while >0 the hex grid renders with a brightness boost.
+  let downbeatFlashMs = 0;
+  // Hand openness hysteresis tracker. Per-hand sticky flag for the
+  // chromatic-aberration halo: enters on >0.7, exits on <0.5.
+  const haloActive = new Map<string, boolean>();
 
   // Beat envelope — replaces the old `pulse *= 0.92` per-frame decay. Drives
   // string brightness, ring pulse, vignette tightening.
@@ -290,11 +316,46 @@ export function createSketch(
         beat.trigger(1.0);
         state.pulse = 0;
       }
+      // Downbeat (beat-1) burst — 60ms hex-grid brightness pulse. Skipped
+      // under reduced-motion. We arm the flash timer here and decrement it
+      // in the integration step below so the burst is frame-rate agnostic.
+      if (state.downbeatPulse > 0.5) {
+        if (!state.reducedMotion) downbeatFlashMs = 60;
+        state.downbeatPulse = 0;
+      }
+      if (downbeatFlashMs > 0) downbeatFlashMs = Math.max(0, downbeatFlashMs - dt * 1000);
       beat.step(dt);
       const beatV = beat.value;
 
       // Reduced-motion may have toggled — keep particles in sync.
       particles?.setReducedMotion(state.reducedMotion);
+      // Forward idle/presence into the particle field so motion slows when
+      // no hands are detected. presence is owned by the Visualizer and
+      // lerped over ~800ms.
+      // Map presence [0..1] to idleDrift [0.3..1].
+      particles?.setIdleDrift(0.3 + 0.7 * state.presence);
+
+      // Smooth the mean hand X for parallax. We compute *canvas-relative*
+      // -1..1 so it doesn't depend on canvas size: 0 = center, ±1 = far
+      // side. Lerp factor ~6 = full follow in ~167ms — fast enough that
+      // panning feels responsive, slow enough that hand jitter doesn't
+      // shake the world.
+      let targetHandX = 0;
+      if (state.hands.length > 0) {
+        let sum = 0;
+        let n = 0;
+        for (const h of state.hands) {
+          const lm = h.landmarks[0]; // wrist
+          if (!lm) continue;
+          sum += lm.x; // already 0..1
+          n += 1;
+        }
+        if (n > 0) targetHandX = (sum / n) * 2 - 1;
+      }
+      // Disable parallax under reduced-motion.
+      if (state.reducedMotion) targetHandX = 0;
+      const lerpK = 1 - Math.exp(-dt * 6);
+      smoothedHandX += (targetHandX - smoothedHandX) * lerpK;
 
       // ---------------------------------------------------------------
       // Layer 1 — charcoal background + static hex grid backdrop.
@@ -304,11 +365,37 @@ export function createSketch(
       // horizon glow + vignette layered on top.
       s.background(BG_DEEP.h, BG_DEEP.s, BG_DEEP.b);
 
-      // Hex grid backdrop — pre-rendered once. Single image() blit per frame.
+      // Hex grid backdrop — pre-rendered once. Single image() blit per
+      // frame, with cheap modifications layered on:
+      //   - parallax offset: ±6px X based on smoothed mean hand position.
+      //     Very subtle (no motion sickness). Disabled if reducedMotion.
+      //   - presence (idle) alpha: full at 1.0, ~30% when no hands seen
+      //     for >2s. Lerped externally by the Visualizer.
+      //   - downbeat burst: 60ms +15% brightness right after a downbeat.
+      //     The tint() pushes the image() output brighter. Reduced-motion
+      //     safe (the flash timer is never armed under reduced-motion).
       if (hexGrid) {
         s.push();
         s.blendMode(s.BLEND);
-        s.image(hexGrid, 0, 0, s.width, s.height);
+        // Parallax offset in pixels. 6px reads as a gentle shift at most
+        // viewport sizes; clamp under reduced-motion is enforced upstream
+        // (smoothedHandX stays 0).
+        const px = smoothedHandX * -6;
+        // Presence/idle alpha: maps 0..1 → 0.3..1.0.
+        const presenceAlpha = 0.3 + 0.7 * state.presence;
+        // Downbeat boost — only when timer is active.
+        const burstFactor = downbeatFlashMs > 0 ? 1.15 : 1.0;
+        const finalAlpha = Math.min(1, presenceAlpha * burstFactor);
+        if (finalAlpha >= 0.999) {
+          // No tint() needed — single fast blit.
+          s.image(hexGrid, px, 0, s.width, s.height);
+        } else {
+          // Apply alpha via tint(). HSB tint with full brightness — we
+          // only modulate the alpha channel.
+          s.tint(0, 0, 100, finalAlpha);
+          s.image(hexGrid, px, 0, s.width, s.height);
+          s.noTint();
+        }
         s.pop();
       }
 
@@ -412,7 +499,23 @@ export function createSketch(
         s.blendMode(s.ADD);
         drawHandRings(s, state.hands, beatV, elapsed, yaw);
         drawHands(s, state.hands, beatV);
+        // Chromatic-aberration halo on wide-open fingertips. Hysteresis:
+        // halo engages on openness > 0.7, releases under 0.5. Tracked per
+        // hand by `side` (left/right) — stable across frames.
+        // Skipped entirely under reduced-motion.
+        if (!state.reducedMotion) {
+          for (const hand of state.hands) {
+            const prev = haloActive.get(hand.side) ?? false;
+            const next = prev ? hand.openness > 0.5 : hand.openness > 0.7;
+            haloActive.set(hand.side, next);
+            if (next) drawHandHalo(s, hand);
+          }
+        }
         s.pop();
+      } else {
+        // Drop any stale halo flags when both hands disappear so the
+        // next time a hand returns it re-evaluates from scratch.
+        if (haloActive.size > 0) haloActive.clear();
       }
 
       // ---------------------------------------------------------------
@@ -651,6 +754,42 @@ function drawFingertipCores(
 }
 
 // ---------------------------------------------------------------------------
+// Chromatic-aberration halo for wide-open hands.
+//
+// Cheap R/B split: draw a small red-shifted ring at (+offset, 0) and a
+// blue-shifted ring at (-offset, 0) around each fingertip. The result reads
+// as a soft "scanline tear" focus effect — the eye sees the doubled edges
+// rather than a true RGB split (we're in HSB color mode), but the offset
+// alone sells the look.
+//
+// Hysteresis is owned by the caller (sketch draw loop): this function just
+// renders unconditionally and assumes openness has already passed the
+// threshold. Always blendMode ADD via the enclosing push().
+// ---------------------------------------------------------------------------
+
+export function drawHandHalo(s: p5 | p5.Graphics, hand: Hand): void {
+  const w = (s as p5).width;
+  const h = (s as p5).height;
+  const HALO_R = 9;
+  const OFFSET = 1.6; // px chromatic offset
+  s.noFill();
+  s.strokeWeight(1);
+  for (const idx of FINGERTIP_INDICES) {
+    const lm = hand.landmarks[idx];
+    if (!lm) continue;
+    const [x, y] = landmarkToScreen(lm.x, lm.y, w, h);
+    // Red-shift ring (hue ~5, low sat, high bri) at +x offset.
+    s.stroke(5, 80, 100, 0.35);
+    s.circle(x + OFFSET, y, HALO_R * 2);
+    // Blue-shift ring (hue ~210) at -x offset. Sits on a cooler register
+    // than the rest of the palette — used very sparingly so it reads as
+    // "scanline tear", not "wrong palette".
+    s.stroke(210, 60, 100, 0.30);
+    s.circle(x - OFFSET, y, HALO_R * 2);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Face skeleton — oval, eyes, nose bridge, lips, optional brows.
 //
 // Cyberpunk recolor: outer oval and eye iris use ORANGE_HOT; eye outlines
@@ -694,7 +833,18 @@ export function drawFaceSkeleton(
 
   s.noFill();
 
-  // Outer face oval — ORANGE_HOT, slightly thicker.
+  // Outer face oval — ORANGE_HOT. We render TWO passes:
+  //   1. A wider, lower-alpha outer-glow stroke (1.5× weight, ~0.18 alpha)
+  //      using ORANGE_GLOW to soften the silhouette. Visually it looks
+  //      like the oval has a halo without us having to run the bloom
+  //      buffer over it.
+  //   2. A crisp inner stroke at 1.4-weight ORANGE_HOT — the actual
+  //      readable outline.
+  // Other face lines (eyes/lips/nose/brows) stay single-weight so the
+  // composition doesn't get mushy.
+  s.strokeWeight(2.1);
+  s.stroke(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, 0.18 + beatV * 0.05);
+  drawClosedLoop(s, lms, FACE_OVAL, width, height, false, cover);
   s.strokeWeight(1.4);
   s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.6 + beatV * 0.05);
   drawClosedLoop(s, lms, FACE_OVAL, width, height, false, cover);

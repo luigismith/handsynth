@@ -330,6 +330,166 @@ function mapLeftOpenness(o: number): { saturatorDrive: number; filterResonance: 
   };
 }
 
+// ---------------------------------------------------------------------------
+// Per-finger mapping.
+//
+// Each finger on each hand emits its own continuous 0..1 curl scalar (0 =
+// fully extended, 1 = fully curled) and drives its OWN audio dimension. This
+// is layered ADDITIVELY on top of the aggregate openness mapping above with
+// a modest weight (PER_FINGER_WEIGHT) so a fully-extended hand sounds the
+// same as before (per-finger contribution ≈ 0) but moving an individual
+// finger produces audible per-dimension change.
+//
+// The "openness" gestalt still wins overall — the per-finger layer is a
+// VARIATION around the openness target, not a replacement. This was the
+// cleaner of the two approaches outlined in the brief: per-finger fully
+// replacing openness would have broken the user's existing muscle memory
+// for "spread fingers = open sound" since each finger would suddenly mean
+// something specific.
+//
+// Sensitivity: gamma curves shape each finger so a small flex produces
+// audible motion early in the range — same perceptual rationale as
+// mapRightOpenness / mapLeftOpenness.
+// ---------------------------------------------------------------------------
+
+/**
+ * Weight of the per-finger additive layer. 0 = ignored entirely; 1 = per-
+ * finger fully dominates the corresponding parameter. Picked at 0.35 from
+ * empirical playtesting — strong enough that each finger feels distinct,
+ * weak enough that the aggregate openness still reads as the "main" control.
+ */
+const PER_FINGER_WEIGHT = 0.35;
+
+/**
+ * Right-hand per-finger targets — same audio dimensions as the right openness
+ * map, but each finger gets its own slice. Returns the FULL endpoint value
+ * for each dimension at curl=0 (extended); the caller blends this with the
+ * existing openness-driven baseline by PER_FINGER_WEIGHT.
+ *
+ * Mappings (extended → curled):
+ *   - thumb  → delayFeedback: 0.7 wet repeats → 0.1 dry
+ *   - index  → filterCutoff (log): 14 kHz → 600 Hz
+ *   - middle → reverbWet: 0.85 hall → 0.05 dry
+ *   - ring   → brightness OFFSET: +0.15 → −0.15 (additive)
+ *   - pinky  → delayWet: 0.6 → 0.05
+ *
+ * Gamma curves push more change into the early-flex region so the user
+ * hears the parameter move as soon as the finger starts to bend.
+ */
+function mapRightFingers(fingers: {
+  thumb: number;
+  index: number;
+  middle: number;
+  ring: number;
+  pinky: number;
+}): {
+  delayFeedback: number;
+  filterCutoff: number;
+  reverbWet: number;
+  brightnessOffset: number;
+  delayWet: number;
+} {
+  // Extended-ness = 1 - curl; gamma applied to extended-ness so the early
+  // unfurling of a finger produces a big change.
+  const tExt = (curl: number, gamma: number): number =>
+    Math.pow(1 - clamp01(curl), gamma);
+
+  // thumb: delayFeedback 0.7 (extended) → 0.1 (curled). wet sound is the
+  // "open" reading; gamma 0.7 makes early opening already audibly more wet.
+  const thumbT = tExt(fingers.thumb, 0.7);
+  const delayFeedback = lerp(0.1, 0.7, thumbT);
+
+  // index: filterCutoff 14 kHz (extended) → 600 Hz (curled). Log curve in
+  // Hz so an even flex feels musically linear.
+  const idxT = tExt(fingers.index, 0.7);
+  const logMin = Math.log(600);
+  const logMax = Math.log(14000);
+  const filterCutoff = Math.exp(logMin + (logMax - logMin) * idxT);
+
+  // middle: reverbWet 0.85 (extended) → 0.05 (curled). gamma 0.7.
+  const midT = tExt(fingers.middle, 0.7);
+  const reverbWet = lerp(0.05, 0.85, midT);
+
+  // ring: brightness OFFSET. curl=0 → +0.15, curl=1 → -0.15. linear around
+  // the midpoint; no gamma because the offset is small and bipolar.
+  const ringSigned = (1 - clamp01(fingers.ring)) * 2 - 1; // -1..+1
+  const brightnessOffset = ringSigned * 0.15;
+
+  // pinky: delayWet 0.6 (extended) → 0.05 (curled). gamma 0.8.
+  const pkT = tExt(fingers.pinky, 0.8);
+  const delayWet = lerp(0.05, 0.6, pkT);
+
+  return { delayFeedback, filterCutoff, reverbWet, brightnessOffset, delayWet };
+}
+
+/**
+ * Left-hand per-finger targets.
+ *
+ * Mappings (extended → curled):
+ *   - thumb  → saturatorDrive: 2.6 grit → 0.8 clean
+ *   - index  → filterResonance Q: 12 → 1.5
+ *   - middle → reverbWet (additive, supplements right.middle): 0.7 → 0.05
+ *               (Tone API doesn't expose reverb decay separately on the
+ *               master chain; we fold the user-requested "decay" axis into
+ *               an additive wet contribution. Documented compromise.)
+ *   - ring   → masterDuck OFFSET: −0.10 → +0.10 (additive, bipolar)
+ *               (i.e. extended ring = boost master; curled = duck. Mirrors
+ *                the right-hand ring "brightness offset" semantics.)
+ *   - pinky  → waveLevel offset (tremolo depth proxy): 0 → 1
+ *               (AudioEngine has no native tremolo on the master chain; the
+ *                existing wave_level → brightness LFO is the only tremolo
+ *                analog we have. Pinky curl now drives that depth directly
+ *                so the user can "set" a tremolo without doing the wave
+ *                velocity gesture. Documented compromise.)
+ */
+function mapLeftFingers(fingers: {
+  thumb: number;
+  index: number;
+  middle: number;
+  ring: number;
+  pinky: number;
+}): {
+  saturatorDrive: number;
+  filterResonance: number;
+  reverbWetExtra: number;
+  masterDuckOffset: number;
+  tremoloDepth: number;
+} {
+  const tExt = (curl: number, gamma: number): number =>
+    Math.pow(1 - clamp01(curl), gamma);
+
+  // thumb: saturatorDrive 2.6 → 0.8 (gamma 0.75 matches mapLeftOpenness).
+  const thumbT = tExt(fingers.thumb, 0.75);
+  const saturatorDrive = lerp(DRIVE_MIN, DRIVE_MAX, thumbT);
+
+  // index: filter Q 12 → 1.5 (exponential since Q reads perceptually as
+  // sudden resonance past ~4; gamma 1.4 mirrors mapLeftOpenness).
+  const idxT = tExt(fingers.index, 1.4);
+  const filterResonance = lerp(1.5, 12, idxT);
+
+  // middle: extra reverbWet, layered ADDITIVELY in applyPerFingerMappings.
+  // gamma 0.7. Compromise documented above (no separate decay API).
+  const midT = tExt(fingers.middle, 0.7);
+  const reverbWetExtra = lerp(0.05, 0.7, midT);
+
+  // ring: masterDuck OFFSET. curl=0 (extended) → -0.10 (boost), curl=1 → +0.10 (duck).
+  const ringSigned = (1 - clamp01(fingers.ring)) * 2 - 1; // -1..+1
+  const masterDuckOffset = -ringSigned * 0.10; // extended ring -> negative offset = louder
+
+  // pinky: tremolo depth proxy = curl-side reading; per the brief "tremolo
+  // depth" rises as the pinky CURLS. Gamma 0.85.
+  const pkCurl = clamp01(fingers.pinky);
+  const tremoloDepth = Math.pow(pkCurl, 0.85);
+
+  return {
+    saturatorDrive,
+    filterResonance,
+    reverbWetExtra,
+    masterDuckOffset,
+    tremoloDepth,
+  };
+}
+
 /** A timestamped meanHeight sample for the rolling window. */
 interface MoodSample {
   t: number;
@@ -724,6 +884,14 @@ export class InteractionMapperImpl implements InteractionMapper {
       masterDuck: 0,
     };
 
+    // Per-finger additive layer. Each finger on each hand drives ITS OWN
+    // audio dimension. Layered with weight PER_FINGER_WEIGHT (0.35) so the
+    // aggregate openness mapping still feels like the "main" control but
+    // moving an individual finger produces audible per-dimension change.
+    // No-op when neither hand carries `.fingers` (legacy callers / synthetic
+    // fixtures without finger data).
+    target = this.applyPerFingerMappings(target, state);
+
     // Hand 3D additive modulation. meanDepth → masterDuck (close=loud),
     // rightRoll → brightness offset, leftRoll → saturatorDrive offset,
     // meanPitch → delayFeedback offset. Applied BEFORE face modulation so
@@ -941,6 +1109,127 @@ export class InteractionMapperImpl implements InteractionMapper {
       // mouth open we get a fresh rising edge.
       this.mouthOpenHigh = false;
     }
+  }
+
+  /**
+   * Per-finger additive layer. Each finger on each hand drives its own audio
+   * dimension; the contribution is blended with the existing target value
+   * by PER_FINGER_WEIGHT. The aggregate openness mappings (mapRightOpenness,
+   * mapLeftOpenness) still set the baseline — per-finger is a VARIATION
+   * around it.
+   *
+   * No-op (returns `target` unchanged) when neither hand carries a `.fingers`
+   * field, which keeps every existing test and the synthetic-fixture
+   * autopilot path working without per-finger data.
+   *
+   * Right-hand → FX side:
+   *   thumb  → delayFeedback (0.7..0.1 ext→curled)
+   *   index  → filterCutoff log (14 kHz..600 Hz)
+   *   middle → reverbWet (0.85..0.05)
+   *   ring   → brightness offset (±0.15)
+   *   pinky  → delayWet (0.6..0.05)
+   *
+   * Left-hand → drive side:
+   *   thumb  → saturatorDrive (2.6..0.8)
+   *   index  → filterResonance Q (12..1.5)
+   *   middle → reverbWet (additional 0.7..0.05) — folded onto right-hand
+   *             reverb because Tone master chain has no separate decay knob
+   *   ring   → masterDuck offset (±0.10)
+   *   pinky  → tremolo depth — sets the waveLevel field (drives the existing
+   *             brightness-LFO from `applyDiscreteGesturePulses`). No native
+   *             tremolo API on AudioEngine.
+   */
+  private applyPerFingerMappings(
+    target: Partial<AudioEngineParams>,
+    state: GestureState,
+  ): Partial<AudioEngineParams> {
+    const right = state.hands.find((h) => h.side === 'right');
+    const left = state.hands.find((h) => h.side === 'left');
+    const rf = right?.fingers;
+    const lf = left?.fingers;
+    if (!rf && !lf) return target;
+
+    const out: Partial<AudioEngineParams> = { ...target };
+    const w = PER_FINGER_WEIGHT;
+
+    if (rf) {
+      const r = mapRightFingers(rf);
+
+      const baseFb =
+        typeof out.delayFeedback === 'number' ? out.delayFeedback : DELAY_FB_MIN;
+      out.delayFeedback = clamp(
+        lerp(baseFb, r.delayFeedback, w),
+        DELAY_FB_MIN,
+        DELAY_FB_MAX,
+      );
+
+      const baseCutoff =
+        typeof out.filterCutoff === 'number' ? out.filterCutoff : 8000;
+      out.filterCutoff = clamp(
+        lerp(baseCutoff, r.filterCutoff, w),
+        FILTER_MIN_HZ,
+        FILTER_MAX_HZ,
+      );
+
+      const baseRev =
+        typeof out.reverbWet === 'number' ? out.reverbWet : REVERB_MIN;
+      out.reverbWet = clamp01(lerp(baseRev, r.reverbWet, w));
+
+      // brightness offset is additive (bipolar), so the weight scales the
+      // magnitude of the offset; we don't lerp toward an absolute target
+      // because the offset around 0 has no obvious "target value".
+      const baseBright =
+        typeof out.brightness === 'number' ? out.brightness : 0.5;
+      out.brightness = clamp01(baseBright + r.brightnessOffset * w);
+
+      // delayWet replaces (rather than blends with) the existing target.
+      // The hand openness mapping doesn't set delayWet — that comes from
+      // the face mouth layer downstream. We set our value here and let the
+      // face layer compose on top.
+      const baseDelayWet =
+        typeof out.delayWet === 'number' ? out.delayWet : r.delayWet;
+      out.delayWet = clamp01(lerp(baseDelayWet, r.delayWet, w));
+    }
+
+    if (lf) {
+      const l = mapLeftFingers(lf);
+
+      const baseDrive =
+        typeof out.saturatorDrive === 'number' ? out.saturatorDrive : DRIVE_MIN;
+      out.saturatorDrive = clamp(
+        lerp(baseDrive, l.saturatorDrive, w),
+        DRIVE_MIN,
+        DRIVE_MAX,
+      );
+
+      const baseQ =
+        typeof out.filterResonance === 'number' ? out.filterResonance : Q_MIN;
+      out.filterResonance = clamp(
+        lerp(baseQ, l.filterResonance, w),
+        Q_MIN,
+        Q_MAX,
+      );
+
+      // Left middle adds onto the (possibly right-middle-influenced) reverb
+      // wet. Bounded.
+      const baseRevL =
+        typeof out.reverbWet === 'number' ? out.reverbWet : REVERB_MIN;
+      out.reverbWet = clamp01(lerp(baseRevL, l.reverbWetExtra, w));
+
+      // masterDuck offset (bipolar).
+      const baseDuckL =
+        typeof out.masterDuck === 'number' ? out.masterDuck : 0;
+      out.masterDuck = clamp01(baseDuckL + l.masterDuckOffset * w);
+
+      // Tremolo depth → waveLevel. Replaces (additive max) — if the wave
+      // velocity gesture has already set a higher waveLevel we don't drop
+      // it. Per-finger drives a steady tremolo when held; the velocity
+      // gesture still spikes it on a fast wave.
+      const pinkyTrem = clamp01(l.tremoloDepth * w * 2); // ×2 so a full pinky curl can hit ~0.7 depth
+      if (pinkyTrem > this.waveLevel) this.waveLevel = pinkyTrem;
+    }
+
+    return out;
   }
 
   /**
@@ -1486,7 +1775,11 @@ function diffParams(
     const prev = from[k];
     const eps = PARAM_EPS[k] ?? 0.005;
     if (typeof prev !== 'number' || Math.abs(v - prev) > eps) {
-      out[k] = v;
+      // AudioEngineParams now has a mixed number/boolean shape (since the
+      // architect added `smartVoicing: boolean`). The runtime guard above
+      // restricts us to numeric keys, but TS can't infer that across the
+      // wider union without a cast.
+      (out as Record<keyof AudioEngineParams, unknown>)[k] = v;
       any = true;
     }
   }
@@ -1507,15 +1800,19 @@ function blendParams(
     ...(Object.keys(to) as (keyof AudioEngineParams)[]),
   ]);
   const out: Partial<AudioEngineParams> = {};
+  // Cast through `unknown`: AudioEngineParams contains a non-numeric field
+  // (`smartVoicing: boolean`), and the inner branches are restricted to
+  // numeric union members at runtime but TS can't narrow across the union.
+  const oRec = out as Record<keyof AudioEngineParams, unknown>;
   for (const k of keys) {
     const a = from[k];
     const b = to[k];
     if (typeof a === 'number' && typeof b === 'number') {
-      out[k] = lerp(a, b, t);
+      oRec[k] = lerp(a, b, t);
     } else if (typeof b === 'number') {
-      out[k] = b;
+      oRec[k] = b;
     } else if (typeof a === 'number') {
-      out[k] = a;
+      oRec[k] = a;
     }
   }
   return out;
@@ -1556,6 +1853,9 @@ export const __testing = {
   mapDistanceToCutoff,
   mapRightOpenness,
   mapLeftOpenness,
+  mapRightFingers,
+  mapLeftFingers,
+  PER_FINGER_WEIGHT,
   blendParams,
   clamp,
   clamp01,

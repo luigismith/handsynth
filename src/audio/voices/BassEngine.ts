@@ -3,10 +3,14 @@
 // Bass voice — warm, present, woofer-friendly.
 //
 // Architecture:
-//   * Tone.MonoSynth (fatsquare or sawtooth per vibe) — the harmonic top
-//     layer.
+//   * Two Tone.MonoSynths run side-by-side through a Tone.CrossFade. `main`
+//     (A side) carries the vibe/VoiceShape waveform (fatsquare / fatsawtooth /
+//     etc.). `mainB` (B side) is a hard-coded `triangle` morph destination —
+//     warm and woody, the natural counterpart to A's harmonic edge.
 //   * Tone.MonoSynth as a sub layer one octave below — sine wave so it's
-//     felt, not heard. Only enabled when `vibe.bass.sub === true`.
+//     felt, not heard. Only enabled when `vibe.bass.sub === true`. The sub
+//     stays OUT of the crossfade (it's always sine and always present) —
+//     it's the "felt" component, not the "heard" timbre.
 //   * Each MonoSynth has its own LPF with envelope-modulated cutoff for that
 //     classic acid/dub bass "thump → resonant tail" feel.
 //   * 30Hz high-pass at the engine output protects subwoofers from DC and
@@ -25,8 +29,13 @@ import type { VoiceShape } from '../voice-shape';
 const PORTAMENTO = 0.08;
 const HPF_FREQ = 30;
 
+/** The hard-coded "morph destination" waveform for the B side of the crossfade. */
+const BASS_MORPH_DESTINATION = 'triangle';
+
 export class BassEngine {
   private main: Tone.MonoSynth;
+  private mainB: Tone.MonoSynth;
+  private xfade: Tone.CrossFade;
   private sub: Tone.MonoSynth;
   private hpf: Tone.Filter;
   private out: Tone.Gain;
@@ -43,24 +52,9 @@ export class BassEngine {
       rolloff: -24,
     });
 
-    this.main = new Tone.MonoSynth({
-      // 'fatsquare' is part of OmniOscillator's runtime union but not exported
-      // in a narrower type. Cast the literal to the field's expected type.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      oscillator: { type: 'fatsquare' } as any,
-      envelope: { attack: 0.005, decay: 0.2, sustain: 0.4, release: 0.3 },
-      filter: { type: 'lowpass', Q: 1.2, rolloff: -24 },
-      filterEnvelope: {
-        attack: 0.005,
-        decay: 0.4,
-        sustain: 0.3,
-        release: 0.4,
-        baseFrequency: 80,
-        octaves: 4,
-      },
-      portamento: PORTAMENTO,
-      volume: -6,
-    });
+    this.main = this.makeMain('fatsquare');
+    this.mainB = this.makeMain(BASS_MORPH_DESTINATION);
+    this.xfade = new Tone.CrossFade(0); // default: 100% A (legacy behavior)
 
     this.sub = new Tone.MonoSynth({
       oscillator: { type: 'sine' },
@@ -83,12 +77,35 @@ export class BassEngine {
       volume: -12,
     });
 
-    this.main.connect(this.hpf);
+    this.main.connect(this.xfade.a);
+    this.mainB.connect(this.xfade.b);
+    this.xfade.connect(this.hpf);
     this.sub.connect(this.hpf);
     this.hpf.connect(this.out);
 
     // Tone.connect accepts both ToneAudioNode and raw AudioNode destinations.
     Tone.connect(this.out, destination);
+  }
+
+  private makeMain(waveform: string): Tone.MonoSynth {
+    return new Tone.MonoSynth({
+      // 'fatsquare' is part of OmniOscillator's runtime union but not exported
+      // in a narrower type. Cast the literal to the field's expected type.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      oscillator: { type: waveform } as any,
+      envelope: { attack: 0.005, decay: 0.2, sustain: 0.4, release: 0.3 },
+      filter: { type: 'lowpass', Q: 1.2, rolloff: -24 },
+      filterEnvelope: {
+        attack: 0.005,
+        decay: 0.4,
+        sustain: 0.3,
+        release: 0.4,
+        baseFrequency: 80,
+        octaves: 4,
+      },
+      portamento: PORTAMENTO,
+      volume: -6,
+    });
   }
 
   loadVibe(vibe: VibePreset): void {
@@ -114,6 +131,7 @@ export class BassEngine {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.main.set({ oscillator: { type: mainOsc as any } });
+    // B side stays on the morph destination — vibe never overrides it.
 
     this.subEnabled = vibe.bass.sub;
     // We don't tear down the sub voice; we just gate its output via volume.
@@ -125,12 +143,21 @@ export class BassEngine {
       this.main.set({
         envelope: { attack: 0.003, decay: 0.18, sustain: 0.25, release: 0.2 },
       });
+      this.mainB.set({
+        envelope: { attack: 0.003, decay: 0.18, sustain: 0.25, release: 0.2 },
+      });
     } else if (vibe.id === 'floating-points') {
       this.main.set({
         envelope: { attack: 0.005, decay: 0.25, sustain: 0.5, release: 0.35 },
       });
+      this.mainB.set({
+        envelope: { attack: 0.005, decay: 0.25, sustain: 0.5, release: 0.35 },
+      });
     } else {
       this.main.set({
+        envelope: { attack: 0.005, decay: 0.2, sustain: 0.4, release: 0.3 },
+      });
+      this.mainB.set({
         envelope: { attack: 0.005, decay: 0.2, sustain: 0.4, release: 0.3 },
       });
     }
@@ -141,6 +168,9 @@ export class BassEngine {
    * non-linearly to dB (1 → 0 dB, ~0.5 → -12 dB, 0 → -Infinity / silent).
    * Setting subLevel to 0 also disables the sub trigger so we don't waste
    * voices on a muted layer.
+   *
+   * `timbre` morphs the crossfade A↔B continuously; it does NOT need the
+   * 30 ms fade gate because the crossfade itself is the fade.
    */
   applyVoiceShape(shape: VoiceShape['bass'] | undefined): void {
     if (!shape) return;
@@ -165,10 +195,22 @@ export class BassEngine {
       const db = s > 0 ? 24 * Math.log10(s) : -Infinity;
       this.sub.volume.rampTo(db, 0.1);
     }
+    if (typeof shape.timbre === 'number') {
+      this.setTimbre(shape.timbre);
+    }
     if (willSwapType) {
       // Restore nominal bass level (0.9, matching the constructor default).
       this.out.gain.rampTo(0.9, 0.03);
     }
+  }
+
+  /**
+   * Set the A↔B crossfade morph (0..1). 0 = 100% A (vibe/preset waveform);
+   * 1 = 100% B (triangle destination). Smoothed over 80 ms.
+   */
+  setTimbre(value: number): void {
+    const v = Math.max(0, Math.min(1, value));
+    this.xfade.fade.rampTo(v, 0.08);
   }
 
   trigger(
@@ -180,6 +222,7 @@ export class BassEngine {
     const v = Math.max(0.01, Math.min(1, velocity));
     const t = time ?? Tone.now();
     this.main.triggerAttackRelease(note, duration, t, v);
+    this.mainB.triggerAttackRelease(note, duration, t, v);
     if (this.subEnabled) {
       // Sub plays one octave down. Use Tone.Frequency to shift safely.
       const subNote = Tone.Frequency(note).transpose(-12).toNote();
@@ -195,6 +238,8 @@ export class BassEngine {
   dispose(): void {
     try {
       this.main.dispose();
+      this.mainB.dispose();
+      this.xfade.dispose();
       this.sub.dispose();
       this.hpf.dispose();
       this.out.dispose();

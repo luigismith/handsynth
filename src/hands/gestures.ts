@@ -13,6 +13,35 @@
 //   17-20: pinky
 
 import type { Hand, HandLandmark, GestureState } from '@contracts/contracts';
+import { fingerCurl as classifierFingerCurl } from './gesture-classifier';
+
+// Re-export the per-finger curl helper from `gesture-classifier` so callers
+// that already pull from `gestures.ts` can grab the same scalar without a
+// second import. The classifier is the single source of truth: see the
+// docstring on `fingerCurl` in `gesture-classifier.ts` for the geometry.
+export type Finger = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
+
+/** Per-finger curl scalar, 0 (extended) .. 1 (curled). */
+export function fingerCurl(landmarks: HandLandmark[], finger: Finger): number {
+  return classifierFingerCurl(landmarks, finger);
+}
+
+/** Five-tuple of per-finger curls — used by HandTracker to populate `Hand.fingers`. */
+export function fingerCurls(landmarks: HandLandmark[]): {
+  thumb: number;
+  index: number;
+  middle: number;
+  ring: number;
+  pinky: number;
+} {
+  return {
+    thumb: classifierFingerCurl(landmarks, 'thumb'),
+    index: classifierFingerCurl(landmarks, 'index'),
+    middle: classifierFingerCurl(landmarks, 'middle'),
+    ring: classifierFingerCurl(landmarks, 'ring'),
+    pinky: classifierFingerCurl(landmarks, 'pinky'),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Landmark indices

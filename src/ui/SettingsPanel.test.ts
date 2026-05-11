@@ -20,8 +20,13 @@ import { setLang, __resetForTests } from '../i18n';
 function stubAudio(): AudioEngine & {
   lastSet: Partial<AudioEngineParams>;
   applyVoiceShape: ReturnType<typeof vi.fn>;
+  setVoiceTimbre: ReturnType<typeof vi.fn>;
+  getVoiceTimbre: ReturnType<typeof vi.fn>;
+  getSmartVoicing: ReturnType<typeof vi.fn>;
 } {
   const lastSet: Partial<AudioEngineParams> = {};
+  const timbres: Record<string, number> = { pad: 0.5, lead: 0.5, bass: 0.5 };
+  let smartOn = true;
   return {
     lastSet,
     init: vi.fn().mockResolvedValue(undefined),
@@ -35,18 +40,26 @@ function stubAudio(): AudioEngine & {
     triggerStab: vi.fn(),
     setParams: vi.fn((p: Partial<AudioEngineParams>) => {
       Object.assign(lastSet, p);
+      if (typeof p.smartVoicing === 'boolean') smartOn = p.smartVoicing;
     }),
     setMute: vi.fn(),
     triggerDrop: vi.fn(),
     getAnalyser: vi.fn(() => ({} as unknown as AnalyserNode)),
     isReady: () => true,
-    // Not part of the contract interface (impl-only), but SettingsPanel
-    // calls it post-setParams. We expose a vi.fn so the wiring test can
-    // assert it was invoked with the preset's voice.
+    // Impl-only methods that SettingsPanel calls — not on the AudioEngine
+    // contract interface. Each is a vi.fn so the wiring tests can assert.
     applyVoiceShape: vi.fn(),
+    setVoiceTimbre: vi.fn((voice: string, v: number) => {
+      timbres[voice] = v;
+    }),
+    getVoiceTimbre: vi.fn((voice: string) => timbres[voice] ?? 0.5),
+    getSmartVoicing: vi.fn(() => smartOn),
   } as AudioEngine & {
     lastSet: Partial<AudioEngineParams>;
     applyVoiceShape: ReturnType<typeof vi.fn>;
+    setVoiceTimbre: ReturnType<typeof vi.fn>;
+    getVoiceTimbre: ReturnType<typeof vi.fn>;
+    getSmartVoicing: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -428,6 +441,90 @@ describe('SettingsPanelImpl', () => {
     ) as HTMLButtonElement;
     chip.click();
     expect(deps.audio.applyVoiceShape).not.toHaveBeenCalled();
+    panel.unmount();
+  });
+
+  it('renders three voice-timbre knobs (Pad Wave / Lead Wave / Bass Wave)', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const dials = parent.querySelectorAll('.hs-knob-dial');
+    const labels = Array.from(dials).map((d) => d.getAttribute('aria-label'));
+    expect(labels).toContain('Pad Wave');
+    expect(labels).toContain('Lead Wave');
+    expect(labels).toContain('Bass Wave');
+    panel.unmount();
+  });
+
+  it('changing a voice-timbre knob calls audio.setVoiceTimbre', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const padDial = Array.from(parent.querySelectorAll('.hs-knob-dial')).find(
+      (d) => d.getAttribute('aria-label') === 'Pad Wave',
+    ) as HTMLElement;
+    expect(padDial).toBeDefined();
+    padDial.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(deps.audio.setVoiceTimbre).toHaveBeenCalledWith('pad', expect.any(Number));
+    panel.unmount();
+  });
+
+  it('clicking a preset with voice.timbre updates each timbre knob', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    // SPACE has heavy timbre toward B for pad/lead.
+    const space = FACTORY_PRESETS.find((p) => p.id === 'space')!;
+    const chip = parent.querySelector(
+      `.hs-preset-chip[data-preset-id="space"]`,
+    ) as HTMLButtonElement;
+    chip.click();
+    const padDial = Array.from(parent.querySelectorAll('.hs-knob-dial')).find(
+      (d) => d.getAttribute('aria-label') === 'Pad Wave',
+    );
+    const expected = space.voice?.pad?.timbre;
+    expect(typeof expected).toBe('number');
+    expect(Number(padDial?.getAttribute('aria-valuenow'))).toBeCloseTo(
+      expected as number,
+      6,
+    );
+    panel.unmount();
+  });
+
+  it('SMART pill is present, ON by default, and toggles via click', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const pill = parent.querySelector('[data-smart-pill]') as HTMLButtonElement;
+    expect(pill).not.toBeNull();
+    expect(pill.getAttribute('aria-pressed')).toBe('true');
+    pill.click();
+    expect(pill.getAttribute('aria-pressed')).toBe('false');
+    // The toggle pushes smartVoicing into the engine.
+    expect(deps.audio.setParams).toHaveBeenCalledWith(
+      expect.objectContaining({ smartVoicing: false }),
+    );
+    pill.click();
+    expect(pill.getAttribute('aria-pressed')).toBe('true');
+    expect(deps.audio.setParams).toHaveBeenLastCalledWith(
+      expect.objectContaining({ smartVoicing: true }),
+    );
+    panel.unmount();
+  });
+
+  it('saved patches round-trip per-voice timbre values', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    // Bump the Pad Wave knob a few ticks from default.
+    const padDial = Array.from(parent.querySelectorAll('.hs-knob-dial')).find(
+      (d) => d.getAttribute('aria-label') === 'Pad Wave',
+    ) as HTMLElement;
+    padDial.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    const newVal = Number(padDial.getAttribute('aria-valuenow'));
+    const nameInput = parent.querySelector('.hs-prompt input') as HTMLInputElement;
+    const saveBtn = parent.querySelector('.hs-prompt button') as HTMLButtonElement;
+    nameInput.value = 'WithTimbre';
+    saveBtn.click();
+    const stored = loadPatches();
+    expect(stored[0]?.timbre?.pad).toBeCloseTo(newVal, 6);
     panel.unmount();
   });
 

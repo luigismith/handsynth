@@ -28,6 +28,15 @@ export const UI_STYLES = `
   --hs-orange-glow:  #ff8c4a;
   --hs-amber:        #ffaa44;
   --hs-warning:      #ff3030;
+
+  /* Sparse contrast accents. Use very sparingly — these are NOT primary
+   * brand colors, they exist purely for occasional "info" / "warning"
+   * highlights where the orange palette would read as just-another-glow.
+   * HSB(195, 60%, 95%) ≈ #61cef2  — cool cyan for info
+   * HSB(310, 70%, 95%) ≈ #f249d6  — hot magenta for caution / standout */
+  --hs-accent-cyan:    #61cef2;
+  --hs-accent-magenta: #f249d6;
+
   --hs-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -150,6 +159,32 @@ export const UI_STYLES = `
   color: var(--hs-text-dim);
   letter-spacing: 1.2px;
   text-transform: uppercase;
+  /* Anchor for the loading-dots pseudo-element. */
+  position: relative;
+}
+/* Three loading dots that cycle their brightness slowly. Sits just above
+ * the cheats line — reads as "system ready / standing by" furniture
+ * underneath the primary CTA. Pure CSS via keyframes; dropped under
+ * prefers-reduced-motion (see the @media block at the bottom of the
+ * stylesheet). */
+.hs-onboard-cheats::before {
+  content: '\\2022\\2002\\2022\\2002\\2022';
+  /* U+2022 BULLET separated by U+2002 EN SPACE — renders as three small
+   * dots with consistent spacing across monospace stacks. */
+  display: block;
+  text-align: center;
+  font-family: var(--hs-mono);
+  font-size: 14px;
+  letter-spacing: 0;
+  line-height: 1;
+  color: var(--hs-orange);
+  opacity: 0.55;
+  margin: 0 0 10px 0;
+  animation: hs-load-dots 1800ms ease-in-out infinite;
+}
+@keyframes hs-load-dots {
+  0%, 100% { opacity: 0.25; letter-spacing: 0; }
+  50%      { opacity: 0.85; letter-spacing: 1px; }
 }
 .hs-onboard-error {
   margin-top: 14px;
@@ -411,6 +446,59 @@ export const UI_STYLES = `
   padding-top: 8px;
   border-top: 1px solid var(--hs-grey);
 }
+.hs-settings-section-header {
+  /* Holds the section label on the left and an action chip (SMART pill,
+   * etc.) on the right, on the same row as the label. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.hs-settings-section-header .hs-settings-section-label {
+  margin-bottom: 0;
+}
+
+/* SMART pill — small toggle anchored to the Voice section header. Visually
+ * a tighter relative of .hs-preset-chip: same notched-cyberpunk silhouette,
+ * smaller, dimmer when OFF, filled orange when ON. */
+.hs-smart-pill {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--hs-grey-2);
+  color: var(--hs-text-dim);
+  font-family: var(--hs-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  height: 18px;
+  min-width: 44px;
+  border-radius: 999px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+.hs-smart-pill:hover {
+  color: var(--hs-text);
+  border-color: var(--hs-orange-glow);
+}
+.hs-smart-pill:focus-visible {
+  outline: 2px solid var(--hs-orange);
+  outline-offset: 2px;
+}
+.hs-smart-pill.hs-smart-pill-on {
+  background: var(--hs-orange);
+  border-color: var(--hs-orange);
+  color: #0a0a0c;
+  box-shadow: 0 0 8px rgba(255, 140, 74, 0.45);
+}
+.hs-smart-pill.hs-smart-pill-on:hover {
+  background: var(--hs-amber);
+  border-color: var(--hs-amber);
+}
+
 .hs-settings-section-label {
   font-family: var(--hs-mono);
   font-size: 9px;
@@ -485,12 +573,20 @@ export const UI_STYLES = `
     0 2px 4px rgba(0, 0, 0, 0.6);
 }
 .hs-knob-indicator {
+  /* The active-position needle. Renders as a 2-stop linear gradient from
+   * --hs-orange-dim (base — "shadow root") to --hs-orange (tip — "lit
+   * head"). Adds depth without breaking the cyberpunk monochrome read:
+   * the gradient still lives entirely inside the warm orange palette. */
   position: absolute;
   left: 50%;
   top: 50%;
   width: 2px;
   height: 18px;
-  background: var(--hs-orange);
+  background: linear-gradient(
+    to top,
+    var(--hs-orange-dim) 0%,
+    var(--hs-orange) 100%
+  );
   transform-origin: 50% 100%;
   transform: translate(-50%, -100%);
   border-radius: 0;
@@ -759,13 +855,29 @@ export const UI_STYLES = `
   flex-wrap: wrap;
   gap: 8px;
   padding: 4px 8px;
-  background: rgba(0, 0, 0, 0.22);
+  /* Layered background:
+   *   1. Base panel tint (rgba black)
+   *   2. Faint diagonal-stripe pattern at 45° (1px on, 3px off, ~8%
+   *      orange alpha) — gives the status bar a CRT-overlay feel
+   *      without competing with the readable text on top.
+   * Stripes are non-animated and live inside the background-image so
+   * they don't affect layout. The stripe color is the warm accent
+   * (--hs-orange-glow) at low alpha to stay consistent with the panel
+   * border tint. */
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 140, 74, 0.08) 0 1px,
+      transparent 1px 4px
+    ),
+    rgba(0, 0, 0, 0.22);
   border-bottom: 1px solid rgba(255, 106, 20, 0.18);
   font-size: 10px;
   color: var(--hs-text);
   letter-spacing: 0.6px;
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
+  position: relative;
 }
 .hs-term-status .hs-term-rec {
   width: 8px;
@@ -1013,10 +1125,28 @@ export const UI_STYLES = `
   border-color: var(--hs-orange);
   color: #0a0a0c;
   opacity: 1;
+  /* Hover-target needs to be relative so the ::after chevron anchors
+   * to the button's bottom-right corner. */
+  position: relative;
 }
 .hs-hud-btn.hs-hud-active:hover {
   background: var(--hs-amber);
   border-color: var(--hs-amber);
+}
+/* Small ◢ chevron decoration in the bottom-right of the active state.
+ * Pure CSS triangle via clip-path — no SVG, no extra DOM. Sits on top
+ * of the filled background as a darker "notch" cue so the active state
+ * reads as deliberate UI furniture rather than just a color swap. */
+.hs-hud-btn.hs-hud-active::after {
+  content: '';
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 6px;
+  height: 6px;
+  background: rgba(10, 10, 12, 0.7);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  pointer-events: none;
 }
 
 /* =========================================================================
@@ -1188,6 +1318,7 @@ export const UI_STYLES = `
 @media (prefers-reduced-motion: reduce) {
   .hs-onboard-card::after,
   .hs-onboard-btn,
+  .hs-onboard-cheats::before,
   .hs-term-status .hs-term-rec,
   .hs-terminal,
   .hs-preset-chip.hs-preset-flash,
@@ -1195,6 +1326,12 @@ export const UI_STYLES = `
   .hs-hud-btn {
     animation: none !important;
     transition: none !important;
+  }
+  /* Onboarding dots: keep them visible but freeze the pulse so they read
+   * as a static "•  •  •" indicator rather than nothing. */
+  .hs-onboard-cheats::before {
+    opacity: 0.55;
+    letter-spacing: 0;
   }
 }
 `;

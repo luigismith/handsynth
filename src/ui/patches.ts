@@ -10,16 +10,31 @@
 
 import type { AudioEngineParams, VibeId } from '@contracts/contracts';
 
-/** Bumped when the on-disk shape changes. Older payloads are dropped. */
+/**
+ * Bumped when the on-disk shape changes. Older payloads are dropped.
+ *
+ * The optional per-voice `timbre` block (added with the analog "WAVE"
+ * knob trio) does NOT require a version bump — pre-timbre patches load
+ * fine, the missing field falls back to the engine's default 0.5 mix.
+ */
 export const PATCH_SCHEMA_VERSION = 1;
 
 const STORAGE_KEY = 'handsynth.patches';
+
+/** Per-voice timbre knob values saved alongside the master FX params. */
+export interface PatchTimbre {
+  pad?: number;
+  lead?: number;
+  bass?: number;
+}
 
 export interface Patch {
   id: string;
   name: string;
   vibe: VibeId;
   params: Partial<AudioEngineParams>;
+  /** Optional per-voice "WAVE" knob trio. Absent on pre-v2 patches. */
+  timbre?: PatchTimbre;
   bpm: number;
   createdAt: number;
 }

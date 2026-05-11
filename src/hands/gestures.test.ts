@@ -14,6 +14,8 @@ import {
   computePalmRoll,
   computePinch,
   extendedFingerCount,
+  fingerCurl,
+  fingerCurls,
   isFist,
 } from './gestures';
 
@@ -278,6 +280,47 @@ describe('computePalmPitch', () => {
     const lm = openHand();
     lm[9] = { ...lm[9]!, z: -0.05 };
     expect(computePalmPitch(lm)).toBeLessThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-finger curl (re-exported from gesture-classifier)
+// ---------------------------------------------------------------------------
+
+describe('fingerCurl / fingerCurls (per-finger 0..1 scalars)', () => {
+  it('returns low curl values for an open hand (all fingers extended)', () => {
+    const lm = openHand();
+    const c = fingerCurls(lm);
+    expect(c.thumb).toBeLessThan(0.3);
+    expect(c.index).toBeLessThan(0.3);
+    expect(c.middle).toBeLessThan(0.3);
+    expect(c.ring).toBeLessThan(0.3);
+    expect(c.pinky).toBeLessThan(0.3);
+  });
+
+  it('returns high curl values for the four non-thumb fingers in a fist', () => {
+    const lm = fistHand();
+    const c = fingerCurls(lm);
+    expect(c.index).toBeGreaterThan(0.7);
+    expect(c.middle).toBeGreaterThan(0.7);
+    expect(c.ring).toBeGreaterThan(0.7);
+    expect(c.pinky).toBeGreaterThan(0.7);
+  });
+
+  it('fingerCurl named accessor matches fingerCurls fields', () => {
+    const lm = openHand();
+    expect(fingerCurl(lm, 'index')).toBe(fingerCurls(lm).index);
+    expect(fingerCurl(lm, 'pinky')).toBe(fingerCurls(lm).pinky);
+  });
+
+  it('curl scalars stay clamped to [0, 1] across both fixtures', () => {
+    for (const lm of [openHand(), fistHand()]) {
+      const c = fingerCurls(lm);
+      for (const v of [c.thumb, c.index, c.middle, c.ring, c.pinky]) {
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(1);
+      }
+    }
   });
 });
 

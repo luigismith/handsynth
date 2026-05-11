@@ -128,6 +128,88 @@ describe('AudioEngineImpl (smoke)', () => {
     }
   });
 
+  it('exposes setVoiceTimbre / getVoiceTimbre / getSmartVoicing and they default sanely', () => {
+    const eng = new AudioEngineImpl();
+    expect(typeof eng.setVoiceTimbre).toBe('function');
+    expect(typeof eng.getVoiceTimbre).toBe('function');
+    expect(typeof eng.getSmartVoicing).toBe('function');
+    // Default per-voice timbre is 0.5 (balanced mix).
+    expect(eng.getVoiceTimbre('pad')).toBe(0.5);
+    expect(eng.getVoiceTimbre('lead')).toBe(0.5);
+    expect(eng.getVoiceTimbre('bass')).toBe(0.5);
+    // Default smartVoicing is ON.
+    expect(eng.getSmartVoicing()).toBe(true);
+  });
+
+  it('setVoiceTimbre clamps to [0..1] and updates the cache', () => {
+    const eng = new AudioEngineImpl();
+    eng.setVoiceTimbre('pad', 0.75);
+    expect(eng.getVoiceTimbre('pad')).toBe(0.75);
+    eng.setVoiceTimbre('pad', -1);
+    expect(eng.getVoiceTimbre('pad')).toBe(0);
+    eng.setVoiceTimbre('pad', 99);
+    expect(eng.getVoiceTimbre('pad')).toBe(1);
+  });
+
+  it('setParams({ smartVoicing: false }) flips the toggle', () => {
+    const eng = new AudioEngineImpl();
+    expect(eng.getSmartVoicing()).toBe(true);
+    eng.setParams({ smartVoicing: false });
+    expect(eng.getSmartVoicing()).toBe(false);
+    eng.setParams({ smartVoicing: true });
+    expect(eng.getSmartVoicing()).toBe(true);
+  });
+
+  it('applyVoiceShape caches per-voice timbre from the shape', () => {
+    const eng = new AudioEngineImpl();
+    eng.applyVoiceShape({
+      pad: { timbre: 0.8 },
+      lead: { timbre: 0.2 },
+      bass: { timbre: 0.4 },
+    });
+    expect(eng.getVoiceTimbre('pad')).toBe(0.8);
+    expect(eng.getVoiceTimbre('lead')).toBe(0.2);
+    expect(eng.getVoiceTimbre('bass')).toBe(0.4);
+  });
+
+  it('smart router fans timbre out to voice engines on setParams', () => {
+    const eng = new AudioEngineImpl();
+    const padCalls: number[] = [];
+    const leadCalls: number[] = [];
+    const bassCalls: number[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).pad = { setTimbre: (v: number) => padCalls.push(v) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).lead = { setTimbre: (v: number) => leadCalls.push(v), setBrightness: () => {} };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).bass = { setTimbre: (v: number) => bassCalls.push(v) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).master = { setParams: () => {} };
+    // Push a low cutoff → pad gets +0.15 nudge → effective = 0.65, bass
+    // gets -0.15 → 0.35. Lead stays at 0.5.
+    eng.setParams({ filterCutoff: 500 });
+    expect(padCalls.at(-1)).toBeCloseTo(0.65, 6);
+    expect(bassCalls.at(-1)).toBeCloseTo(0.35, 6);
+    expect(leadCalls.at(-1)).toBeCloseTo(0.5, 6);
+  });
+
+  it('smart router contributes zero when smartVoicing is OFF', () => {
+    const eng = new AudioEngineImpl();
+    eng.setParams({ smartVoicing: false });
+    const padCalls: number[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).pad = { setTimbre: (v: number) => padCalls.push(v) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).lead = { setTimbre: () => {}, setBrightness: () => {} };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).bass = { setTimbre: () => {} };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (eng as any).master = { setParams: () => {} };
+    eng.setParams({ filterCutoff: 500 });
+    // Pad gets exactly the user-set 0.5 — no nudge.
+    expect(padCalls.at(-1)).toBeCloseTo(0.5, 6);
+  });
+
   // Regression: brightness fan-out to the lead voice is gated by a wider
   // epsilon than the master ε. Without this gate, every gesture frame that
   // moves the master brightness by ≥0.005 also reschedules the lead's

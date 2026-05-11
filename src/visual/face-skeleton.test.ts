@@ -11,6 +11,7 @@ import type { FaceState, FaceLandmark, Hand } from '@contracts/contracts';
 import {
   drawFaceSkeleton,
   drawFakeArms,
+  drawHandHalo,
   FACE_LEFT_EYE,
   FACE_LEFT_BROW,
   FACE_LIPS_INNER,
@@ -35,6 +36,8 @@ interface P5Stub {
   CLOSE: 'close';
   ADD: 'add';
   BLEND: 'blend';
+  width: number;
+  height: number;
   push(): void;
   pop(): void;
   translate(x: number, y: number): void;
@@ -47,6 +50,7 @@ interface P5Stub {
   blendMode(mode: unknown): void;
   bezier(...args: number[]): void;
   line(x1: number, y1: number, x2: number, y2: number): void;
+  circle(x: number, y: number, d: number): void;
   beginShape(): void;
   vertex(x: number, y: number): void;
   endShape(mode?: string): void;
@@ -62,6 +66,8 @@ function createStub(): P5Stub {
     CLOSE: 'close' as const,
     ADD: 'add' as const,
     BLEND: 'blend' as const,
+    width: 1280,
+    height: 720,
     push: rec('push'),
     pop: rec('pop'),
     translate: rec('translate'),
@@ -74,6 +80,7 @@ function createStub(): P5Stub {
     blendMode: rec('blendMode'),
     bezier: rec('bezier') as unknown as P5Stub['bezier'],
     line: rec('line') as unknown as P5Stub['line'],
+    circle: rec('circle') as unknown as P5Stub['circle'],
     beginShape: rec('beginShape'),
     vertex: rec('vertex') as unknown as P5Stub['vertex'],
     endShape: rec('endShape') as unknown as P5Stub['endShape'],
@@ -215,6 +222,29 @@ describe('drawFaceSkeleton', () => {
     expect(beginCount).toBeGreaterThanOrEqual(8);
   });
 
+  it('draws the face oval as TWO passes (outer glow + crisp inner stroke)', () => {
+    // Cosmetic polish: the oval gets a wider, low-alpha glow stroke
+    // behind the crisp 1.4-weight inner stroke. Other lines stay
+    // single-weight to keep the composition from getting mushy. We
+    // count the number of strokeWeight() values > 2.0 — those are the
+    // glow strokes (currently 2.1).
+    const s = createStub();
+    drawFaceSkeleton(
+      s as unknown as Parameters<typeof drawFaceSkeleton>[0],
+      makeFace(),
+      1280,
+      720,
+      0,
+    );
+    const wideStrokes = s.calls.filter(
+      (c) => c.fn === 'strokeWeight' && typeof c.args[0] === 'number' && (c.args[0] as number) > 2,
+    );
+    // At least one wide-stroke pass exists (the oval glow). The lip
+    // stroke at mouthOpen=0 stays under 2.0, so this isolates the
+    // oval glow specifically.
+    expect(wideStrokes.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('thickens the lip stroke when mouthOpen > 0.1', () => {
     const closedStub = createStub();
     drawFaceSkeleton(
@@ -301,3 +331,28 @@ describe('drawFakeArms', () => {
 // Removed: drawEyeLasers tests (5 cases) — the Superman laser-eyes feature
 // was deleted per user request. The FaceState.eyesWide scalar still exists
 // in the contract but no consumer uses it.
+
+describe('drawHandHalo', () => {
+  it('emits a paired R/B circle per fingertip (5 tips × 2 = 10 circles)', () => {
+    const s = createStub();
+    drawHandHalo(s as unknown as Parameters<typeof drawHandHalo>[0], makeHand('right'));
+    const circs = s.calls.filter((c) => c.fn === 'circle').length;
+    // FINGERTIP_INDICES has 5 entries; each emits 2 circles (red-shift
+    // + blue-shift). 5 × 2 = 10.
+    expect(circs).toBe(10);
+  });
+
+  it('uses both warm and cool stroke hues (R/B chromatic split)', () => {
+    const s = createStub();
+    drawHandHalo(s as unknown as Parameters<typeof drawHandHalo>[0], makeHand('left'));
+    const strokeHues = new Set<number>();
+    for (const c of s.calls) {
+      if (c.fn !== 'stroke') continue;
+      const h = c.args[0];
+      if (typeof h === 'number') strokeHues.add(h);
+    }
+    // We expect at least 2 distinct hues — one in the warm (red) family
+    // and one in the cool (blue) family.
+    expect(strokeHues.size).toBeGreaterThanOrEqual(2);
+  });
+});

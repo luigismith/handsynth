@@ -22,6 +22,12 @@
 //     by VibePreset.pad.detuneCents.
 //   * `subLevel` is normalized 0..1 (mix knob feel), not dB. The engine maps
 //     it to a dB curve (-Infinity at 0, 0 dB at 1).
+//   * `timbre` is the analog-synth "WAVE" knob (0..1). Each pitched voice
+//     now runs TWO oscillator stacks through a Tone.CrossFade — the
+//     `oscType`/`waveform` field selects the LEFT (A) oscillator and the
+//     engine hard-codes the RIGHT (B) "morph destination" per voice (sine
+//     for pad, pulse for lead, triangle for bass). 0 = pure A, 1 = pure B,
+//     0.5 = equal-power mix. Continuous, never abrupt — the "WAVE" feel.
 
 /**
  * Per-engine oscillator + envelope overlay applied on top of whatever the
@@ -39,6 +45,8 @@ export interface VoiceShape {
     attack?: number;
     /** Envelope release in seconds (0.5..6). */
     release?: number;
+    /** Continuous timbre morph 0..1 — crossfades A (waveform) ↔ B (sine). */
+    timbre?: number;
   };
   lead?: {
     /** OmniOscillator type. Common: 'fmsawtooth', 'fmsine', 'amsquare', 'pulse', 'sawtooth', 'square'. */
@@ -51,11 +59,15 @@ export interface VoiceShape {
     attack?: number;
     /** Envelope release in seconds. */
     release?: number;
+    /** Continuous timbre morph 0..1 — crossfades A (oscType) ↔ B (pulse). */
+    timbre?: number;
   };
   bass?: {
     /** OmniOscillator type. 'fatsquare' | 'fatsawtooth' | 'square' | 'triangle' | 'sine'. */
     waveform?: string;
     /** Sub-oscillator gain 0..1 (mix of sine sub layer below the main waveform). */
     subLevel?: number;
+    /** Continuous timbre morph 0..1 — crossfades A (waveform) ↔ B (triangle). */
+    timbre?: number;
   };
 }

@@ -75,10 +75,21 @@ export class VisualizerImpl implements Visualizer {
     face: null,
     videoCover: null,
     pulse: 0,
+    downbeatPulse: 0,
     fftBins: this.fftBins,
     hasAnalyser: false,
     reducedMotion: false,
+    // Start at 1 — when the sketch first boots the canvas reads as "live"
+    // until the no-hands timer arms. If no hands ever arrive this drops to
+    // 0 over IDLE_FADE_MS, giving an attractive sleep state.
+    presence: 1,
   };
+
+  // Idle-state tracking: when no hands have been seen for >IDLE_THRESHOLD_MS
+  // we lerp `state.presence` toward 0 over IDLE_FADE_MS. When hands return
+  // we lerp back toward 1 over the same duration.
+  private lastHandsSeenMs = performance.now();
+  private idleTimer: number | null = null;
 
   /**
    * Compute the video-to-canvas cover transform from the <video>'s intrinsic
@@ -246,6 +257,9 @@ export class VisualizerImpl implements Visualizer {
     // Subscribe to gesture updates.
     this.gestureUpdateHandler = (gestureState: GestureState): void => {
       this.state.hands = gestureState.hands;
+      if (gestureState.hands.length > 0) {
+        this.lastHandsSeenMs = performance.now();
+      }
     };
     deps.hands.on('gesture:update', this.gestureUpdateHandler);
 
@@ -270,8 +284,13 @@ export class VisualizerImpl implements Visualizer {
       onKick: (): void => undefined,
       onHat: (): void => undefined,
       onPerc: (): void => undefined,
-      onBeat: (_beat: number): void => {
+      onBeat: (beat: number): void => {
         this.state.pulse = 1.0;
+        // Beat-1 of each bar = downbeat. Sequencer emits beats as a
+        // monotonically increasing counter; first beat of every bar is
+        // beat % 4 === 0. We forward this as a one-shot pulse the sketch
+        // consumes on the next draw call.
+        if (beat % 4 === 0) this.state.downbeatPulse = 1.0;
       },
     };
     deps.music.on(this.musicEvents);
@@ -299,6 +318,29 @@ export class VisualizerImpl implements Visualizer {
       this.videoResizeHandler = (): void => this.updateVideoCover();
       v.addEventListener('loadedmetadata', this.videoLoadedMetaHandler, { once: true });
       v.addEventListener('resize', this.videoResizeHandler);
+    }
+
+    // Idle/presence tick — runs at 10 Hz on a setInterval to keep cost
+    // negligible. Computes the lerped `presence` 0..1 value from
+    // last-hand-seen wall clock:
+    //   - hands fresh (< IDLE_THRESHOLD_MS)        → target = 1
+    //   - hands absent (>= IDLE_THRESHOLD_MS)      → target = 0
+    // Lerp factor produces an ~800ms fade in either direction.
+    const IDLE_THRESHOLD_MS = 2000;
+    const IDLE_FADE_TAU_MS = 800 / 3; // 1 - e^(-3) ~= 0.95 at fade end
+    const IDLE_TICK_MS = 100;
+    if (typeof window !== 'undefined' && typeof window.setInterval === 'function') {
+      this.idleTimer = window.setInterval(() => {
+        const now = performance.now();
+        const sinceHand = now - this.lastHandsSeenMs;
+        const target = sinceHand > IDLE_THRESHOLD_MS ? 0 : 1;
+        // Exponential lerp: same coefficient regardless of direction.
+        const k = 1 - Math.exp(-IDLE_TICK_MS / IDLE_FADE_TAU_MS);
+        this.state.presence += (target - this.state.presence) * k;
+        if (Math.abs(this.state.presence - target) < 0.005) {
+          this.state.presence = target;
+        }
+      }, IDLE_TICK_MS) as unknown as number;
     }
 
     // Pull FFT data each animation frame. We use rAF here (not p5's draw
@@ -420,6 +462,11 @@ export class VisualizerImpl implements Visualizer {
     }
     this.rafHandle = null;
 
+    if (this.idleTimer !== null && typeof clearInterval === 'function') {
+      clearInterval(this.idleTimer);
+    }
+    this.idleTimer = null;
+
     // Restore the placeholder canvas (don't leak DOM state).
     if (this.hiddenPlaceholder) {
       this.hiddenPlaceholder.style.display = this.placeholderPrevDisplay ?? '';
@@ -437,8 +484,10 @@ export class VisualizerImpl implements Visualizer {
     this.state.hands = [];
     this.state.face = null;
     this.state.pulse = 0;
+    this.state.downbeatPulse = 0;
     this.state.hasAnalyser = false;
     this.state.reducedMotion = false;
+    this.state.presence = 1;
     // Keep the same Uint8Array reference, just zero it.
     this.fftBins.fill(0);
 
