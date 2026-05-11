@@ -1,10 +1,10 @@
 {
   "name": "handsynth",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "main": "electron/main.cjs",
-  "description": "Gestural synthesizer controlled by webcam hands. Tone.js + MediaPipe + p5.js.",
+  "description": "Gestural synthesizer for live performance — webcam-controlled, Tone.js + MediaPipe + p5.js.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
