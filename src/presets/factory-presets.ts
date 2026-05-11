@@ -105,10 +105,14 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // out the A-side characteristic waveform of every preset — making
     // them all sound like "sine pad + a hint of the original". Range
     // is now compressed to 0.0..0.4 so the A-side always dominates.
+    // STABILITY FIX: timbre defaults compressed to ≤0.1 across all voices so
+    // the TIMBRE_EDGE_EPS gate (0.1) keeps the engine A-side-only at preset
+    // load. Halves polyphony at preset-default — the cumulative MediaPipe +
+    // p5 + audio thread load was sometimes pushing the main thread over budget.
     voice: {
-      pad: { waveform: 'fatsawtooth', detuneCents: 24, attack: 1.5, release: 4, timbre: 0.20 },
-      lead: { oscType: 'fmsine', modIndex: 1.5, harmonicity: 1, attack: 0.05, release: 1.2, timbre: 0.10 },
-      bass: { waveform: 'fatsquare', subLevel: 0.5, timbre: 0.10 },
+      pad: { waveform: 'fatsawtooth', detuneCents: 24, attack: 1.5, release: 4, timbre: 0.10 },
+      lead: { oscType: 'fmsine', modIndex: 1.5, harmonicity: 1, attack: 0.05, release: 1.2, timbre: 0.05 },
+      bass: { waveform: 'fatsquare', subLevel: 0.5, timbre: 0.05 },
     },
   },
 
@@ -174,8 +178,8 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // a tiny sine sweetening (0.25) helps the long delay tail stay round
     // without piling up, but 60% sine was washing the smear entirely.
     voice: {
-      pad: { waveform: 'fmsquare', detuneCents: 18, attack: 0.8, release: 5, timbre: 0.25 },
-      lead: { oscType: 'fmsine', modIndex: 2, harmonicity: 0.5, attack: 0.1, release: 1.5, timbre: 0.15 },
+      pad: { waveform: 'fmsquare', detuneCents: 18, attack: 0.8, release: 5, timbre: 0.10 },
+      lead: { oscType: 'fmsine', modIndex: 2, harmonicity: 0.5, attack: 0.1, release: 1.5, timbre: 0.05 },
       bass: { waveform: 'fatsawtooth', subLevel: 0.85, timbre: 0.05 },
     },
   },
@@ -241,8 +245,8 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // keep it readable. Lead is similar — fmsine A is already smooth,
     // 0.65 pure-sine wash was killing the modulator shimmer.
     voice: {
-      pad: { waveform: 'triangle', detuneCents: 8, attack: 1.2, release: 5, timbre: 0.30 },
-      lead: { oscType: 'fmsine', modIndex: 0.8, harmonicity: 1, attack: 0.15, release: 1.2, timbre: 0.25 },
+      pad: { waveform: 'triangle', detuneCents: 8, attack: 1.2, release: 5, timbre: 0.10 },
+      lead: { oscType: 'fmsine', modIndex: 0.8, harmonicity: 1, attack: 0.15, release: 1.2, timbre: 0.10 },
       bass: { waveform: 'fatsawtooth', subLevel: 1.0, timbre: 0.10 },
     },
   },
@@ -280,9 +284,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // plays a louder pulse. Pull to 0.15-0.20 so the AM and pulse
     // characters dominate.
     voice: {
-      pad: { waveform: 'amsawtooth', detuneCents: 12, attack: 0.6, release: 3, timbre: 0.20 },
-      lead: { oscType: 'pulse', modIndex: 4, harmonicity: 1.5, attack: 0.02, release: 0.9, timbre: 0.15 },
-      bass: { waveform: 'fatsquare', subLevel: 0.6, timbre: 0.20 },
+      pad: { waveform: 'amsawtooth', detuneCents: 12, attack: 0.6, release: 3, timbre: 0.10 },
+      lead: { oscType: 'pulse', modIndex: 4, harmonicity: 1.5, attack: 0.02, release: 0.9, timbre: 0.05 },
+      bass: { waveform: 'fatsquare', subLevel: 0.6, timbre: 0.10 },
     },
   },
 
@@ -319,9 +323,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // the most B-side-heavy preset (SPACE = drift = round), but not so
     // far that the FM/AM motion gets buried.
     voice: {
-      pad: { waveform: 'fmsine', detuneCents: 28, attack: 2.5, release: 6, timbre: 0.40 },
-      lead: { oscType: 'amsine', modIndex: 5, harmonicity: 0.75, attack: 0.4, release: 2.5, timbre: 0.35 },
-      bass: { waveform: 'sine', subLevel: 0.95, timbre: 0.30 },
+      pad: { waveform: 'fmsine', detuneCents: 28, attack: 2.5, release: 6, timbre: 0.10 },
+      lead: { oscType: 'amsine', modIndex: 5, harmonicity: 0.75, attack: 0.4, release: 2.5, timbre: 0.10 },
+      bass: { waveform: 'sine', subLevel: 0.95, timbre: 0.10 },
     },
   },
 ] as const;

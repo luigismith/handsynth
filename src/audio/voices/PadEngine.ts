@@ -52,7 +52,7 @@ const PAD_MORPH_DESTINATION = 'sine';
  * Mid-morph values (epsilon < timbre < 1-epsilon) fire both sides so an
  * in-flight crossfade lands on already-sounding audio.
  */
-const TIMBRE_EDGE_EPS = 0.02;
+const TIMBRE_EDGE_EPS = 0.1;
 
 /**
  * The OmniOscillator type union accepted by Tone.Synth/PolySynth. Tone exports

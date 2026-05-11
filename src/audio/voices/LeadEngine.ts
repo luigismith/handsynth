@@ -44,7 +44,7 @@ const LEAD_MORPH_DESTINATION = 'pulse';
  * When timbre is parked at 0 or 1 we fire only the dominant side; mid-morph
  * we fire both so a crossfade lands on live audio.
  */
-const TIMBRE_EDGE_EPS = 0.02;
+const TIMBRE_EDGE_EPS = 0.1;
 
 export class LeadEngine {
   private mono: Tone.MonoSynth;
