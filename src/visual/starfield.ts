@@ -89,25 +89,24 @@ export interface HorizonGlow {
 export function createHorizonGlow(p: p5, width: number, height: number): HorizonGlow {
   let buf: p5.Graphics | null = null;
 
-  function rebuild(p: p5, w: number, h: number): void {
-    if (buf) buf.remove();
-    buf = p.createGraphics(w, h);
+  // BUG FIX (live capture v0.3.x): the previous `if (buf) buf.remove();
+  // buf = p.createGraphics(...)` pattern leaked a p5.Graphics every
+  // resize tick. p5.Element.remove() throws on stale parent ref →
+  // old buffer stays in p5's internal tracker → unbounded canvas
+  // memory growth → user's reported "rallenta sempre di più".
+  //
+  // Fix mirror of vignette/hexGrid in sketch.ts: paint the contents
+  // separately and reuse the buffer on resize via resizeCanvas + repaint.
+  function paint(w: number, h: number): void {
+    if (!buf) return;
+    buf.clear();
     buf.colorMode(p.HSB, 360, 100, 100, 1);
     buf.noStroke();
-    // Gradient via stacked thin rects from y = 70%h to y = h.
-    // Cyberpunk warm horizon: hue ramps from 18 (ORANGE_DARK) at the
-    // bottom to a faintly warmer-orange middle band. Brightness is kept
-    // low so it reads as a glow at the floor of the scene rather than a
-    // sunset.
     const startY = h * 0.72;
     const steps = 32;
     const stepH = (h - startY) / steps;
     for (let i = 0; i < steps; i += 1) {
       const t = i / (steps - 1);
-      // Hue 22 (ORANGE_HOT) → 18 (ORANGE_DARK) at the floor. Saturation
-      // strong; brightness ramps from 6 → 22 so the glow reads as a
-      // gradient toward the bottom edge. Alpha pow(t,1.6) keeps the top
-      // of the glow nearly transparent.
       const hue = 22 - t * 4;
       const sat = 90 - t * 10;
       const bri = 6 + t * 16;
@@ -117,11 +116,18 @@ export function createHorizonGlow(p: p5, width: number, height: number): Horizon
     }
   }
 
-  rebuild(p, width, height);
+  buf = p.createGraphics(width, height);
+  paint(width, height);
 
   return {
-    resize(p: p5, w: number, h: number): void {
-      rebuild(p, w, h);
+    resize(_p: p5, w: number, h: number): void {
+      if (!buf) return;
+      try {
+        buf.resizeCanvas(w, h);
+        paint(w, h);
+      } catch (e) {
+        console.warn('[horizon] resize failed', e);
+      }
     },
     draw(p: p5, w: number, h: number, intensity: number): void {
       if (!buf) return;

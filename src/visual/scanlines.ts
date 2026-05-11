@@ -46,29 +46,31 @@ export function createScanlineLayer(p: p5, width: number, height: number): Scanl
   let tearActiveUntil = 0;
   let tearY = 0;
 
+  // BUG FIX (live capture v0.3.x): the earlier try/catch prevented the
+  // crash but the old buffer stayed in p5's internal tracker every resize
+  // because .remove() threw before completing. Cumulative leak per resize
+  // tick → contributed to "rallenta sempre di più". Switched to reuse-via-
+  // resizeCanvas, mirroring the vignette / hexGrid / horizon fixes.
+  function paint(w: number): void {
+    if (!buf) return;
+    buf.clear();
+    buf.noStroke();
+    buf.fill(0, 0, 0, 46);
+    buf.rect(0, 0, w, 1);
+  }
+
   function rebuild(p: p5, w: number, _h: number): void {
     if (buf) {
       try {
-        buf.remove();
-      } catch {
-        // p5 v1 sometimes throws TypeError during Element.remove() when the
-        // element has been detached from its parent's _elements array via
-        // an HMR/resize race. The orphaned buffer will be GC'd; swallowing
-        // the throw prevents the draw loop from being interrupted on every
-        // frame (catastrophic FPS regression: 0.7 fps until silenced).
+        buf.resizeCanvas(w, PATTERN_HEIGHT);
+        paint(w);
+      } catch (e) {
+        console.warn('[scanlines] resize repaint failed', e);
       }
+      return;
     }
-    // Buffer is exactly one pattern tall — we tile vertically at draw time.
     buf = p.createGraphics(w, PATTERN_HEIGHT);
-    buf.noStroke();
-    buf.clear();
-    // 1px scanline at y=0. We use a neutral grey (GREY_DIM) at low alpha so
-    // the scanlines darken without tinting the underlying image cyan or blue.
-    // GREY_DIM in HSB is (240, 10, 42); rgba ≈ rgba(98, 100, 107, 0.18).
-    // Using a HSB-to-RGB approx: at 18% alpha the line reads as a faint
-    // graphite stripe.
-    buf.fill(0, 0, 0, 46); // ~18% alpha black tint = GREY_DIM at low alpha
-    buf.rect(0, 0, w, 1);
+    paint(w);
   }
 
   rebuild(p, width, height);
