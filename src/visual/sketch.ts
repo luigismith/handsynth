@@ -630,21 +630,36 @@ export function createSketch(
     resize(width: number, height: number): void {
       instance.resizeCanvas(width, height);
       if (scanlines) scanlines.resize(instance, width, height);
-      // BUG FIX (live console capture v0.3.1): vignette.remove() throws
-      // `TypeError: Cannot read properties of undefined (reading 'indexOf')`
-      // in p5.Element.remove when the buffer's DOM parent reference is
-      // stale (which happens routinely after the first resize cycle, or
-      // when devicePixelRatio shifts). The throw escapes the resize
-      // handler → escapes the RAF tick → p5 dies → visualizer freezes.
-      // Same family as the earlier scanlines.ts fix. Swallow remove()
-      // errors and let GC reclaim the old buffer.
+      // BUG FIX v2 (live capture: "rallenta sempre di più"):
+      // The earlier try/catch fix on .remove() prevented the crash but
+      // the OLD buffer stayed in p5's internal element tracker because
+      // .remove() threw before completing — so each resize tick leaked
+      // a vignette + a hexGrid p5.Graphics (2 buffers). Browsers fire
+      // resize spontaneously every 20-30 s on this layout (font load,
+      // devicePixelRatio jitter, video-stream dimension settling), so
+      // over 5 minutes that's ~15 leaked buffers = 50-100 MB canvas
+      // memory. Progressive slowdown + audio glitches inevitable.
+      //
+      // Fix: REUSE the existing buffer. resizeCanvas() on the
+      // p5.Graphics then re-paint via the paintVignette / paintHexGrid
+      // helpers (extracted from build* so they can run against an
+      // existing canvas). Zero allocations on resize tick. The .remove()
+      // call path is gone entirely.
       if (vignette) {
-        try { vignette.remove(); } catch { /* p5 internal */ }
-        vignette = buildVignette(instance, width, height);
+        try {
+          vignette.resizeCanvas(width, height);
+          paintVignette(vignette, width, height);
+        } catch (e) {
+          console.warn('[sketch] vignette repaint failed', e);
+        }
       }
       if (hexGrid) {
-        try { hexGrid.remove(); } catch { /* p5 internal */ }
-        hexGrid = buildHexGrid(instance, width, height);
+        try {
+          hexGrid.resizeCanvas(width, height);
+          paintHexGrid(hexGrid, width, height);
+        } catch (e) {
+          console.warn('[sketch] hexGrid repaint failed', e);
+        }
       }
       if (starfield) starfield.reset(width, height);
       if (horizon) horizon.resize(instance, width, height);
@@ -1148,26 +1163,32 @@ function drawFingerStrings(
 // Vignette (radial darkening toward edges) — charcoal corners on BG_PANEL.
 // ---------------------------------------------------------------------------
 
-function buildVignette(s: p5, w: number, h: number): p5.Graphics {
-  const g = s.createGraphics(w, h);
-  g.colorMode(s.HSB, 360, 100, 100, 1);
+/**
+ * Paint the vignette gradient into an existing graphics buffer. Separate
+ * from `buildVignette` so resize can REUSE the buffer instead of recreating
+ * (which leaks: p5.Element.remove() throws internally on resize cycles,
+ * leaving the old buffer in p5's internal element tracker → unbounded
+ * canvas memory growth → "rallenta sempre di più").
+ */
+function paintVignette(g: p5.Graphics, w: number, h: number): void {
+  g.clear();
+  g.colorMode(g.HSB, 360, 100, 100, 1);
   g.noStroke();
-  // Coarse radial gradient via concentric circles. Cheap and runs once.
   const cx = w / 2;
   const cy = h / 2;
   const maxR = Math.hypot(cx, cy);
   const steps = 32;
   for (let i = steps; i >= 0; i -= 1) {
     const t = i / steps;
-    // alpha ramps from 0 at center to ~0.6 at corners. Slightly stronger
-    // curvature for a tighter vignette ring.
     const a = Math.pow(t, 1.7) * 0.6;
-    // Use BG_PANEL darkened — rather than the previous deep blue. The
-    // result is a charcoal corner darkening that matches the cyberpunk
-    // palette.
     g.fill(BG_PANEL.h, BG_PANEL.s, Math.max(2, BG_PANEL.b - 4), a);
     g.circle(cx, cy, maxR * 2 * (1 - t * 0.05));
   }
+}
+
+function buildVignette(s: p5, w: number, h: number): p5.Graphics {
+  const g = s.createGraphics(w, h);
+  paintVignette(g, w, h);
   return g;
 }
 
@@ -1184,22 +1205,24 @@ function buildVignette(s: p5, w: number, h: number): p5.Graphics {
 
 const HEX_SIDE = 36;
 
-function buildHexGrid(s: p5, w: number, h: number): p5.Graphics {
-  const g = s.createGraphics(w, h);
-  g.colorMode(s.HSB, 360, 100, 100, 1);
+/**
+ * Paint the hex-grid tessellation into an existing graphics buffer. Same
+ * reuse rationale as `paintVignette` above.
+ */
+function paintHexGrid(g: p5.Graphics, w: number, h: number): void {
+  g.clear();
+  g.colorMode(g.HSB, 360, 100, 100, 1);
   g.noFill();
   g.strokeWeight(1);
   g.stroke(GREY_LINE.h, GREY_LINE.s, GREY_LINE.b, 0.08);
 
   const side = HEX_SIDE;
   const sqrt3 = Math.sqrt(3);
-  // Pointy-top hex: width = sqrt(3)*side, height = 2*side.
   const hexW = sqrt3 * side;
   const hexH = 2 * side;
   const colStep = hexW;
   const rowStep = (3 / 4) * hexH;
 
-  // Precompute the 6 corner offsets (pointy-top).
   const corners: Array<[number, number]> = [];
   for (let i = 0; i < 6; i += 1) {
     const a = (Math.PI / 180) * (60 * i - 30);
@@ -1218,6 +1241,10 @@ function buildHexGrid(s: p5, w: number, h: number): p5.Graphics {
       g.endShape(g.CLOSE);
     }
   }
+}
 
+function buildHexGrid(s: p5, w: number, h: number): p5.Graphics {
+  const g = s.createGraphics(w, h);
+  paintHexGrid(g, w, h);
   return g;
 }
