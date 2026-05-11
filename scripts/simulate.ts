@@ -78,8 +78,8 @@ async function main(): Promise<void> {
   }
 
   const observer = new Observer();
-  let simTime = 0;
-  const audio = new RecordingAudioEngine(observer, { now: () => simTime });
+  const clock = { t: 0 };
+  const audio = new RecordingAudioEngine(observer, { now: () => clock.t });
   await audio.init();
   const music = new MusicBrainImpl();
   const hands = new FakeHandTracker();
@@ -90,18 +90,13 @@ async function main(): Promise<void> {
   mapper.setVibe(VIBES[DEFAULT_VIBE]);
   mapper.start();
 
-  const origRecordParam = observer.recordParam.bind(observer);
-  observer.recordParam = (t, p) => {
-    simTime = Math.max(simTime, t);
-    origRecordParam(t, p);
-  };
-
   const player = new SyntheticPlayer({
     audio,
     music,
     hands,
     face,
     observer,
+    clock,
   });
 
   console.log(

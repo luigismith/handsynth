@@ -39,8 +39,8 @@ interface UnitHarness {
 
 function makeUnitHarness(): UnitHarness {
   const observer = new Observer();
-  let simTime = 0;
-  const audio = new RecordingAudioEngine(observer, { now: () => simTime });
+  const clock = { t: 0 };
+  const audio = new RecordingAudioEngine(observer, { now: () => clock.t });
   void audio.init();
   const hands = new FakeHandTracker();
   const face = new FakeFaceTracker();
@@ -54,19 +54,13 @@ function makeUnitHarness(): UnitHarness {
     faceCounts.push(1);
   });
 
-  // Drive simTime forward when the player emits.
-  const origRecordParam = observer.recordParam.bind(observer);
-  observer.recordParam = (t, p) => {
-    simTime = Math.max(simTime, t);
-    origRecordParam(t, p);
-  };
-
   const player = new SyntheticPlayer({
     audio,
     music: makeStubMusic(),
     hands,
     face,
     observer,
+    clock,
   });
 
   return { player, observer, hands, face, handCounts, faceCounts };

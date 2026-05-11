@@ -40,8 +40,12 @@ interface Harness {
 
 function makeHarness(): Harness {
   const observer = new Observer();
-  let simTime = 0;
-  const audio = new RecordingAudioEngine(observer, { now: () => simTime });
+  // Shared mutable clock — the SyntheticPlayer writes `clock.t` before each
+  // emit, and the RecordingAudioEngine reads it when stamping setParams
+  // calls. Without this shared ref, all calls in a single sync tick stamp
+  // with stale time and per-second bucketing collapses to the first second.
+  const clock = { t: 0 };
+  const audio = new RecordingAudioEngine(observer, { now: () => clock.t });
   const music = new MusicBrainImpl();
   const hands = new FakeHandTracker();
   const face = new FakeFaceTracker();
@@ -55,29 +59,14 @@ function makeHarness(): Harness {
   void audio.init();
   mapper.start();
 
-  // We need the simulator to set `simTime` so the RecordingAudioEngine
-  // timestamps each call. The simulator emits at increasing t; we tap into
-  // the hand emit to bump simTime forward. Use a small wrapper on the
-  // observer to detect.
-  const origRecordParam = observer.recordParam.bind(observer);
-  observer.recordParam = (t: number, p) => {
-    simTime = Math.max(simTime, t);
-    origRecordParam(t, p);
-  };
-
   const player = new SyntheticPlayer({
     audio,
     music,
     hands,
     face,
     observer,
+    clock,
   });
-  // Patch the player so `now` advances inside the simulator. We do this by
-  // monkey-wrapping the `play` to set simTime as it iterates — but cleaner:
-  // we expose simTime via a closure that the player itself updates via the
-  // observer's recordParam call (above). The advance-tick fast loop also
-  // calls the RecordingAudioEngine through the mapper, which calls
-  // setParams → recordParam → simTime update.
   return { player, observer, audio, music, mapper, hands, face };
 }
 
@@ -203,14 +192,14 @@ describe('synthetic performer — bug-hunt suite', () => {
         observer.assert.paramRangesValid();
 
         // Param-change rate ceiling. The InteractionMapper's diffParams
-        // throttling should keep this comfortably under 200/sec during
-        // steady-state. We exclude the first 2 seconds — known mapper
-        // startup transient (vibe-load cascade + pulse-register warmup +
-        // applyVoiceShape from the initial preset are clustered there).
-        // If the ceiling is ever breached in second 2+, that IS a bug —
-        // see Observer.assert.eventRateBounded docstring.
-        observer.assert.eventRateBounded('audio.setParams', 200, {
-          skipSeconds: 2,
+        // throttling SHOULD keep steady-state cumulative setParams calls
+        // around 24-30/sec (one per hand frame, possibly fanned out by
+        // the per-finger layer). 100/sec is a generous ceiling — if
+        // breached, something is over-emitting.
+        // skipSeconds=3 — exclude warmup (vibe-load cascade + pulse
+        // register warmup + initial preset apply cluster in 0-2s).
+        observer.assert.eventRateBounded('audio.setParams', 100, {
+          skipSeconds: 3,
         });
       } finally {
         mapper.stop();
@@ -221,6 +210,29 @@ describe('synthetic performer — bug-hunt suite', () => {
       expect(observer.paramCalls.length).toBeGreaterThan(0);
     });
   }
+
+  it('REGRESSION: setParams calls are distributed across all seconds, not piled at t=0', async () => {
+    // Self-bug found by the simulator: an earlier version of the harness
+    // didn't propagate the simulator clock into the RecordingAudioEngine,
+    // so every setParams call stamped t=0 → all events landed in the
+    // first per-second bucket → the eventRateBounded assertion was
+    // silently checking nothing past second 0 (because skipSeconds:3
+    // skipped the only bucket with any data).
+    //
+    // This test pins the fix: a 10-second rhythmic run must have non-
+    // trivial setParams calls in every second 0..9.
+    const { player, observer, mapper, music } = makeHarness();
+    await player.play(rhythmic, 10, { fast: true, seed: 42 });
+    mapper.stop();
+    music.stop();
+
+    const buckets = observer.metricsPerSecond();
+    expect(buckets).toHaveLength(10);
+    for (const b of buckets) {
+      expect(b.paramCallCount).toBeGreaterThan(15);
+      expect(b.paramCallCount).toBeLessThan(60);
+    }
+  });
 
   it('all 7 profiles in PROFILES registry are exported', () => {
     expect(Object.keys(PROFILES)).toHaveLength(7);

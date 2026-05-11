@@ -36,13 +36,29 @@ export interface PlayOpts {
   seed?: number;
 }
 
+/**
+ * Shared mutable clock reference. The player updates `.t` before every
+ * emit, and the RecordingAudioEngine (passed `now: () => clock.t`) reads
+ * it when stamping each setParams call. Without this, all calls inside a
+ * single sync tick stamp with stale time and the per-second bucketing
+ * collapses everything into one bucket — bug surfaced by the bug-hunt
+ * suite's own diagnostic against itself.
+ */
+export interface SimulatorClock {
+  t: number;
+}
+
 export class SyntheticPlayer {
   private readonly deps: SyntheticPlayerDeps;
   private readonly observer: Observer;
+  private readonly clock: SimulatorClock | null;
 
-  constructor(deps: SyntheticPlayerDeps & { observer: Observer }) {
+  constructor(
+    deps: SyntheticPlayerDeps & { observer: Observer; clock?: SimulatorClock },
+  ) {
     this.deps = deps;
     this.observer = deps.observer;
+    this.clock = deps.clock ?? null;
   }
 
   /**
@@ -133,6 +149,10 @@ export class SyntheticPlayer {
       }
     };
 
+    const advance = (t: number): void => {
+      if (this.clock) this.clock.t = t;
+    };
+
     if (opts.fast) {
       // Pure deterministic loop — no real timers involved.
       while (tNow < durationSec) {
@@ -140,6 +160,7 @@ export class SyntheticPlayer {
         const tNext = Math.min(tHand, tFace);
         tNow = tNext;
         if (tNow > durationSec) break;
+        advance(tNow);
         drainEventsUpTo(tNow);
         if (tHand <= tFace) {
           fireHand(tHand);
@@ -150,6 +171,7 @@ export class SyntheticPlayer {
         }
       }
       // Final drain of any panel events scheduled at/after durationSec.
+      advance(durationSec);
       drainEventsUpTo(durationSec);
     } else {
       // Live mode — use real setInterval-style sleeps so the visualizer can
@@ -161,6 +183,7 @@ export class SyntheticPlayer {
         const tNext = Math.min(tHand, tFace);
         tNow = tNext;
         if (tNow > durationSec) break;
+        advance(tNow);
         drainEventsUpTo(tNow);
         if (tHand <= tFace) {
           fireHand(tHand);
@@ -178,6 +201,7 @@ export class SyntheticPlayer {
           lastWallSleep = sleepMs;
         }
       }
+      advance(durationSec);
       drainEventsUpTo(durationSec);
     }
 
