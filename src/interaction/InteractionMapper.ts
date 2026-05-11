@@ -376,50 +376,47 @@ const PER_FINGER_WEIGHT = 0.35;
  * Gamma curves push more change into the early-flex region so the user
  * hears the parameter move as soon as the finger starts to bend.
  */
+// PERF: module-level pre-allocated buffer for mapRightFingers output.
+// Was a new object literal returned per call (~24/sec at hand emit rate).
+// Single allocation at module load; mutated and returned on every call.
+const RIGHT_FINGERS_OUT = {
+  delayFeedback: 0,
+  filterCutoff: 0,
+  reverbWet: 0,
+  brightnessOffset: 0,
+  delayWet: 0,
+};
+
 function mapRightFingers(fingers: {
   thumb: number;
   index: number;
   middle: number;
   ring: number;
   pinky: number;
-}): {
-  delayFeedback: number;
-  filterCutoff: number;
-  reverbWet: number;
-  brightnessOffset: number;
-  delayWet: number;
-} {
+}): typeof RIGHT_FINGERS_OUT {
   // Extended-ness = 1 - curl; gamma applied to extended-ness so the early
   // unfurling of a finger produces a big change.
   const tExt = (curl: number, gamma: number): number =>
     Math.pow(1 - clamp01(curl), gamma);
 
-  // thumb: delayFeedback 0.7 (extended) → 0.1 (curled). wet sound is the
-  // "open" reading; gamma 0.7 makes early opening already audibly more wet.
   const thumbT = tExt(fingers.thumb, 0.7);
-  const delayFeedback = lerp(0.1, 0.7, thumbT);
+  RIGHT_FINGERS_OUT.delayFeedback = lerp(0.1, 0.7, thumbT);
 
-  // index: filterCutoff 14 kHz (extended) → 600 Hz (curled). Log curve in
-  // Hz so an even flex feels musically linear.
   const idxT = tExt(fingers.index, 0.7);
   const logMin = Math.log(600);
   const logMax = Math.log(14000);
-  const filterCutoff = Math.exp(logMin + (logMax - logMin) * idxT);
+  RIGHT_FINGERS_OUT.filterCutoff = Math.exp(logMin + (logMax - logMin) * idxT);
 
-  // middle: reverbWet 0.85 (extended) → 0.05 (curled). gamma 0.7.
   const midT = tExt(fingers.middle, 0.7);
-  const reverbWet = lerp(0.05, 0.85, midT);
+  RIGHT_FINGERS_OUT.reverbWet = lerp(0.05, 0.85, midT);
 
-  // ring: brightness OFFSET. curl=0 → +0.15, curl=1 → -0.15. linear around
-  // the midpoint; no gamma because the offset is small and bipolar.
   const ringSigned = (1 - clamp01(fingers.ring)) * 2 - 1; // -1..+1
-  const brightnessOffset = ringSigned * 0.15;
+  RIGHT_FINGERS_OUT.brightnessOffset = ringSigned * 0.15;
 
-  // pinky: delayWet 0.6 (extended) → 0.05 (curled). gamma 0.8.
   const pkT = tExt(fingers.pinky, 0.8);
-  const delayWet = lerp(0.05, 0.6, pkT);
+  RIGHT_FINGERS_OUT.delayWet = lerp(0.05, 0.6, pkT);
 
-  return { delayFeedback, filterCutoff, reverbWet, brightnessOffset, delayWet };
+  return RIGHT_FINGERS_OUT;
 }
 
 /**
@@ -442,52 +439,41 @@ function mapRightFingers(fingers: {
  *                so the user can "set" a tremolo without doing the wave
  *                velocity gesture. Documented compromise.)
  */
+// PERF: same pre-allocated buffer pattern as mapRightFingers.
+const LEFT_FINGERS_OUT = {
+  saturatorDrive: 0,
+  filterResonance: 0,
+  reverbWetExtra: 0,
+  masterDuckOffset: 0,
+  tremoloDepth: 0,
+};
+
 function mapLeftFingers(fingers: {
   thumb: number;
   index: number;
   middle: number;
   ring: number;
   pinky: number;
-}): {
-  saturatorDrive: number;
-  filterResonance: number;
-  reverbWetExtra: number;
-  masterDuckOffset: number;
-  tremoloDepth: number;
-} {
+}): typeof LEFT_FINGERS_OUT {
   const tExt = (curl: number, gamma: number): number =>
     Math.pow(1 - clamp01(curl), gamma);
 
-  // thumb: saturatorDrive 2.6 → 0.8 (gamma 0.75 matches mapLeftOpenness).
   const thumbT = tExt(fingers.thumb, 0.75);
-  const saturatorDrive = lerp(DRIVE_MIN, DRIVE_MAX, thumbT);
+  LEFT_FINGERS_OUT.saturatorDrive = lerp(DRIVE_MIN, DRIVE_MAX, thumbT);
 
-  // index: filter Q 12 → 1.5 (exponential since Q reads perceptually as
-  // sudden resonance past ~4; gamma 1.4 mirrors mapLeftOpenness).
   const idxT = tExt(fingers.index, 1.4);
-  const filterResonance = lerp(1.5, 12, idxT);
+  LEFT_FINGERS_OUT.filterResonance = lerp(1.5, 12, idxT);
 
-  // middle: extra reverbWet, layered ADDITIVELY in applyPerFingerMappings.
-  // gamma 0.7. Compromise documented above (no separate decay API).
   const midT = tExt(fingers.middle, 0.7);
-  const reverbWetExtra = lerp(0.05, 0.7, midT);
+  LEFT_FINGERS_OUT.reverbWetExtra = lerp(0.05, 0.7, midT);
 
-  // ring: masterDuck OFFSET. curl=0 (extended) → -0.10 (boost), curl=1 → +0.10 (duck).
   const ringSigned = (1 - clamp01(fingers.ring)) * 2 - 1; // -1..+1
-  const masterDuckOffset = -ringSigned * 0.10; // extended ring -> negative offset = louder
+  LEFT_FINGERS_OUT.masterDuckOffset = -ringSigned * 0.10;
 
-  // pinky: tremolo depth proxy = curl-side reading; per the brief "tremolo
-  // depth" rises as the pinky CURLS. Gamma 0.85.
   const pkCurl = clamp01(fingers.pinky);
-  const tremoloDepth = Math.pow(pkCurl, 0.85);
+  LEFT_FINGERS_OUT.tremoloDepth = Math.pow(pkCurl, 0.85);
 
-  return {
-    saturatorDrive,
-    filterResonance,
-    reverbWetExtra,
-    masterDuckOffset,
-    tremoloDepth,
-  };
+  return LEFT_FINGERS_OUT;
 }
 
 /** A timestamped meanHeight sample for the rolling window. */
@@ -1149,7 +1135,14 @@ export class InteractionMapperImpl implements InteractionMapper {
     const lf = left?.fingers;
     if (!rf && !lf) return target;
 
-    const out: Partial<AudioEngineParams> = { ...target };
+    // PERF: mutate `target` in place — was `const out = { ...target }`
+    // which allocated a fresh Partial<AudioEngineParams> every gesture
+    // frame at 24 Hz. The cumulative GC pressure (this method + 3
+    // sibling applyXxxModulation methods + 2 map* helpers, ~8 allocs ×
+    // 24 Hz ≈ 200 objects/sec) was contributing to main-thread stalls
+    // and the audio glitches reported by the user. Same return contract
+    // (returns the mutated target ref).
+    const out = target;
     const w = PER_FINGER_WEIGHT;
 
     if (rf) {
@@ -1249,7 +1242,8 @@ export class InteractionMapperImpl implements InteractionMapper {
     target: Partial<AudioEngineParams>,
     state: GestureState,
   ): Partial<AudioEngineParams> {
-    const out: Partial<AudioEngineParams> = { ...target };
+    // PERF: in-place mutation (see applyPerFingerMappings comment).
+    const out = target;
 
     // Depth → masterDuck. Far (depth=0) ducks the master by HAND_3D_DUCK_FAR;
     // close (depth=1) leaves the master un-ducked. Additive on whatever
@@ -1297,7 +1291,8 @@ export class InteractionMapperImpl implements InteractionMapper {
     const f = this.lastFace;
     if (!f) return target;
 
-    const out: Partial<AudioEngineParams> = { ...target };
+    // PERF: in-place mutation (see applyPerFingerMappings comment).
+    const out = target;
 
     if (f.detected) {
       // Reverb wet: blend hand-driven reverb with the depth-mapped face value.
@@ -1629,7 +1624,8 @@ export class InteractionMapperImpl implements InteractionMapper {
   private applyDiscreteGesturePulses(
     target: Partial<AudioEngineParams>,
   ): Partial<AudioEngineParams> {
-    const out: Partial<AudioEngineParams> = { ...target };
+    // PERF: in-place mutation (see applyPerFingerMappings comment).
+    const out = target;
     const now = performance.now();
 
     // point → filterResonance spike
