@@ -184,13 +184,29 @@ export class LeadEngine {
     time?: number | string,
   ): void {
     const v = Math.max(0.01, Math.min(1, velocity));
-    const t = time ?? Tone.now();
+    // FREEZE FIX (live console capture): if `time` is older than the
+    // synth's last scheduled time, Tone.js throws
+    //   "The time must be greater than or equal to the last scheduled time"
+    // The throw escapes back through the Transport tick loop → corrupts
+    // Transport's internal _timeline → every subsequent tick throws
+    //   "Cannot read properties of undefined (reading 'time')"
+    // → main thread stalled continuously → freeze.
+    //
+    // Clamp `t` to `max(time, now)` so we never schedule in the past, and
+    // wrap the trigger in try/catch so any remaining Tone refusal
+    // (overlapping envelope, MonoSynth retrigger conflict) doesn't escape
+    // the tick handler and corrupt Transport. Worst case: that single note
+    // doesn't play; better than freezing the app.
+    const now = Tone.now();
+    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
     const tim = this.currentTimbre;
     if (tim < 1 - TIMBRE_EDGE_EPS) {
-      this.mono.triggerAttackRelease(note, duration, t, v);
+      try { this.mono.triggerAttackRelease(note, duration, t, v); }
+      catch (e) { console.warn('[lead] mono trigger refused', e); }
     }
     if (tim > TIMBRE_EDGE_EPS) {
-      this.monoB.triggerAttackRelease(note, duration, t, v);
+      try { this.monoB.triggerAttackRelease(note, duration, t, v); }
+      catch (e) { console.warn('[lead] monoB trigger refused', e); }
     }
   }
 

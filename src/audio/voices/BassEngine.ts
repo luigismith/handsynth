@@ -239,18 +239,24 @@ export class BassEngine {
     time?: number | string,
   ): void {
     const v = Math.max(0.01, Math.min(1, velocity));
-    const t = time ?? Tone.now();
+    // FREEZE FIX: see LeadEngine.trigger for the full explanation. Clamp
+    // time to max(time, now) and wrap each trigger in try/catch so a Tone
+    // refusal can't escape and corrupt Transport's _timeline.
+    const now = Tone.now();
+    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
     const tim = this.currentTimbre;
     if (tim < 1 - TIMBRE_EDGE_EPS) {
-      this.main.triggerAttackRelease(note, duration, t, v);
+      try { this.main.triggerAttackRelease(note, duration, t, v); }
+      catch (e) { console.warn('[bass] main trigger refused', e); }
     }
     if (tim > TIMBRE_EDGE_EPS) {
-      this.mainB.triggerAttackRelease(note, duration, t, v);
+      try { this.mainB.triggerAttackRelease(note, duration, t, v); }
+      catch (e) { console.warn('[bass] mainB trigger refused', e); }
     }
     if (this.subEnabled) {
-      // Sub plays one octave down. Use Tone.Frequency to shift safely.
       const subNote = Tone.Frequency(note).transpose(-12).toNote();
-      this.sub.triggerAttackRelease(subNote, duration, t, v * 0.9);
+      try { this.sub.triggerAttackRelease(subNote, duration, t, v * 0.9); }
+      catch (e) { console.warn('[bass] sub trigger refused', e); }
     }
   }
 

@@ -286,20 +286,26 @@ export class PadEngine {
    * the gate.
    */
   triggerChord(event: ChordEvent): void {
-    const t = event.time ?? Tone.now();
+    // FREEZE FIX: see LeadEngine.trigger for the full explanation. Clamp
+    // time to max(time, now) and wrap each trigger in try/catch so a Tone
+    // refusal can't escape and corrupt Transport's _timeline.
+    const now = Tone.now();
+    const eventTime = event.time;
+    const t = typeof eventTime === 'number' ? Math.max(eventTime, now) : eventTime ?? now;
     const v = this.currentTimbre;
     const fireA = v < 1 - TIMBRE_EDGE_EPS;
     const fireB = v > TIMBRE_EDGE_EPS;
-    // Slight humanizing — different velocity per layer for stereo "thickness"
-    // (the layers have ±detune so they're not unison; varying velocity makes
-    // the doubled hits feel less stiff).
     if (fireA) {
-      this.layerA.triggerAttackRelease(event.notes, event.duration, t, 0.65);
-      this.layerB.triggerAttackRelease(event.notes, event.duration, t, 0.55);
+      try { this.layerA.triggerAttackRelease(event.notes, event.duration, t, 0.65); }
+      catch (e) { console.warn('[pad] layerA trigger refused', e); }
+      try { this.layerB.triggerAttackRelease(event.notes, event.duration, t, 0.55); }
+      catch (e) { console.warn('[pad] layerB trigger refused', e); }
     }
     if (fireB) {
-      this.layerC.triggerAttackRelease(event.notes, event.duration, t, 0.65);
-      this.layerD.triggerAttackRelease(event.notes, event.duration, t, 0.55);
+      try { this.layerC.triggerAttackRelease(event.notes, event.duration, t, 0.65); }
+      catch (e) { console.warn('[pad] layerC trigger refused', e); }
+      try { this.layerD.triggerAttackRelease(event.notes, event.duration, t, 0.55); }
+      catch (e) { console.warn('[pad] layerD trigger refused', e); }
     }
   }
 

@@ -105,20 +105,30 @@ export class PercEngine {
     }
   }
 
+  // FREEZE FIX: see LeadEngine.trigger for the full explanation. All
+  // percussion triggers wrapped in try/catch to prevent a Tone scheduler
+  // refusal from escaping back through Transport's tick loop and
+  // corrupting its _timeline.
+
   triggerKick(time?: number | string): void {
-    const t = time ?? Tone.now();
-    // 'C2' is the conventional MembraneSynth kick pitch.
-    this.kick.triggerAttackRelease('C2', '8n', t);
+    const now = Tone.now();
+    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    try { this.kick.triggerAttackRelease('C2', '8n', t); }
+    catch (e) { console.warn('[perc] kick refused', e); }
   }
 
   triggerHat(time?: number | string): void {
-    const t = time ?? Tone.now();
-    this.hat.triggerAttackRelease('32n', t);
+    const now = Tone.now();
+    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    try { this.hat.triggerAttackRelease('32n', t); }
+    catch (e) { console.warn('[perc] hat refused', e); }
   }
 
   triggerPerc(time?: number | string): void {
-    const t = time ?? Tone.now();
-    this.perc.triggerAttackRelease('16n', t);
+    const now = Tone.now();
+    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    try { this.perc.triggerAttackRelease('16n', t); }
+    catch (e) { console.warn('[perc] perc refused', e); }
   }
 
   dispose(): void {
