@@ -10,8 +10,8 @@
 //     control. This bounds the JS-side contribution to the total budget.
 //   - The remaining ~8ms of the 20ms budget (Tone.js scheduling → audible)
 //     is enforced at runtime inside the AudioEngine and the master chain.
-//     Manual verification steps for the audible side are listed in
-//     TEST_REPORT.md under "Recommended manual tests".
+//     Manual verification steps for the audible side: launch `pnpm preview`,
+//     play a gesture, measure with a DAW + sample-accurate clock.
 //
 // Pass criterion (this file): synthetic gesture → mapper → audio call must be
 // p95 ≤ 5ms on a developer machine, leaving the rest of the budget for

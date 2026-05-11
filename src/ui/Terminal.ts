@@ -363,10 +363,10 @@ export class TerminalImpl {
    *
    * Metrics — what each one means and what's normal:
    *
-   *   subs    — i18n subscriber count. Steady-state ≈ 7 (HudControls,
-   *             Onboarding/SettingsPanel/Terminal/HelpPanel/DebugPanel/
-   *             VibeSelector). Climbing means a panel is mounting without
-   *             unmounting; check for HMR ghosts.
+   *   subs    — i18n subscriber count. Steady-state ≈ 6 (HudControls,
+   *             Onboarding/SettingsPanel/Terminal/HelpPanel/VibeSelector).
+   *             Climbing means a panel is mounting without unmounting;
+   *             check for HMR ghosts.
    *   lines   — Terminal body line count. Capped at 60. If >60 → cap broken.
    *   voices  — approximate active Tone voice count, summed across the
    *             pad's two PolySynths, the lead MonoSynth, and the bass

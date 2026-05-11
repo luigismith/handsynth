@@ -12,7 +12,6 @@
 //   panel.help.*   in-app manual modal (HelpPanel)
 //   hud.*          bottom-right control strip
 //   terminal.*     translucent log HUD
-//   debug.*        DebugPanel (legacy, still in tree)
 //   factory.*      factory preset taglines
 //   vibe.*         vibe display names + taglines
 //   scale.*        scale dropdown labels
@@ -104,22 +103,6 @@ const dict = {
   // Terminal ----------------------------------------------------------------
   'terminal.ariaLabel': 'Terminal HUD',
   'terminal.ready': 'handsynth terminal ready · t toggle · esc mute · h help',
-
-  // DebugPanel (legacy) -----------------------------------------------------
-  'debug.toggle': 'CONTROLS',
-  'debug.toggleAria': 'Show controls panel',
-  'debug.title': 'CONTROLS',
-  'debug.hint': '? to toggle · double-click a slider to release control',
-  'debug.slider.cutoff': 'Filter cutoff (Hz)',
-  'debug.slider.q': 'Filter resonance Q',
-  'debug.slider.reverbWet': 'Reverb wet',
-  'debug.slider.delayFb': 'Delay feedback',
-  'debug.slider.drive': 'Saturator drive',
-  'debug.slider.brightness': 'Brightness',
-  'debug.slider.duck': 'Master duck',
-  'debug.slider.intensity': 'Intensity (overrides gesture)',
-  'debug.slider.bpm': 'BPM',
-  'debug.vibeLabel': 'Vibe',
 
   // Factory preset taglines (id-keyed) --------------------------------------
   'factory.init.tagline': 'Neutral knobs — clean reset on top of the current vibe.',

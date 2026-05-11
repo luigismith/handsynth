@@ -129,10 +129,10 @@ async function bootstrap(): Promise<void> {
   });
   vibeHost.removeAttribute('hidden');
 
-  // Phase 3.5: SettingsPanel is the single control surface. The previous
-  // DebugPanel ('controls' pill) was a duplicate of the same parameters
-  // and confused users — removed. SettingsPanel ("PATCH", gear icon)
-  // exposes everything it had plus the patch save/load system.
+  // Phase 3.5: SettingsPanel is the single control surface. (A previous
+  // "controls" debug pill was removed because it duplicated the same
+  // parameters; SettingsPanel "PATCH" gear-icon panel now covers everything
+  // including the patch save/load system.)
   const uiLayer = $('ui-layer');
   void uiLayer;
 

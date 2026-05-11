@@ -92,22 +92,6 @@ const dict: Record<EnDictKey, string> = {
   'terminal.ariaLabel': 'HUD terminale',
   'terminal.ready': 'handsynth terminale pronto · t apre · esc muto · h aiuto',
 
-  // DebugPanel (legacy) -----------------------------------------------------
-  'debug.toggle': 'CONTROLLI',
-  'debug.toggleAria': 'Mostra pannello controlli',
-  'debug.title': 'CONTROLLI',
-  'debug.hint': '? per aprire · doppio click su uno slider per rilasciare il controllo',
-  'debug.slider.cutoff': 'Filter cutoff (Hz)',
-  'debug.slider.q': 'Risonanza filtro Q',
-  'debug.slider.reverbWet': 'Riverbero wet',
-  'debug.slider.delayFb': 'Feedback delay',
-  'debug.slider.drive': 'Drive saturatore',
-  'debug.slider.brightness': 'Luminosita',
-  'debug.slider.duck': 'Master duck',
-  'debug.slider.intensity': 'Intensita (override gesto)',
-  'debug.slider.bpm': 'BPM',
-  'debug.vibeLabel': 'Vibe',
-
   // Factory preset taglines (id-keyed) --------------------------------------
   'factory.init.tagline': 'Manopole neutre — reset pulito sopra il vibe corrente.',
   'factory.lush.tagline': 'Pad ampio — molto riverbero, alti morbidi, risonanza bassa.',

@@ -40,6 +40,12 @@ import type { Hand, FaceLandmark, FaceState } from '@contracts/contracts';
 import { createParticleField, type ParticleField } from './particles';
 import { createScanlineLayer, type ScanlineLayer } from './scanlines';
 import { createStarfield, createHorizonGlow, type Starfield, type HorizonGlow } from './starfield';
+// `createBloom` is intentionally imported but currently unused at runtime
+// — bloom is OFF by default for performance (~3 fps cost on 2560×1215
+// Canvas2D). The import is preserved so the SettingsPanel re-enable path
+// can flip it on without an import-edit cycle. See the `bloom = null`
+// comment in `setup` below.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { createBloom, BLOOM_DOWNSCALE, type Bloom } from './bloom';
 import { createEnvelope, type Envelope } from './envelope';
 
@@ -156,14 +162,6 @@ const FINGER_STRING_PAIRS: ReadonlyArray<readonly [number, number]> = [
 const FINGERTIP_INDICES = [4, 8, 12, 16, 20] as const;
 // Palm landmarks used to compute hand center / radius.
 const PALM_INDICES = [0, 5, 9, 13, 17] as const;
-
-// MediaPipe FaceLandmarker eye-CORNER indices. Previously used by the now-
-// removed Superman laser-eyes overlay; kept exported in case downstream
-// visual tweaks want to anchor effects on the eye centroid.
-export const FACE_LEFT_EYE_OUTER_CORNER = 33;
-export const FACE_LEFT_EYE_INNER_CORNER = 133;
-export const FACE_RIGHT_EYE_OUTER_CORNER = 263;
-export const FACE_RIGHT_EYE_INNER_CORNER = 362;
 
 // MediaPipe FaceLandmarker indices for the visible-skeleton subset we draw.
 // These are exported for unit tests so we can verify the sketch is using

@@ -3,11 +3,9 @@
 // Polished analog-synth-style patch editor. Shown at top-right via the gear
 // toggle button (or the 'p' key). Owns 9 rotary knobs grouped by section,
 // a vibe dropdown, and a Patches sub-section that reads/writes localStorage.
-//
-// We deliberately do NOT replicate every DebugPanel slider here — DebugPanel
-// is the dev shortcut, this is the user-facing one. Both happily coexist:
-// the panel writes audio params via deps.audio.setParams; manual intensity is
-// exposed via deps.setManualIntensity (mirrors DebugPanel's contract).
+// Writes audio params via deps.audio.setParams; manual intensity is exposed
+// via deps.setManualIntensity for upstream callers that want to override
+// the gesture-derived value.
 
 import type {
   AudioEngine,

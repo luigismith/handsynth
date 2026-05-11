@@ -78,7 +78,7 @@ export function subscribeLang(cb: (lang: Lang) => void): () => void {
  * it on the DIAG row — a monotonic climb signals a panel mounting without
  * unmounting (HMR cycles or a future bug). Steady-state: one subscriber per
  * mounted panel that re-localises (today: HudControls + Onboarding +
- * SettingsPanel + Terminal + HelpPanel + DebugPanel + VibeSelector ≈ 7).
+ * SettingsPanel + Terminal + HelpPanel + VibeSelector ≈ 6).
  */
 export function getLangSubscriberCount(): number {
   return subscribers.size;
