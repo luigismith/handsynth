@@ -30,9 +30,10 @@ import {
  * by another agent and we deliberately don't extend it here. The concrete
  * `AudioEngineImpl` exposes `applyVoiceShape` for factory-preset timbre
  * overlays plus per-voice `setVoiceTimbre`/`getVoiceTimbre`/`getSmartVoicing`
- * for the analog "WAVE" knobs. We widen the dep type via this intersection
- * so SettingsPanel can call them without depending on the impl class. Each
- * call site guards in case the dep is a partial test stub.
+ * for the analog morph knobs, and `setVoiceWaveform`/`getVoiceWaveform` for
+ * the explicit waveform dropdown. We widen the dep type via this
+ * intersection so SettingsPanel can call them without depending on the impl
+ * class. Each call site guards in case the dep is a partial test stub.
  */
 type VoiceKey = 'pad' | 'lead' | 'bass';
 type AudioEngineExtended = AudioEngine & {
@@ -40,6 +41,8 @@ type AudioEngineExtended = AudioEngine & {
   setVoiceTimbre?: (voice: VoiceKey, value: number) => void;
   getVoiceTimbre?: (voice: VoiceKey) => number;
   getSmartVoicing?: () => boolean;
+  setVoiceWaveform?: (voice: VoiceKey, type: string) => void;
+  getVoiceWaveform?: (voice: VoiceKey) => string | null;
 };
 import { injectStyles } from './styles';
 import { Knob, type KnobOpts } from './Knob';
@@ -50,6 +53,10 @@ import {
   makePatchId,
   type Patch,
 } from './patches';
+import {
+  WAVEFORM_OPTIONS,
+  WAVEFORM_OPTION_IDS,
+} from '@presets/waveform-options';
 import { t, subscribeLang } from '../i18n';
 import type { DictKey } from '../i18n';
 
@@ -115,17 +122,21 @@ type KnobSection = 'Filter' | 'Drive' | 'Time FX' | 'Mix' | 'Tempo' | 'Voice';
  *     through audio.setParams.
  *   * 'bpm' → routed to Tone.Transport.
  *   * 'intensity' → routed to deps.setManualIntensity.
- *   * 'padTimbre' / 'leadTimbre' / 'bassTimbre' → the analog "WAVE" knobs,
- *     routed to audio.setVoiceTimbre(voice, v). They're NOT
+ *   * 'padMorph' / 'leadMorph' / 'bassMorph' → the analog crossfade morph
+ *     knobs, routed to audio.setVoiceTimbre(voice, v). They're NOT
  *     AudioEngineParams keys because they're per-voice (not master-level).
+ *     Renamed from `*Timbre` so the distinction with the new explicit
+ *     waveform-pick dropdowns is unambiguous: the dropdown chooses the
+ *     A-side waveform, the morph knob crossfades to the B-side
+ *     (sine / pulse / triangle).
  */
 type KnobId =
   | keyof AudioEngineParams
   | 'bpm'
   | 'intensity'
-  | 'padTimbre'
-  | 'leadTimbre'
-  | 'bassTimbre';
+  | 'padMorph'
+  | 'leadMorph'
+  | 'bassMorph';
 
 interface KnobDef {
   id: KnobId;
@@ -155,12 +166,14 @@ const KNOB_DEFS: KnobDef[] = [
   { id: 'masterDuck', label: 'Duck', labelKey: 'panel.patch.knob.duck', section: 'Mix', sectionKey: 'panel.patch.section.mix', min: 0, max: 1, step: 0.01, fallback: 0 },
   { id: 'intensity', label: 'Intens.', labelKey: 'panel.patch.knob.intens', section: 'Mix', sectionKey: 'panel.patch.section.mix', min: 0, max: 1, step: 0.01, fallback: 0.5 },
   { id: 'bpm', label: 'BPM', labelKey: 'panel.patch.knob.bpm', section: 'Tempo', sectionKey: 'panel.patch.section.tempo', min: 60, max: 180, step: 1, fallback: 92, digits: 0 },
-  // Per-voice analog "WAVE" knobs — crossfade A (vibe/preset oscillator)
-  // toward B (sine for pad, pulse for lead, triangle for bass). The
-  // continuous WAVE feel: 0..1, default 0.5 = balanced mix.
-  { id: 'padTimbre', label: 'Pad Wave', labelKey: 'panel.patch.knob.padTimbre', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
-  { id: 'leadTimbre', label: 'Lead Wave', labelKey: 'panel.patch.knob.leadTimbre', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
-  { id: 'bassTimbre', label: 'Bass Wave', labelKey: 'panel.patch.knob.bassTimbre', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
+  // Per-voice analog morph knobs — crossfade A (the dropdown-picked /
+  // vibe-default oscillator) toward B (sine for pad, pulse for lead,
+  // triangle for bass). Continuous, 0..1, default 0.5 = balanced mix.
+  // Each row in the VOCE section pairs ONE of these with the matching
+  // waveform-pick dropdown (built separately, see buildVoiceSection).
+  { id: 'padMorph', label: 'Pad Morph', labelKey: 'panel.patch.knob.padMorph', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
+  { id: 'leadMorph', label: 'Lead Morph', labelKey: 'panel.patch.knob.leadMorph', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
+  { id: 'bassMorph', label: 'Bass Morph', labelKey: 'panel.patch.knob.bassMorph', section: 'Voice', sectionKey: 'panel.patch.section.voice', min: 0, max: 1, step: 0.01, fallback: 0.5 },
 ];
 
 const SECTION_ORDER: KnobSection[] = ['Filter', 'Drive', 'Time FX', 'Mix', 'Tempo', 'Voice'];
@@ -176,10 +189,33 @@ const SECTION_KEY_BY_NAME: Record<KnobSection, DictKey> = {
 
 /** Map voice-knob ids → underlying voice key for audio.setVoiceTimbre. */
 const VOICE_KNOB_TO_VOICE: Partial<Record<KnobId, VoiceKey>> = {
-  padTimbre: 'pad',
-  leadTimbre: 'lead',
-  bassTimbre: 'bass',
+  padMorph: 'pad',
+  leadMorph: 'lead',
+  bassMorph: 'bass',
 };
+
+/**
+ * Per-voice metadata that drives the VOCE section rows. Each row has:
+ *   - a short uppercase tag (the i18n key resolves to "PAD" / "LEAD" / "BASS")
+ *   - a waveform dropdown bound to audio.setVoiceWaveform
+ *   - the morph knob from KNOB_DEFS (linked by `morphKnobId`)
+ * The order of this array is the visual top-to-bottom order in the section.
+ */
+interface VoiceRowDef {
+  voice: VoiceKey;
+  /** i18n key for the dropdown label (PAD WAVE / LEAD WAVE / BASS WAVE). */
+  waveLabelKey: DictKey;
+  /** i18n key for the dropdown's aria-label. */
+  waveAriaKey: DictKey;
+  /** Which KNOB_DEFS entry to render on the right of the row. */
+  morphKnobId: 'padMorph' | 'leadMorph' | 'bassMorph';
+}
+
+const VOICE_ROWS: readonly VoiceRowDef[] = [
+  { voice: 'pad',  waveLabelKey: 'panel.patch.voice.padWaveLabel',  waveAriaKey: 'panel.patch.voice.padWaveAria',  morphKnobId: 'padMorph' },
+  { voice: 'lead', waveLabelKey: 'panel.patch.voice.leadWaveLabel', waveAriaKey: 'panel.patch.voice.leadWaveAria', morphKnobId: 'leadMorph' },
+  { voice: 'bass', waveLabelKey: 'panel.patch.voice.bassWaveLabel', waveAriaKey: 'panel.patch.voice.bassWaveAria', morphKnobId: 'bassMorph' },
+] as const;
 
 function paramKnobInitial(
   def: KnobDef,
@@ -187,12 +223,12 @@ function paramKnobInitial(
 ): number {
   if (def.id === 'bpm') return current.bpm ?? def.fallback;
   if (def.id === 'intensity') return def.fallback; // mapper does not expose snapshot
-  // Voice timbre knobs are per-voice state on the AudioEngine, not on the
+  // Voice morph knobs are per-voice state on the AudioEngine, not on the
   // AudioEngineParams snapshot. We seed from the fallback (0.5) at mount;
   // the caller can sync from audio.getVoiceTimbre via a separate path if
   // needed (today the engine's userTimbre defaults to 0.5 too, so they
   // already agree).
-  if (def.id === 'padTimbre' || def.id === 'leadTimbre' || def.id === 'bassTimbre') {
+  if (def.id === 'padMorph' || def.id === 'leadMorph' || def.id === 'bassMorph') {
     return def.fallback;
   }
   const v = (current as Partial<AudioEngineParams>)[def.id];
@@ -220,6 +256,20 @@ export class SettingsPanelImpl {
   private patchResetVibeBtn: HTMLButtonElement | null = null;
   private sectionLabelEls = new Map<KnobSection | 'Vibe' | 'Patches', HTMLDivElement>();
   private presetChips: Array<{ chip: HTMLButtonElement; preset: FactoryPreset }> = [];
+  /**
+   * Per-voice waveform dropdowns. The `id` for each <option> is the
+   * OmniOscillator literal (sine / fatsawtooth / fmsine / …) so setting
+   * `.value` directly persists the user's pick. Held in a map so the
+   * factory-preset-apply path can mirror them without DOM queries.
+   */
+  private voiceSelectEls: Partial<Record<VoiceKey, HTMLSelectElement>> = {};
+  /**
+   * Tag elements (PAD / LEAD / BASS) at the start of each voice row — kept
+   * around so applyLang can refresh them if we ever localize the tags.
+   */
+  private voiceTagEls: Partial<Record<VoiceKey, HTMLDivElement>> = {};
+  /** Cache of dropdown label elements so applyLang can flip their text. */
+  private voiceWaveLabelEls: Map<VoiceKey, HTMLLabelElement> = new Map();
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private intensityOverride: number | null = null;
   private bpmCurrent = 92;
@@ -317,6 +367,16 @@ export class SettingsPanelImpl {
         header.appendChild(lbl);
         header.appendChild(pill);
         sec.appendChild(header);
+
+        // Voice section body: one row per voice with [tag, dropdown, morph
+        // knob]. Built by buildVoiceRow which also wires the dropdown to
+        // audio.setVoiceWaveform and registers the morph knob in this.knobs
+        // alongside the FX-section knobs.
+        for (const row of VOICE_ROWS) {
+          sec.appendChild(this.buildVoiceRow(row, initial));
+        }
+        card.appendChild(sec);
+        continue;
       }
 
       const grid = document.createElement('div');
@@ -557,6 +617,22 @@ export class SettingsPanelImpl {
       this.smartPillEl.title = t('panel.patch.smartTooltip');
     }
 
+    // VOCE section per-voice dropdown aria + label, and the morph knob
+    // tooltip on its dial.
+    for (const row of VOICE_ROWS) {
+      const sel = this.voiceSelectEls[row.voice];
+      if (sel) sel.setAttribute('aria-label', t(row.waveAriaKey));
+      const lbl = this.voiceWaveLabelEls.get(row.voice);
+      if (lbl) lbl.textContent = t(row.waveLabelKey);
+      // Morph knob: enrich the dial with a tooltip explaining the morph
+      // axis. setLabel above already wrote the localized knob name.
+      const knob = this.knobs.get(row.morphKnobId);
+      if (knob) {
+        const dial = knob.el.querySelector('.hs-knob-dial');
+        if (dial) dial.setAttribute('title', t('panel.patch.voice.morphAria'));
+      }
+    }
+
     // Refresh the patch list so the empty state + Load/Del buttons follow
     // the new lang.
     this.refreshPatchList();
@@ -591,6 +667,9 @@ export class SettingsPanelImpl {
     this.smartPillEl = null;
     this.sectionLabelEls.clear();
     this.presetChips = [];
+    this.voiceSelectEls = {};
+    this.voiceTagEls = {};
+    this.voiceWaveLabelEls.clear();
     if (this.keydownHandler) {
       window.removeEventListener('keydown', this.keydownHandler);
       this.keydownHandler = null;
@@ -664,6 +743,107 @@ export class SettingsPanelImpl {
     this.syncMusicRowFromBrain();
 
     row.append(keyLbl, keySel, scaleLbl, scaleSel, resetBtn);
+    return row;
+  }
+
+  /**
+   * Build one row of the VOCE section: short uppercase tag (PAD / LEAD /
+   * BASS) on the left, waveform dropdown in the middle, morph knob on the
+   * right. Dropdown writes through to audio.setVoiceWaveform; knob writes
+   * through to audio.setVoiceTimbre via the same path as every other knob
+   * (applyKnobValue → VOICE_KNOB_TO_VOICE).
+   *
+   * Initial dropdown selection: read from audio.getVoiceWaveform if the
+   * engine has a cached user pick, otherwise fall back to the active
+   * vibe / preset's per-voice default (vibe.pad.waveform, etc.). We do NOT
+   * eagerly invoke setVoiceWaveform on mount — that would mark every load
+   * as a user-pick and persist into saved patches even though the user
+   * didn't touch the dropdown. The cache is populated only when the user
+   * actually picks something OR when a factory preset applies (via
+   * applyVoiceShape's existing cache write-through).
+   */
+  private buildVoiceRow(
+    def: VoiceRowDef,
+    _initial: Partial<AudioEngineParams> & { bpm: number },
+  ): HTMLDivElement {
+    const row = document.createElement('div');
+    row.className = 'hs-voice-row';
+    row.dataset.voice = def.voice;
+
+    // Short uppercase tag — visible label so the user knows which voice
+    // each row controls. Hidden <label> for the dropdown is built below for
+    // a11y (htmlFor → dropdown id).
+    const tag = document.createElement('div');
+    tag.className = 'hs-voice-tag';
+    tag.textContent = def.voice.toUpperCase();
+    this.voiceTagEls[def.voice] = tag;
+
+    // Dropdown — reuses the visual styling of the KEY/SCALE selectors above.
+    const selectId = `hs-voice-${def.voice}-wave`;
+    const lbl = document.createElement('label');
+    lbl.className = 'hs-voice-wave-label';
+    lbl.htmlFor = selectId;
+    // Keep the label off-screen visually — the dropdown content is the
+    // visible label. We still set its textContent via applyLang so the
+    // string is real for accessibility tooling.
+    lbl.hidden = true;
+    this.voiceWaveLabelEls.set(def.voice, lbl);
+
+    const sel = document.createElement('select');
+    sel.id = selectId;
+    sel.className = 'hs-music-select';
+    sel.dataset.voiceWave = def.voice;
+    for (const opt of WAVEFORM_OPTIONS) {
+      const o = document.createElement('option');
+      o.value = opt.id;
+      o.textContent = opt.displayName;
+      sel.appendChild(o);
+    }
+
+    // Initial selection: prefer the engine's user-pick cache, then the
+    // active vibe's per-voice waveform.
+    const audio = this.deps?.audio as AudioEngineExtended | undefined;
+    const cached = audio?.getVoiceWaveform?.(def.voice) ?? null;
+    let initialWave: string | null = cached;
+    if (!initialWave && this.deps) {
+      const vibe = VIBES[this.deps.getCurrentVibeId()];
+      const vw =
+        def.voice === 'pad'
+          ? vibe.pad.waveform
+          : def.voice === 'bass'
+            ? vibe.bass.waveform
+            : null;
+      // Lead's vibe-level config doesn't expose an OmniOscillator literal
+      // (it's `synthType`), so we leave the dropdown showing the first
+      // option until the user / a preset picks something explicit.
+      if (typeof vw === 'string' && WAVEFORM_OPTION_IDS.has(vw)) {
+        initialWave = vw;
+      }
+    }
+    if (initialWave && WAVEFORM_OPTION_IDS.has(initialWave)) {
+      sel.value = initialWave;
+    }
+
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      if (!WAVEFORM_OPTION_IDS.has(v)) return;
+      const a = this.deps?.audio as AudioEngineExtended | undefined;
+      a?.setVoiceWaveform?.(def.voice, v);
+    });
+    this.voiceSelectEls[def.voice] = sel;
+
+    // Morph knob — reuse the same KNOB_DEFS entry the FX sections use, so
+    // value + click-through behavior is identical to every other knob.
+    const knobDef = KNOB_DEFS.find((k) => k.id === def.morphKnobId);
+    if (!knobDef) {
+      // Defensive — should never happen, KNOB_DEFS is a static literal.
+      row.append(tag, lbl, sel);
+      return row;
+    }
+    const knob = this.makeKnob(knobDef, knobDef.fallback);
+    this.knobs.set(knobDef.id, knob);
+
+    row.append(tag, lbl, sel, knob.el);
     return row;
   }
 
@@ -854,6 +1034,23 @@ export class SettingsPanelImpl {
     if (preset.voice) {
       const audio = this.deps.audio as AudioEngineExtended;
       audio.applyVoiceShape?.(preset.voice);
+      // Mirror the preset's per-voice waveform into the dropdowns so the UI
+      // reflects what the engine just received. The engine itself also
+      // caches these (see applyVoiceShape in AudioEngine.ts) so a fresh
+      // read via getVoiceWaveform would return the same string — we set
+      // the <select> value directly to avoid a round-trip.
+      const padWave = preset.voice.pad?.waveform;
+      const leadWave = preset.voice.lead?.oscType;
+      const bassWave = preset.voice.bass?.waveform;
+      if (typeof padWave === 'string' && WAVEFORM_OPTION_IDS.has(padWave) && this.voiceSelectEls.pad) {
+        this.voiceSelectEls.pad.value = padWave;
+      }
+      if (typeof leadWave === 'string' && WAVEFORM_OPTION_IDS.has(leadWave) && this.voiceSelectEls.lead) {
+        this.voiceSelectEls.lead.value = leadWave;
+      }
+      if (typeof bassWave === 'string' && WAVEFORM_OPTION_IDS.has(bassWave) && this.voiceSelectEls.bass) {
+        this.voiceSelectEls.bass.value = bassWave;
+      }
     }
 
     // Ramp BPM if the preset has a tempo identity.
@@ -950,17 +1147,39 @@ export class SettingsPanelImpl {
     return out;
   }
 
+  /**
+   * Capture the three voice-waveform dropdown values into a Patch.waveform
+   * block. Skips dropdowns that haven't been mounted (e.g. test stubs that
+   * mounted a subset of the panel). Reads from the <select> element so the
+   * snapshot reflects exactly what the user sees, not the engine's view of
+   * the world (which can drift if a preset just applied).
+   */
+  private currentWaveformSnapshot(): { pad?: string; lead?: string; bass?: string } {
+    const out: { pad?: string; lead?: string; bass?: string } = {};
+    for (const row of VOICE_ROWS) {
+      const sel = this.voiceSelectEls[row.voice];
+      if (!sel) continue;
+      const v = sel.value;
+      if (typeof v === 'string' && WAVEFORM_OPTION_IDS.has(v)) {
+        out[row.voice] = v;
+      }
+    }
+    return out;
+  }
+
   private handleSavePatch(name: string): void {
     if (!this.deps) return;
     const vibe = this.deps.getCurrentVibeId();
     const params = this.currentParamsSnapshot();
     const timbre = this.currentTimbreSnapshot();
+    const waveform = this.currentWaveformSnapshot();
     const patch: Patch = {
       id: makePatchId(),
       name,
       vibe,
       params,
       timbre: Object.keys(timbre).length > 0 ? timbre : undefined,
+      waveform: Object.keys(waveform).length > 0 ? waveform : undefined,
       bpm: this.bpmCurrent,
       createdAt: Date.now(),
     };
@@ -991,16 +1210,35 @@ export class SettingsPanelImpl {
       }
     }
 
-    // Restore per-voice timbre knobs (analog "WAVE" trio). Patches saved
+    // Restore per-voice morph knobs (the A↔B crossfade trio). Patches saved
     // before this feature ship without `timbre` — leave the knobs at their
     // current value in that case.
     if (p.timbre) {
       if (typeof p.timbre.pad === 'number')
-        this.knobs.get('padTimbre')?.setValue(p.timbre.pad, true);
+        this.knobs.get('padMorph')?.setValue(p.timbre.pad, true);
       if (typeof p.timbre.lead === 'number')
-        this.knobs.get('leadTimbre')?.setValue(p.timbre.lead, true);
+        this.knobs.get('leadMorph')?.setValue(p.timbre.lead, true);
       if (typeof p.timbre.bass === 'number')
-        this.knobs.get('bassTimbre')?.setValue(p.timbre.bass, true);
+        this.knobs.get('bassMorph')?.setValue(p.timbre.bass, true);
+    }
+
+    // Restore per-voice waveform dropdowns. Patches saved before this
+    // feature lack `waveform` entirely — leave the dropdowns alone in that
+    // case so the user keeps whatever they already had. When present, push
+    // the value through audio.setVoiceWaveform so the engine swaps the
+    // oscillator AND its user-pick cache is updated.
+    if (p.waveform) {
+      const audio = this.deps.audio as AudioEngineExtended;
+      const apply = (voice: VoiceKey, w: string | undefined): void => {
+        if (typeof w !== 'string') return;
+        if (!WAVEFORM_OPTION_IDS.has(w)) return;
+        const sel = this.voiceSelectEls[voice];
+        if (sel) sel.value = w;
+        audio.setVoiceWaveform?.(voice, w);
+      };
+      apply('pad', p.waveform.pad);
+      apply('lead', p.waveform.lead);
+      apply('bass', p.waveform.bass);
     }
   }
 

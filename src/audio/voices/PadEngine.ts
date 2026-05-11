@@ -46,6 +46,15 @@ const DETUNE_CENTS = 7;
 const PAD_MORPH_DESTINATION = 'sine';
 
 /**
+ * Edge tolerance for the B-side trigger gate. When |timbre - 0| or
+ * |timbre - 1| is within this ε, only the dominant side fires on a note —
+ * the other side is inaudible at the xfade and would only cost polyphony.
+ * Mid-morph values (epsilon < timbre < 1-epsilon) fire both sides so an
+ * in-flight crossfade lands on already-sounding audio.
+ */
+const TIMBRE_EDGE_EPS = 0.02;
+
+/**
  * The OmniOscillator type union accepted by Tone.Synth/PolySynth. Tone exports
  * `ToneOscillatorType` (sine/square/...) but NOT the wider OmniOscillatorType
  * union. We type our local helper as a string and cast at the boundary.
@@ -79,6 +88,17 @@ export class PadEngine {
   private lfo: Tone.LFO;
   private out: Tone.Gain;
   private currentVibe: VibePreset | null = null;
+  /**
+   * PERF (v0.3.0 freeze fix): track the current xfade target so triggerChord
+   * can skip the inaudible side. With four PolySynths firing every chord,
+   * the audio-thread cost of the layered pad nearly doubled in v0.3.0 vs
+   * v0.2.0. When timbre is parked at 0 (pure A) or 1 (pure B) — the case
+   * for the vast majority of presets — there's no need to schedule four
+   * voices' worth of polyphony, two of them inaudible. We still fire both
+   * sides when mid-morph (0 < timbre < 1) so an in-flight crossfade lands
+   * on already-sounding audio rather than swelling in from silence.
+   */
+  private currentTimbre = 0;
 
   constructor(destination: Tone.ToneAudioNode | AudioNode) {
     this.out = new Tone.Gain(0.7); // pads sit a bit under unity to leave room
@@ -230,6 +250,7 @@ export class PadEngine {
    */
   setTimbre(value: number): void {
     const v = Math.max(0, Math.min(1, value));
+    this.currentTimbre = v;
     this.xfade.fade.rampTo(v, 0.08);
   }
 
@@ -238,20 +259,32 @@ export class PadEngine {
    * is responsible for choosing voicings; the pad just plays whatever it's
    * given). `time` is optional — defaults to "now".
    *
-   * Both A and B stacks always fire — the CrossFade controls audibility. We
-   * deliberately do NOT gate B's triggers when timbre==0, because a future
-   * morph mid-note must crossfade into already-sounding audio rather than
-   * swelling in from silence.
+   * PERF (v0.3.0 freeze fix): gate the inaudible side of the crossfade.
+   *   - timbre <= TIMBRE_EDGE_EPS  → pure A; skip layerC + layerD
+   *   - timbre >= 1 - TIMBRE_EDGE_EPS → pure B; skip layerA + layerB
+   *   - otherwise (mid-morph) → fire both so the crossfade lands on
+   *     already-sounding audio rather than swelling from silence
+   * Saves roughly 50% of pad polyphony cost when timbre is parked at a
+   * preset default (which is the common case). The TIMBRE_EDGE_EPS of
+   * 0.02 mirrors the lead-brightness ε so a wave-LFO wobble doesn't flap
+   * the gate.
    */
   triggerChord(event: ChordEvent): void {
     const t = event.time ?? Tone.now();
+    const v = this.currentTimbre;
+    const fireA = v < 1 - TIMBRE_EDGE_EPS;
+    const fireB = v > TIMBRE_EDGE_EPS;
     // Slight humanizing — different velocity per layer for stereo "thickness"
     // (the layers have ±detune so they're not unison; varying velocity makes
     // the doubled hits feel less stiff).
-    this.layerA.triggerAttackRelease(event.notes, event.duration, t, 0.65);
-    this.layerB.triggerAttackRelease(event.notes, event.duration, t, 0.55);
-    this.layerC.triggerAttackRelease(event.notes, event.duration, t, 0.65);
-    this.layerD.triggerAttackRelease(event.notes, event.duration, t, 0.55);
+    if (fireA) {
+      this.layerA.triggerAttackRelease(event.notes, event.duration, t, 0.65);
+      this.layerB.triggerAttackRelease(event.notes, event.duration, t, 0.55);
+    }
+    if (fireB) {
+      this.layerC.triggerAttackRelease(event.notes, event.duration, t, 0.65);
+      this.layerD.triggerAttackRelease(event.notes, event.duration, t, 0.55);
+    }
   }
 
   private normalizeWaveform(w: string): OscTypeStr {

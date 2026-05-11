@@ -525,6 +525,44 @@ export const UI_STYLES = `
   gap: 10px 6px;
 }
 
+/* Per-voice row inside the VOCE section. Three cells:
+ *   [ tag ][ wave dropdown grows to fill ][ small morph knob ]
+ * The tag is a narrow uppercase pad/lead/bass label so the user can scan
+ * the section row by row instead of guessing which knob is which voice.
+ * The dropdown reuses .hs-music-select styling (already in use for the
+ * KEY / SCALE dropdowns above) so the whole panel stays visually coherent. */
+.hs-voice-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 56px;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.hs-voice-row + .hs-voice-row { margin-top: 4px; }
+.hs-voice-tag {
+  font-family: var(--hs-mono);
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  color: var(--hs-text-dim);
+  text-transform: uppercase;
+}
+/* Compact morph knob — overrides the default hs-knob padding/sizing so the
+ * row stays tight. The dial itself keeps its full 44 px diameter (matches the
+ * other section knobs) and the label sits underneath at a smaller scale. */
+.hs-voice-row .hs-knob {
+  padding: 0;
+  align-self: center;
+}
+.hs-voice-row .hs-knob-label {
+  /* Label is redundant with the row tag — hide it visually while keeping
+   * the accessible name on the dial via aria-label. */
+  display: none;
+}
+.hs-voice-row .hs-knob-value {
+  font-size: 9px;
+  margin-top: 1px;
+}
+
 .hs-knob {
   display: flex;
   flex-direction: column;

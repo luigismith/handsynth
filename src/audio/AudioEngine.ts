@@ -84,6 +84,20 @@ export class AudioEngineImpl implements AudioEngine {
     bass: DEFAULT_TIMBRE,
   };
 
+  /**
+   * User-picked waveform per voice (the SettingsPanel dropdown value). `null`
+   * means "no explicit user choice — the active vibe / factory preset wins".
+   * Once the user opens the VOCE dropdown the choice is sticky for the
+   * lifetime of the engine: switching factory presets DOES still override
+   * (preset chips are full one-shot applies), but every other path that calls
+   * `setParams` or `setVoiceTimbre` leaves the user waveform alone.
+   */
+  private userWaveform: Record<VoiceKey, string | null> = {
+    pad: null,
+    lead: null,
+    bass: null,
+  };
+
   /** Mirror of the FX params the smart router watches. Updated by setParams. */
   private smartInput: SmartVoiceParams = {
     filterCutoff: 8000,
@@ -91,6 +105,28 @@ export class AudioEngineImpl implements AudioEngine {
     saturatorDrive: 1,
     reverbWet: 0.4,
   };
+
+  /**
+   * PERF (v0.3.0 freeze fix): cache the last SmartVoiceParams snapshot the
+   * router actually evaluated. The mapper drives setParams at ~24 Hz fanned
+   * out across multiple per-finger axes, but the smart-voicing rules only
+   * care about (cutoff, drive, Q, reverb) and use threshold predicates with
+   * fairly wide deadbands (rule 1 at 800 Hz, rule 3 at drive 2.0, etc.).
+   * Re-evaluating the router on every setParams pushes ~432 ops/sec of
+   * branch-heavy work into the audio scheduler when the inputs haven't
+   * moved enough to actually flip any rule. We skip the router pass when
+   * every watched input is within its per-axis ε of the last evaluation —
+   * the resulting nudges would be byte-identical, so the rampTo's would
+   * collapse anyway, but we save the comparisons + the per-voice clamp
+   * arithmetic up the chain.
+   *
+   * The ε values are deliberately a bit wider than PARAM_EPS in the mapper:
+   * the router's rules are threshold predicates, so we only need to detect
+   * meaningful crossings rather than perceptual jnds. A 50 Hz cutoff or
+   * 0.05 drive nudge cannot cross any rule threshold from far away — and
+   * near a threshold the diff WILL exceed ε, re-running the router.
+   */
+  private lastSmartInputEvaluated: SmartVoiceParams | null = null;
 
   /**
    * Last value we actually pushed to each voice's CrossFade. We skip
@@ -193,6 +229,14 @@ export class AudioEngineImpl implements AudioEngine {
     // Tempo + swing live on the global Transport.
     Tone.getTransport().bpm.rampTo(vibe.bpm, 0.1);
     Tone.getTransport().swing = vibe.swing;
+    // Loading a vibe is a full reset of the voice oscillators — clear the
+    // per-voice user-pick cache so the SettingsPanel dropdown re-syncs from
+    // the vibe defaults on the next read. (Same intent as a factory preset
+    // chip click: the user is picking a whole sonic identity, not preserving
+    // a per-voice override across it.)
+    this.userWaveform.pad = null;
+    this.userWaveform.lead = null;
+    this.userWaveform.bass = null;
   }
 
   triggerLead(event: NoteEvent): void {
@@ -240,7 +284,9 @@ export class AudioEngineImpl implements AudioEngine {
   setParams(partial: Partial<AudioEngineParams>): void {
     // smartVoicing is a non-audio toggle — handle BEFORE the master check so
     // the UI can flip it pre-init and we'll respect it post-init.
+    let smartFlagChanged = false;
     if (typeof partial.smartVoicing === 'boolean') {
+      if (partial.smartVoicing !== this.smartVoicing) smartFlagChanged = true;
       this.smartVoicing = partial.smartVoicing;
     }
     if (!this.master) {
@@ -298,8 +344,47 @@ export class AudioEngineImpl implements AudioEngine {
 
     // Smart router fires AFTER the master FX params are pushed — it reads
     // whatever just changed and re-evaluates each voice's effective timbre.
+    //
+    // PERF (v0.3.0 freeze fix): skip the router pass when none of the
+    // watched inputs (cutoff, drive, Q, reverb) moved more than its per-
+    // axis ε since the last evaluation. The rules use threshold predicates
+    // with wide deadbands, so sub-ε deltas can never flip a rule and the
+    // resulting nudges would be byte-identical. Callers that aren't gated
+    // by setParams (setVoiceTimbre, applyVoiceShape) still force a full
+    // router pass — see applySmartRouter() for the no-arg path.
     this.ingestSmartInput(partial);
-    this.applySmartRouter();
+    if (smartFlagChanged || this.smartInputChangedEnough()) {
+      this.lastSmartInputEvaluated = { ...this.smartInput };
+      this.applySmartRouter();
+    }
+  }
+
+  /**
+   * Returns true iff any watched input in `smartInput` has moved more than
+   * its per-axis ε from the last evaluation. The first call (cache=null)
+   * always returns true so the initial router pass runs.
+   *
+   * Per-axis ε:
+   *   - filterCutoff: 25 Hz — rule thresholds at 800 / 10 000 Hz; a 25 Hz
+   *     step can never cross either from far away, and right at the
+   *     boundary the difference rapidly exceeds this so the router
+   *     re-evaluates as the user sweeps through.
+   *   - saturatorDrive: 0.03 — rule thresholds at 1.0 / 2.0; the smallest
+   *     drive change the mapper emits is the PARAM_EPS=0.01 jnd, but the
+   *     router rules don't care about jnd-level moves.
+   *   - filterResonance: 0.25 — rule threshold at Q=8.
+   *   - reverbWet: 0.02 — rule threshold at 0.7.
+   */
+  private smartInputChangedEnough(): boolean {
+    const prev = this.lastSmartInputEvaluated;
+    if (!prev) return true;
+    const cur = this.smartInput;
+    return (
+      Math.abs(cur.filterCutoff - prev.filterCutoff) > 25 ||
+      Math.abs(cur.saturatorDrive - prev.saturatorDrive) > 0.03 ||
+      Math.abs(cur.filterResonance - prev.filterResonance) > 0.25 ||
+      Math.abs(cur.reverbWet - prev.reverbWet) > 0.02
+    );
   }
 
   /** Update the watched-params snapshot used by the smart router. */
@@ -335,6 +420,49 @@ export class AudioEngineImpl implements AudioEngine {
   /** Read the smartVoicing flag. */
   getSmartVoicing(): boolean {
     return this.smartVoicing;
+  }
+
+  /**
+   * Explicitly pick the A-side oscillator type for one of the three pitched
+   * voices. This is the "real" waveform picker — independent of the morph
+   * knob, which only crossfades A↔B. Re-uses the engine-level fade-down /
+   * oscillator swap / fade-up path inside `applyVoiceShape`, so no audible
+   * click even when a note is sustaining.
+   *
+   * Pre-init: caches the choice and returns. The next `applyVibeNow` or
+   * preset-shape application would normally seed the engines from the vibe;
+   * the user pick takes precedence post-init via the cache below.
+   *
+   * No-op for empty / non-string `type`. We deliberately do NOT validate
+   * against `WAVEFORM_OPTION_IDS` here — the engines accept any
+   * OmniOscillator literal at runtime and we'd rather let an experiment
+   * succeed than guard against the dropdown contract drifting.
+   */
+  setVoiceWaveform(voice: VoiceKey, type: string): void {
+    if (typeof type !== 'string' || type.length === 0) return;
+    this.userWaveform[voice] = type;
+    if (!this.pad || !this.lead || !this.bass) return;
+    switch (voice) {
+      case 'pad':
+        this.pad.applyVoiceShape({ waveform: type });
+        break;
+      case 'lead':
+        // Lead uses `oscType`, not `waveform`, per VoiceShape.
+        this.lead.applyVoiceShape({ oscType: type });
+        break;
+      case 'bass':
+        this.bass.applyVoiceShape({ waveform: type });
+        break;
+    }
+  }
+
+  /**
+   * Read the currently-set waveform for a voice, or `null` if the user has
+   * not made an explicit pick (i.e. the vibe / factory preset is in charge).
+   * Used by the SettingsPanel to seed the dropdown.
+   */
+  getVoiceWaveform(voice: VoiceKey): string | null {
+    return this.userWaveform[voice];
   }
 
   /**
@@ -403,6 +531,17 @@ export class AudioEngineImpl implements AudioEngine {
       this.userTimbre.lead = clamp(shape.lead.timbre, 0, 1);
     if (typeof shape.bass?.timbre === 'number')
       this.userTimbre.bass = clamp(shape.bass.timbre, 0, 1);
+    // Mirror the preset's waveform into the user-pick cache so the
+    // SettingsPanel dropdown reflects what's actually playing. A factory
+    // preset is a one-shot full apply — clicking a chip overrides the user's
+    // previous manual choice. Only the (rarer) per-voice waveform dropdown
+    // path that calls setVoiceWaveform persists across preset clicks.
+    if (typeof shape.pad?.waveform === 'string' && shape.pad.waveform.length > 0)
+      this.userWaveform.pad = shape.pad.waveform;
+    if (typeof shape.lead?.oscType === 'string' && shape.lead.oscType.length > 0)
+      this.userWaveform.lead = shape.lead.oscType;
+    if (typeof shape.bass?.waveform === 'string' && shape.bass.waveform.length > 0)
+      this.userWaveform.bass = shape.bass.waveform;
     // Run the router so any smart nudges layered on the preset's timbre
     // are applied without waiting for the next gesture frame.
     this.applySmartRouter();

@@ -1756,6 +1756,15 @@ const PARAM_EPS: Partial<Record<keyof AudioEngineParams, number>> = {
   masterDuck: 0.005,
 };
 
+// AUDIT (v0.3.0 freeze fix): the per-finger mappings (mapRightFingers /
+// mapLeftFingers) fold into the same 8 numeric keys above — they don't
+// introduce new fields, they just contribute additional motion to the
+// existing axes via a PER_FINGER_WEIGHT-scaled blend. Every key the per-
+// finger layer writes (delayFeedback, filterCutoff, reverbWet, brightness,
+// delayWet, saturatorDrive, filterResonance, masterDuck) is gated through
+// PARAM_EPS so noisy curl signals can't churn the audio scheduler. No new
+// fields needed in this table.
+
 /**
  * Return a Partial<AudioEngineParams> containing only the keys in `to`
  * whose value differs from `from` by more than the per-param epsilon, or

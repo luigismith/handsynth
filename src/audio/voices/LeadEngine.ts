@@ -39,6 +39,13 @@ const FILTER_FREQ = 1800;
 /** The hard-coded "morph destination" oscillator for the B side of the crossfade. */
 const LEAD_MORPH_DESTINATION = 'pulse';
 
+/**
+ * Edge tolerance for the B-side trigger gate (see PadEngine — same idea).
+ * When timbre is parked at 0 or 1 we fire only the dominant side; mid-morph
+ * we fire both so a crossfade lands on live audio.
+ */
+const TIMBRE_EDGE_EPS = 0.02;
+
 export class LeadEngine {
   private mono: Tone.MonoSynth;
   private monoB: Tone.MonoSynth;
@@ -49,6 +56,12 @@ export class LeadEngine {
   private currentVibe: VibePreset | null = null;
   private brightness = 0.5;
   private baseModIndex = 1.4;
+  /**
+   * PERF (v0.3.0 freeze fix): mirror of the xfade target so trigger() can
+   * skip the inaudible MonoSynth at the timbre extremes. See triggerChord
+   * in PadEngine for the rationale.
+   */
+  private currentTimbre = 0;
 
   constructor(destination: Tone.ToneAudioNode | AudioNode) {
     this.out = new Tone.Gain(0.85);
@@ -157,9 +170,13 @@ export class LeadEngine {
     }
   }
 
-  /** Trigger a single melodic note. Both A and B MonoSynths fire so the
-   * crossfade always has live audio on either side; the CrossFade.fade
-   * controls audibility. */
+  /** Trigger a single melodic note.
+   *
+   * PERF (v0.3.0 freeze fix): gate the inaudible MonoSynth when timbre is
+   * parked at 0 or 1 — saves one note-on / note-off scheduling pair per
+   * note on the common-case timbre extremes. Mid-morph values still fire
+   * both so an in-flight crossfade lands on already-sounding audio.
+   */
   trigger(
     note: string,
     duration: string,
@@ -168,8 +185,13 @@ export class LeadEngine {
   ): void {
     const v = Math.max(0.01, Math.min(1, velocity));
     const t = time ?? Tone.now();
-    this.mono.triggerAttackRelease(note, duration, t, v);
-    this.monoB.triggerAttackRelease(note, duration, t, v);
+    const tim = this.currentTimbre;
+    if (tim < 1 - TIMBRE_EDGE_EPS) {
+      this.mono.triggerAttackRelease(note, duration, t, v);
+    }
+    if (tim > TIMBRE_EDGE_EPS) {
+      this.monoB.triggerAttackRelease(note, duration, t, v);
+    }
   }
 
   /** Convenience — accept a NoteEvent. */
@@ -277,6 +299,7 @@ export class LeadEngine {
    */
   setTimbre(value: number): void {
     const v = Math.max(0, Math.min(1, value));
+    this.currentTimbre = v;
     this.xfade.fade.rampTo(v, 0.08);
   }
 

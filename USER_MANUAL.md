@@ -232,22 +232,36 @@ Your patches persist in `localStorage` and re-appear next session. Click
 The **Reset to vibe** button returns every knob to the active vibe's defaults
 without losing your saved patches.
 
-### Voice section — the analog WAVE knobs
+### Voice section — pick a waveform AND morph it
 
-Below the main FX knobs lives a **Voice** section with three small dials:
+Below the main FX knobs lives a **Voice** section with one row per voice.
+Each row has two controls side by side:
 
-- **Pad Wave** — crossfades the pad between its current waveform (set by the
-  vibe / factory preset, e.g. `fatsawtooth`) and a clean sine destination.
-- **Lead Wave** — crossfades the lead between its current oscillator
-  (typically `fmsawtooth` or `fmsine`) and a hollow pulse destination.
-- **Bass Wave** — crossfades the bass between its current waveform (e.g.
-  `fatsquare`) and a warm triangle destination.
+- A **waveform dropdown** — pick the A-side oscillator for that voice from
+  13 options: `SINE`, `TRIANGLE`, `SAWTOOTH`, `SQUARE`, `PULSE`,
+  `FAT SINE`, `FAT TRIANGLE`, `FAT SAWTOOTH`, `FAT SQUARE`, `FM SINE`,
+  `FM SAWTOOTH`, `AM SINE`, `AM SAWTOOTH`. This is the *real* waveform
+  picker — it does what you'd expect, regardless of the morph knob.
+- A **Morph** dial — crossfades between that A-side waveform and a fixed
+  B-side morph destination (sine for the pad, pulse for the lead, triangle
+  for the bass). 0 = pure A, 1 = pure B, 0.5 = balanced mix. Equal-power
+  crossfade so dragging through the morph is smooth — analog-synth "WAVE"
+  knob feel, never abrupt. Both oscillator stacks are always sounding; the
+  crossfade just controls audibility, so morphing mid-note cleanly slides
+  between the two timbres instead of cutting in.
 
-Each knob is continuous (0..1, default 0.5 = balanced mix) and uses an
-equal-power crossfade, so dragging through the morph is smooth — analog-synth
-"WAVE" knob feel, never abrupt. Both oscillator stacks are always sounding;
-the crossfade just controls audibility, so morphing mid-note cleanly slides
-between the two timbres instead of cutting in.
+How the dropdown interacts with vibes and factory presets:
+
+- Switching a **factory preset chip** (LUSH / ACID / DUB / …) is a full
+  one-shot apply — the preset's per-voice waveform replaces whatever was
+  in the dropdown. This is intentional: chips are "give me this whole
+  sound", not "preserve my picks".
+- Switching the **vibe dropdown** also resets the waveform picks (a vibe
+  is a whole sonic identity).
+- Changing only the **waveform dropdown** changes the A-side oscillator
+  and leaves every other knob alone (FX, envelopes, morph knob).
+- The picks are saved into user patches — your saved patches remember
+  exactly which waveform you picked, per voice.
 
 ### SMART pill — intelligent voicing router
 

@@ -141,6 +141,41 @@ describe('AudioEngineImpl (smoke)', () => {
     expect(eng.getSmartVoicing()).toBe(true);
   });
 
+  it('exposes setVoiceWaveform / getVoiceWaveform and they default to null', () => {
+    const eng = new AudioEngineImpl();
+    expect(typeof eng.setVoiceWaveform).toBe('function');
+    expect(typeof eng.getVoiceWaveform).toBe('function');
+    // No user pick yet — null for all three voices.
+    expect(eng.getVoiceWaveform('pad')).toBeNull();
+    expect(eng.getVoiceWaveform('lead')).toBeNull();
+    expect(eng.getVoiceWaveform('bass')).toBeNull();
+  });
+
+  it('setVoiceWaveform caches the pick and is safe to call pre-init', () => {
+    const eng = new AudioEngineImpl();
+    expect(() => eng.setVoiceWaveform('pad', 'fmsine')).not.toThrow();
+    expect(eng.getVoiceWaveform('pad')).toBe('fmsine');
+    eng.setVoiceWaveform('lead', 'sawtooth');
+    eng.setVoiceWaveform('bass', 'fatsquare');
+    expect(eng.getVoiceWaveform('lead')).toBe('sawtooth');
+    expect(eng.getVoiceWaveform('bass')).toBe('fatsquare');
+    // Empty / non-string is a no-op.
+    eng.setVoiceWaveform('pad', '');
+    expect(eng.getVoiceWaveform('pad')).toBe('fmsine');
+  });
+
+  it('applyVoiceShape mirrors waveform into the user-pick cache', () => {
+    const eng = new AudioEngineImpl();
+    eng.applyVoiceShape({
+      pad: { waveform: 'fatsawtooth' },
+      lead: { oscType: 'fmsawtooth' },
+      bass: { waveform: 'fatsquare' },
+    });
+    expect(eng.getVoiceWaveform('pad')).toBe('fatsawtooth');
+    expect(eng.getVoiceWaveform('lead')).toBe('fmsawtooth');
+    expect(eng.getVoiceWaveform('bass')).toBe('fatsquare');
+  });
+
   it('setVoiceTimbre clamps to [0..1] and updates the cache', () => {
     const eng = new AudioEngineImpl();
     eng.setVoiceTimbre('pad', 0.75);

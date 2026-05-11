@@ -261,6 +261,22 @@ export function createSketch(
   // Hand openness hysteresis tracker. Per-hand sticky flag for the
   // chromatic-aberration halo: enters on >0.7, exits on <0.5.
   const haloActive = new Map<string, boolean>();
+  // PERF (v0.3.0 freeze fix): frame counter for sub-rate visuals. Three
+  // visual elements added in the v0.3.0 aesthetics wave compound the
+  // per-frame work to the point that audio scheduling stalls. We throttle
+  // each to a lower update rate where it's visually indistinguishable:
+  //   - parallax mean-X lerp updated every PARALLAX_THROTTLE frames
+  //     (~7.5 Hz at frameRate 30). Hands rarely move >50 px/frame.
+  //   - chromatic halo rendered every HALO_THROTTLE frames (~15 Hz). The
+  //     halo is a soft chromatic edge — at 15 Hz the eye reads it as a
+  //     continuous accent.
+  //   - face oval OUTER-GLOW pass rendered every OVAL_GLOW_THROTTLE frames
+  //     (~15 Hz). The crisp inner stroke remains per-frame so the face
+  //     skeleton itself never lags; the halo is the slow visual element.
+  let frameTick = 0;
+  const PARALLAX_THROTTLE = 4;
+  const HALO_THROTTLE = 2;
+  const OVAL_GLOW_THROTTLE = 2;
 
   // Beat envelope — replaces the old `pulse *= 0.92` per-frame decay. Drives
   // string brightness, ring pulse, vignette tightening.
@@ -309,6 +325,7 @@ export function createSketch(
       const dt = Math.min(0.05, (now - lastFrameMs) / 1000);
       lastFrameMs = now;
       elapsed += dt;
+      frameTick = (frameTick + 1) | 0;
 
       // Forward "trigger intent" from state.pulse into the beat envelope,
       // then clear state.pulse so the same beat isn't re-triggered.
@@ -337,25 +354,35 @@ export function createSketch(
 
       // Smooth the mean hand X for parallax. We compute *canvas-relative*
       // -1..1 so it doesn't depend on canvas size: 0 = center, ±1 = far
-      // side. Lerp factor ~6 = full follow in ~167ms — fast enough that
-      // panning feels responsive, slow enough that hand jitter doesn't
-      // shake the world.
-      let targetHandX = 0;
-      if (state.hands.length > 0) {
-        let sum = 0;
-        let n = 0;
-        for (const h of state.hands) {
-          const lm = h.landmarks[0]; // wrist
-          if (!lm) continue;
-          sum += lm.x; // already 0..1
-          n += 1;
+      // side.
+      //
+      // PERF (v0.3.0 freeze fix): updated every PARALLAX_THROTTLE frames
+      // (~7.5 Hz at 30 fps). Hand wrist position rarely moves more than
+      // 50 px/frame at the smoothed output of the HandTracker, so the
+      // discrete 4-frame steps are perceptually indistinguishable from
+      // the per-frame lerp. We compensate by using a larger effective dt
+      // in the exponential so the visible follow speed stays the same.
+      if (frameTick % PARALLAX_THROTTLE === 0) {
+        let targetHandX = 0;
+        if (state.hands.length > 0) {
+          let sum = 0;
+          let n = 0;
+          for (const h of state.hands) {
+            const lm = h.landmarks[0]; // wrist
+            if (!lm) continue;
+            sum += lm.x; // already 0..1
+            n += 1;
+          }
+          if (n > 0) targetHandX = (sum / n) * 2 - 1;
         }
-        if (n > 0) targetHandX = (sum / n) * 2 - 1;
+        // Disable parallax under reduced-motion.
+        if (state.reducedMotion) targetHandX = 0;
+        // Use the accumulated dt-since-last-throttle, capped to the same
+        // 0.05 s ceiling as the main step; PARALLAX_THROTTLE * dt is a
+        // close approximation, and the exponential lerp self-corrects.
+        const lerpK = 1 - Math.exp(-dt * PARALLAX_THROTTLE * 6);
+        smoothedHandX += (targetHandX - smoothedHandX) * lerpK;
       }
-      // Disable parallax under reduced-motion.
-      if (state.reducedMotion) targetHandX = 0;
-      const lerpK = 1 - Math.exp(-dt * 6);
-      smoothedHandX += (targetHandX - smoothedHandX) * lerpK;
 
       // ---------------------------------------------------------------
       // Layer 1 — charcoal background + static hex grid backdrop.
@@ -503,12 +530,20 @@ export function createSketch(
         // halo engages on openness > 0.7, releases under 0.5. Tracked per
         // hand by `side` (left/right) — stable across frames.
         // Skipped entirely under reduced-motion.
+        //
+        // PERF (v0.3.0 freeze fix): the halo draws 2 stroke circles per
+        // fingertip × 5 fingertips × up-to-2 hands = up to 20 strokes per
+        // frame. Cut to every-other-frame for ~15 Hz halo refresh — the
+        // chromatic edge reads as continuous accent at that rate. We
+        // still update the hysteresis state every frame so the halo
+        // engages/releases without a 1-frame stagger.
         if (!state.reducedMotion) {
+          const renderHalo = frameTick % HALO_THROTTLE === 0;
           for (const hand of state.hands) {
             const prev = haloActive.get(hand.side) ?? false;
             const next = prev ? hand.openness > 0.5 : hand.openness > 0.7;
             haloActive.set(hand.side, next);
-            if (next) drawHandHalo(s, hand);
+            if (next && renderHalo) drawHandHalo(s, hand);
           }
         }
         s.pop();
@@ -526,7 +561,19 @@ export function createSketch(
       if (state.face?.detected && state.face.landmarks) {
         s.push();
         s.blendMode(s.ADD);
-        drawFaceSkeleton(s, state.face, s.width, s.height, beatV, state.videoCover);
+        // PERF: render the face-oval outer-glow pass at half rate. The
+        // crisp inner stroke (and all other face features) still draw
+        // every frame; only the wide 2.1-weight oval glow halves.
+        const renderOvalGlow = frameTick % OVAL_GLOW_THROTTLE === 0;
+        drawFaceSkeleton(
+          s,
+          state.face,
+          s.width,
+          s.height,
+          beatV,
+          state.videoCover,
+          renderOvalGlow,
+        );
         s.pop();
 
         // Mouth-driven particle emitter — spawn breath from the user's
@@ -808,6 +855,15 @@ export function drawFaceSkeleton(
   height: number,
   beatV: number,
   cover: VideoCoverTransform | null = null,
+  /**
+   * PERF (v0.3.0 freeze fix): when false, the wide outer-glow pass on the
+   * face oval is skipped — only the crisp 1.4-weight inner stroke renders.
+   * Default true preserves the legacy two-pass look for unit tests and
+   * direct callers; the sketch draw loop toggles this at ~15 Hz so the
+   * cheap-but-frequent 36-vertex glow shape runs at half rate while the
+   * face skeleton itself stays per-frame.
+   */
+  renderOuterGlow = true,
 ): void {
   const lms = face.landmarks;
   if (!lms || lms.length < 478) return;
@@ -837,14 +893,18 @@ export function drawFaceSkeleton(
   //   1. A wider, lower-alpha outer-glow stroke (1.5× weight, ~0.18 alpha)
   //      using ORANGE_GLOW to soften the silhouette. Visually it looks
   //      like the oval has a halo without us having to run the bloom
-  //      buffer over it.
+  //      buffer over it. Gated by `renderOuterGlow` so the sketch can
+  //      run it at half rate (~15 Hz) without losing the crisp inner
+  //      stroke; at that update rate the glow reads as continuous halo.
   //   2. A crisp inner stroke at 1.4-weight ORANGE_HOT — the actual
   //      readable outline.
   // Other face lines (eyes/lips/nose/brows) stay single-weight so the
   // composition doesn't get mushy.
-  s.strokeWeight(2.1);
-  s.stroke(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, 0.18 + beatV * 0.05);
-  drawClosedLoop(s, lms, FACE_OVAL, width, height, false, cover);
+  if (renderOuterGlow) {
+    s.strokeWeight(2.1);
+    s.stroke(ORANGE_GLOW.h, ORANGE_GLOW.s, ORANGE_GLOW.b, 0.18 + beatV * 0.05);
+    drawClosedLoop(s, lms, FACE_OVAL, width, height, false, cover);
+  }
   s.strokeWeight(1.4);
   s.stroke(ORANGE_HOT.h, ORANGE_HOT.s, ORANGE_HOT.b, 0.6 + beatV * 0.05);
   drawClosedLoop(s, lms, FACE_OVAL, width, height, false, cover);

@@ -23,9 +23,12 @@ function stubAudio(): AudioEngine & {
   setVoiceTimbre: ReturnType<typeof vi.fn>;
   getVoiceTimbre: ReturnType<typeof vi.fn>;
   getSmartVoicing: ReturnType<typeof vi.fn>;
+  setVoiceWaveform: ReturnType<typeof vi.fn>;
+  getVoiceWaveform: ReturnType<typeof vi.fn>;
 } {
   const lastSet: Partial<AudioEngineParams> = {};
   const timbres: Record<string, number> = { pad: 0.5, lead: 0.5, bass: 0.5 };
+  const waveforms: Record<string, string | null> = { pad: null, lead: null, bass: null };
   let smartOn = true;
   return {
     lastSet,
@@ -54,12 +57,18 @@ function stubAudio(): AudioEngine & {
     }),
     getVoiceTimbre: vi.fn((voice: string) => timbres[voice] ?? 0.5),
     getSmartVoicing: vi.fn(() => smartOn),
+    setVoiceWaveform: vi.fn((voice: string, w: string) => {
+      waveforms[voice] = w;
+    }),
+    getVoiceWaveform: vi.fn((voice: string) => waveforms[voice] ?? null),
   } as AudioEngine & {
     lastSet: Partial<AudioEngineParams>;
     applyVoiceShape: ReturnType<typeof vi.fn>;
     setVoiceTimbre: ReturnType<typeof vi.fn>;
     getVoiceTimbre: ReturnType<typeof vi.fn>;
     getSmartVoicing: ReturnType<typeof vi.fn>;
+    setVoiceWaveform: ReturnType<typeof vi.fn>;
+    getVoiceWaveform: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -444,23 +453,23 @@ describe('SettingsPanelImpl', () => {
     panel.unmount();
   });
 
-  it('renders three voice-timbre knobs (Pad Wave / Lead Wave / Bass Wave)', () => {
+  it('renders three voice morph knobs (Pad Morph / Lead Morph / Bass Morph)', () => {
     const panel = new SettingsPanelImpl();
     panel.mount(parent, makeDeps());
     const dials = parent.querySelectorAll('.hs-knob-dial');
     const labels = Array.from(dials).map((d) => d.getAttribute('aria-label'));
-    expect(labels).toContain('Pad Wave');
-    expect(labels).toContain('Lead Wave');
-    expect(labels).toContain('Bass Wave');
+    expect(labels).toContain('Pad Morph');
+    expect(labels).toContain('Lead Morph');
+    expect(labels).toContain('Bass Morph');
     panel.unmount();
   });
 
-  it('changing a voice-timbre knob calls audio.setVoiceTimbre', () => {
+  it('changing a voice-morph knob calls audio.setVoiceTimbre', () => {
     const panel = new SettingsPanelImpl();
     const deps = makeDeps();
     panel.mount(parent, deps);
     const padDial = Array.from(parent.querySelectorAll('.hs-knob-dial')).find(
-      (d) => d.getAttribute('aria-label') === 'Pad Wave',
+      (d) => d.getAttribute('aria-label') === 'Pad Morph',
     ) as HTMLElement;
     expect(padDial).toBeDefined();
     padDial.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
@@ -468,7 +477,7 @@ describe('SettingsPanelImpl', () => {
     panel.unmount();
   });
 
-  it('clicking a preset with voice.timbre updates each timbre knob', () => {
+  it('clicking a preset with voice.timbre updates each morph knob', () => {
     const panel = new SettingsPanelImpl();
     panel.mount(parent, makeDeps());
     // SPACE has heavy timbre toward B for pad/lead.
@@ -478,7 +487,7 @@ describe('SettingsPanelImpl', () => {
     ) as HTMLButtonElement;
     chip.click();
     const padDial = Array.from(parent.querySelectorAll('.hs-knob-dial')).find(
-      (d) => d.getAttribute('aria-label') === 'Pad Wave',
+      (d) => d.getAttribute('aria-label') === 'Pad Morph',
     );
     const expected = space.voice?.pad?.timbre;
     expect(typeof expected).toBe('number');
@@ -486,6 +495,91 @@ describe('SettingsPanelImpl', () => {
       expected as number,
       6,
     );
+    panel.unmount();
+  });
+
+  it('renders one waveform dropdown per voice with the curated option list', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const padSel = parent.querySelector('select[data-voice-wave="pad"]') as HTMLSelectElement;
+    const leadSel = parent.querySelector('select[data-voice-wave="lead"]') as HTMLSelectElement;
+    const bassSel = parent.querySelector('select[data-voice-wave="bass"]') as HTMLSelectElement;
+    expect(padSel).not.toBeNull();
+    expect(leadSel).not.toBeNull();
+    expect(bassSel).not.toBeNull();
+    // 13 curated waveform options (sine/triangle/sawtooth/square/pulse/
+    // fatsine/fattriangle/fatsawtooth/fatsquare/fmsine/fmsawtooth/amsine/
+    // amsawtooth) — the dropdown is scannable, not "every OmniOscillator
+    // literal ever". See src/presets/waveform-options.ts.
+    expect(padSel.options.length).toBe(13);
+    expect(leadSel.options.length).toBe(13);
+    expect(bassSel.options.length).toBe(13);
+    panel.unmount();
+  });
+
+  it('changing a waveform dropdown calls audio.setVoiceWaveform with the picked id', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    const padSel = parent.querySelector('select[data-voice-wave="pad"]') as HTMLSelectElement;
+    padSel.value = 'fmsine';
+    padSel.dispatchEvent(new Event('change'));
+    expect(deps.audio.setVoiceWaveform).toHaveBeenCalledWith('pad', 'fmsine');
+    panel.unmount();
+  });
+
+  it('clicking a factory preset with a waveform updates the dropdown value', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    // ACID's pad is fatsquare per factory-presets.ts.
+    const acid = FACTORY_PRESETS.find((p) => p.id === 'acid')!;
+    const chip = parent.querySelector(
+      `.hs-preset-chip[data-preset-id="acid"]`,
+    ) as HTMLButtonElement;
+    chip.click();
+    const padSel = parent.querySelector('select[data-voice-wave="pad"]') as HTMLSelectElement;
+    expect(padSel.value).toBe(acid.voice?.pad?.waveform);
+    const bassSel = parent.querySelector('select[data-voice-wave="bass"]') as HTMLSelectElement;
+    expect(bassSel.value).toBe(acid.voice?.bass?.waveform);
+    panel.unmount();
+  });
+
+  it('saved patches round-trip per-voice waveform values', () => {
+    const panel = new SettingsPanelImpl();
+    panel.mount(parent, makeDeps());
+    const padSel = parent.querySelector('select[data-voice-wave="pad"]') as HTMLSelectElement;
+    padSel.value = 'fattriangle';
+    padSel.dispatchEvent(new Event('change'));
+    const nameInput = parent.querySelector('.hs-prompt input') as HTMLInputElement;
+    const saveBtn = parent.querySelector('.hs-prompt button') as HTMLButtonElement;
+    nameInput.value = 'WithWaveform';
+    saveBtn.click();
+    const stored = loadPatches();
+    expect(stored[0]?.waveform?.pad).toBe('fattriangle');
+    panel.unmount();
+  });
+
+  it('loading a saved patch restores the waveform dropdown and calls setVoiceWaveform', () => {
+    const panel = new SettingsPanelImpl();
+    const deps = makeDeps();
+    panel.mount(parent, deps);
+    savePatch({
+      id: 'p_test',
+      name: 'WithWave',
+      vibe: 'tycho',
+      params: {},
+      waveform: { pad: 'amsine' },
+      bpm: 92,
+      createdAt: 0,
+    });
+    // Trigger refresh + load via the rendered Load button.
+    panel.unmount();
+    panel.mount(parent, deps);
+    const loadBtn = parent.querySelector('.hs-patches-row .hs-btn') as HTMLButtonElement;
+    loadBtn.click();
+    const padSel = parent.querySelector('select[data-voice-wave="pad"]') as HTMLSelectElement;
+    expect(padSel.value).toBe('amsine');
+    expect(deps.audio.setVoiceWaveform).toHaveBeenCalledWith('pad', 'amsine');
     panel.unmount();
   });
 
@@ -510,12 +604,12 @@ describe('SettingsPanelImpl', () => {
     panel.unmount();
   });
 
-  it('saved patches round-trip per-voice timbre values', () => {
+  it('saved patches round-trip per-voice morph values', () => {
     const panel = new SettingsPanelImpl();
     panel.mount(parent, makeDeps());
-    // Bump the Pad Wave knob a few ticks from default.
+    // Bump the Pad Morph knob a few ticks from default.
     const padDial = Array.from(parent.querySelectorAll('.hs-knob-dial')).find(
-      (d) => d.getAttribute('aria-label') === 'Pad Wave',
+      (d) => d.getAttribute('aria-label') === 'Pad Morph',
     ) as HTMLElement;
     padDial.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
     const newVal = Number(padDial.getAttribute('aria-valuenow'));

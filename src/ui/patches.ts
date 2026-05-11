@@ -28,13 +28,31 @@ export interface PatchTimbre {
   bass?: number;
 }
 
+/**
+ * Per-voice user-picked waveform (OmniOscillator literal) saved alongside
+ * the master FX params. Missing fields fall back to whatever the active
+ * vibe / factory preset set for that voice at load time.
+ */
+export interface PatchWaveform {
+  pad?: string;
+  lead?: string;
+  bass?: string;
+}
+
 export interface Patch {
   id: string;
   name: string;
   vibe: VibeId;
   params: Partial<AudioEngineParams>;
-  /** Optional per-voice "WAVE" knob trio. Absent on pre-v2 patches. */
+  /** Optional per-voice "MORPH" knob trio. Absent on pre-morph patches. */
   timbre?: PatchTimbre;
+  /**
+   * Optional per-voice explicit waveform pick. Absent on patches saved
+   * before the waveform-dropdown feature shipped — those load against
+   * the active vibe / preset default for each voice, which is exactly
+   * what the user heard at save time anyway.
+   */
+  waveform?: PatchWaveform;
   bpm: number;
   createdAt: number;
 }

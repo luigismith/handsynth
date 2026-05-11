@@ -32,6 +32,13 @@ const HPF_FREQ = 30;
 /** The hard-coded "morph destination" waveform for the B side of the crossfade. */
 const BASS_MORPH_DESTINATION = 'triangle';
 
+/**
+ * Edge tolerance for the B-side trigger gate (see PadEngine — same idea).
+ * When timbre is parked at 0 or 1 we fire only the dominant side; mid-morph
+ * we fire both so a crossfade lands on live audio.
+ */
+const TIMBRE_EDGE_EPS = 0.02;
+
 export class BassEngine {
   private main: Tone.MonoSynth;
   private mainB: Tone.MonoSynth;
@@ -41,6 +48,12 @@ export class BassEngine {
   private out: Tone.Gain;
   private currentVibe: VibePreset | null = null;
   private subEnabled = true;
+  /**
+   * PERF (v0.3.0 freeze fix): mirror of the xfade target so trigger() can
+   * skip the inaudible MonoSynth at the timbre extremes. See PadEngine
+   * for the rationale.
+   */
+  private currentTimbre = 0;
 
   constructor(destination: Tone.ToneAudioNode | AudioNode) {
     this.out = new Tone.Gain(0.9);
@@ -210,9 +223,15 @@ export class BassEngine {
    */
   setTimbre(value: number): void {
     const v = Math.max(0, Math.min(1, value));
+    this.currentTimbre = v;
     this.xfade.fade.rampTo(v, 0.08);
   }
 
+  /**
+   * PERF (v0.3.0 freeze fix): gate the inaudible MonoSynth when timbre is
+   * parked at 0 or 1. The sub layer stays on its own gate (subEnabled) —
+   * it's outside the crossfade. See PadEngine.triggerChord for rationale.
+   */
   trigger(
     note: string,
     duration: string,
@@ -221,8 +240,13 @@ export class BassEngine {
   ): void {
     const v = Math.max(0.01, Math.min(1, velocity));
     const t = time ?? Tone.now();
-    this.main.triggerAttackRelease(note, duration, t, v);
-    this.mainB.triggerAttackRelease(note, duration, t, v);
+    const tim = this.currentTimbre;
+    if (tim < 1 - TIMBRE_EDGE_EPS) {
+      this.main.triggerAttackRelease(note, duration, t, v);
+    }
+    if (tim > TIMBRE_EDGE_EPS) {
+      this.mainB.triggerAttackRelease(note, duration, t, v);
+    }
     if (this.subEnabled) {
       // Sub plays one octave down. Use Tone.Frequency to shift safely.
       const subNote = Tone.Frequency(note).transpose(-12).toNote();

@@ -1,7 +1,7 @@
 {
   "name": "handsynth",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "main": "electron/main.cjs",
   "description": "Gestural synthesizer for live performance — webcam-controlled, Tone.js + MediaPipe + p5.js.",

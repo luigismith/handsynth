@@ -99,10 +99,16 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       delayWet: 0.35,
       masterDuck: 0,
     },
+    // DIFFERENTIATION FIX: timbre values lowered from 0.65/0.4/0.25 →
+    // 0.20/0.10/0.10. With the B-side always being pure sine (pad),
+    // pulse (lead), triangle (bass), high timbre defaults were washing
+    // out the A-side characteristic waveform of every preset — making
+    // them all sound like "sine pad + a hint of the original". Range
+    // is now compressed to 0.0..0.4 so the A-side always dominates.
     voice: {
-      pad: { waveform: 'fatsawtooth', detuneCents: 24, attack: 1.5, release: 4, timbre: 0.65 },
-      lead: { oscType: 'fmsine', modIndex: 1.5, harmonicity: 1, attack: 0.05, release: 1.2, timbre: 0.4 },
-      bass: { waveform: 'fatsquare', subLevel: 0.5, timbre: 0.25 },
+      pad: { waveform: 'fatsawtooth', detuneCents: 24, attack: 1.5, release: 4, timbre: 0.20 },
+      lead: { oscType: 'fmsine', modIndex: 1.5, harmonicity: 1, attack: 0.05, release: 1.2, timbre: 0.10 },
+      bass: { waveform: 'fatsquare', subLevel: 0.5, timbre: 0.10 },
     },
   },
 
@@ -129,10 +135,13 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       delayWet: 0.25,
       masterDuck: 0,
     },
+    // DIFFERENTIATION FIX: ACID wants raw buzz — pull every voice almost
+    // entirely to A-side (the resonant filter feeds on the square/saw
+    // harmonics; the sine B-side would only soften the 303 honk).
     voice: {
-      pad: { waveform: 'fatsquare', detuneCents: 6, attack: 0.1, release: 0.6, timbre: 0.3 },
-      lead: { oscType: 'sawtooth', modIndex: 8, harmonicity: 1, attack: 0.005, release: 0.3, timbre: 0.2 },
-      bass: { waveform: 'square', subLevel: 0.3, timbre: 0.15 },
+      pad: { waveform: 'fatsquare', detuneCents: 6, attack: 0.1, release: 0.6, timbre: 0.05 },
+      lead: { oscType: 'sawtooth', modIndex: 8, harmonicity: 1, attack: 0.005, release: 0.3, timbre: 0.00 },
+      bass: { waveform: 'square', subLevel: 0.3, timbre: 0.00 },
     },
   },
 
@@ -161,10 +170,13 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // Timbres: pad and lead a touch toward B (the long delay tail wants a
     // round, low-harmonic body so the repeats don't pile up into mud); bass
     // stays near A so the fatsaw harmonic skeleton survives the wash.
+    // DIFFERENTIATION FIX: DUB's fmsquare pad smear IS the character —
+    // a tiny sine sweetening (0.25) helps the long delay tail stay round
+    // without piling up, but 60% sine was washing the smear entirely.
     voice: {
-      pad: { waveform: 'fmsquare', detuneCents: 18, attack: 0.8, release: 5, timbre: 0.6 },
-      lead: { oscType: 'fmsine', modIndex: 2, harmonicity: 0.5, attack: 0.1, release: 1.5, timbre: 0.55 },
-      bass: { waveform: 'fatsawtooth', subLevel: 0.85, timbre: 0.3 },
+      pad: { waveform: 'fmsquare', detuneCents: 18, attack: 0.8, release: 5, timbre: 0.25 },
+      lead: { oscType: 'fmsine', modIndex: 2, harmonicity: 0.5, attack: 0.1, release: 1.5, timbre: 0.15 },
+      bass: { waveform: 'fatsawtooth', subLevel: 0.85, timbre: 0.05 },
     },
   },
 
@@ -190,10 +202,13 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       delayWet: 0.25,
       masterDuck: 0,
     },
+    // DIFFERENTIATION FIX: BRIGHT was already close to A-side at 0.2/0.2/
+    // 0.25. Pull bass to 0.10 so the fatsawtooth body matches the lead's
+    // harmonic openness. Keep everything saw-dominant; bright = harmonic.
     voice: {
-      pad: { waveform: 'fatsawtooth', detuneCents: 14, attack: 0.4, release: 2, timbre: 0.2 },
-      lead: { oscType: 'fmsawtooth', modIndex: 12, harmonicity: 2, attack: 0.01, release: 0.7, timbre: 0.2 },
-      bass: { waveform: 'fatsawtooth', subLevel: 0.4, timbre: 0.25 },
+      pad: { waveform: 'fatsawtooth', detuneCents: 14, attack: 0.4, release: 2, timbre: 0.05 },
+      lead: { oscType: 'fmsawtooth', modIndex: 12, harmonicity: 2, attack: 0.01, release: 0.7, timbre: 0.05 },
+      bass: { waveform: 'fatsawtooth', subLevel: 0.4, timbre: 0.10 },
     },
   },
 
@@ -220,10 +235,15 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       delayWet: 0.2,
       masterDuck: 0,
     },
+    // DIFFERENTIATION FIX: triangle is already warm and round — the
+    // previous 0.7 timbre was washing the triangle character entirely
+    // into sine. Triangle vs sine is a subtle but real difference;
+    // keep it readable. Lead is similar — fmsine A is already smooth,
+    // 0.65 pure-sine wash was killing the modulator shimmer.
     voice: {
-      pad: { waveform: 'triangle', detuneCents: 8, attack: 1.2, release: 5, timbre: 0.7 },
-      lead: { oscType: 'fmsine', modIndex: 0.8, harmonicity: 1, attack: 0.15, release: 1.2, timbre: 0.65 },
-      bass: { waveform: 'fatsawtooth', subLevel: 1.0, timbre: 0.3 },
+      pad: { waveform: 'triangle', detuneCents: 8, attack: 1.2, release: 5, timbre: 0.30 },
+      lead: { oscType: 'fmsine', modIndex: 0.8, harmonicity: 1, attack: 0.15, release: 1.2, timbre: 0.25 },
+      bass: { waveform: 'fatsawtooth', subLevel: 1.0, timbre: 0.10 },
     },
   },
 
@@ -253,10 +273,16 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // Timbres: balanced near 0.5 — tape sound is the SUM of harmonics
     // (the saw) and a softening pole (saturation rolloff approximated by
     // partial morph toward B's sine/pulse).
+    // DIFFERENTIATION FIX: TAPE's identity is the AM modulation (amsawtooth
+    // pad) and the pulse-lead — both characteristics get destroyed by a
+    // 50% B-side wash. The pulse lead at 0.5 is especially bad because
+    // the B-side is ALSO pulse → no morph happens at all, the engine just
+    // plays a louder pulse. Pull to 0.15-0.20 so the AM and pulse
+    // characters dominate.
     voice: {
-      pad: { waveform: 'amsawtooth', detuneCents: 12, attack: 0.6, release: 3, timbre: 0.45 },
-      lead: { oscType: 'pulse', modIndex: 4, harmonicity: 1.5, attack: 0.02, release: 0.9, timbre: 0.5 },
-      bass: { waveform: 'fatsquare', subLevel: 0.6, timbre: 0.5 },
+      pad: { waveform: 'amsawtooth', detuneCents: 12, attack: 0.6, release: 3, timbre: 0.20 },
+      lead: { oscType: 'pulse', modIndex: 4, harmonicity: 1.5, attack: 0.02, release: 0.9, timbre: 0.15 },
+      bass: { waveform: 'fatsquare', subLevel: 0.6, timbre: 0.20 },
     },
   },
 
@@ -286,10 +312,16 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     // Timbres: full toward B — sine/pulse/triangle on all three voices is
     // exactly the "vacuum" character; the user-set knob can still pull it
     // back toward A if they want more harmonic edge.
+    // DIFFERENTIATION FIX: SPACE's A-side is already very smooth (fmsine,
+    // amsine, sine) — high timbre toward pure sine adds little new but
+    // washes the FM/AM shimmer that IS the SPACE character. Pulled back
+    // to 0.40 average so the modulator-driven shimmer survives. Still
+    // the most B-side-heavy preset (SPACE = drift = round), but not so
+    // far that the FM/AM motion gets buried.
     voice: {
-      pad: { waveform: 'fmsine', detuneCents: 28, attack: 2.5, release: 6, timbre: 0.85 },
-      lead: { oscType: 'amsine', modIndex: 5, harmonicity: 0.75, attack: 0.4, release: 2.5, timbre: 0.8 },
-      bass: { waveform: 'sine', subLevel: 0.95, timbre: 0.7 },
+      pad: { waveform: 'fmsine', detuneCents: 28, attack: 2.5, release: 6, timbre: 0.40 },
+      lead: { oscType: 'amsine', modIndex: 5, harmonicity: 0.75, attack: 0.4, release: 2.5, timbre: 0.35 },
+      bass: { waveform: 'sine', subLevel: 0.95, timbre: 0.30 },
     },
   },
 ] as const;

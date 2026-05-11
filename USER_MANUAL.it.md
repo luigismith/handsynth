@@ -239,23 +239,37 @@ rimuoverla.
 Il pulsante **Ripristina vibe** riporta ogni manopola ai default del vibe
 attivo senza perdere le patch salvate.
 
-### Sezione Voce — manopole WAVE in stile analogico
+### Sezione Voce — scegli una forma d'onda E falla morphare
 
-Sotto le manopole FX principali c'è una sezione **Voce** con tre piccole
-manopole:
+Sotto le manopole FX principali c'è una sezione **Voce** con una riga per
+ogni voce. Ogni riga ha due controlli affiancati:
 
-- **Pad Wave** — crossfade fra l'oscillatore del pad (impostato dal vibe o
-  dal preset, es. `fatsawtooth`) e una sinusoide pulita.
-- **Lead Wave** — crossfade fra l'oscillatore del lead (tipicamente
-  `fmsawtooth` o `fmsine`) e un pulse cavo.
-- **Bass Wave** — crossfade fra l'oscillatore del basso (es. `fatsquare`)
-  e una triangola calda.
+- Un **dropdown forma d'onda** — scegli l'oscillatore lato A per quella
+  voce fra 13 opzioni: `SINE`, `TRIANGLE`, `SAWTOOTH`, `SQUARE`, `PULSE`,
+  `FAT SINE`, `FAT TRIANGLE`, `FAT SAWTOOTH`, `FAT SQUARE`, `FM SINE`,
+  `FM SAWTOOTH`, `AM SINE`, `AM SAWTOOTH`. È il *vero* selettore di forma
+  d'onda — fa quello che ti aspetti, indipendentemente dalla manopola di
+  morph.
+- Una manopola **Mix** — crossfade fra la forma d'onda lato A e una
+  destinazione lato B fissa (sinusoide per il pad, pulse per il lead,
+  triangola per il basso). 0 = solo A, 1 = solo B, 0.5 = mix bilanciato.
+  Crossfade a potenza costante quindi il morph è fluido — il feeling
+  della manopola "WAVE" analogica, mai brusco. Entrambi gli stack di
+  oscillatori suonano sempre; il crossfade controlla solo l'udibilità,
+  così il morph a metà nota scivola tra i due timbri invece di stacchettare.
 
-Ogni manopola è continua (0..1, default 0.5 = mix bilanciato) e usa un
-crossfade a potenza costante, così la transizione è fluida — il feeling
-della manopola "WAVE" analogica, mai brusco. Entrambi gli stack di
-oscillatori suonano sempre; il crossfade controlla solo l'udibilità,
-così il morph a metà nota scivola tra i due timbri invece di stacchettare.
+Come il dropdown interagisce con vibe e preset di fabbrica:
+
+- Cliccare un chip **preset di fabbrica** (LUSH / ACID / DUB / …) è un
+  apply one-shot completo — la forma d'onda del preset per ogni voce
+  sostituisce quella nel dropdown. È voluto: i chip sono "dammi questo
+  suono intero", non "preserva le mie scelte".
+- Cambiare il dropdown **vibe** azzera anche le forme d'onda scelte
+  (il vibe è un'identità sonora intera).
+- Cambiare solo il **dropdown forma d'onda** sostituisce l'oscillatore
+  lato A e lascia ogni altra manopola al suo posto (FX, inviluppi, mix).
+- Le scelte vengono salvate nelle patch utente: le tue patch salvate
+  ricordano esattamente quale forma d'onda hai scelto, per ogni voce.
 
 ### Pill SMART — router di voicing intelligente
 
