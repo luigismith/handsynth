@@ -50,7 +50,64 @@ function isTypingTarget(t: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
 }
 
+/**
+ * Suppress two specific Tone.js-internal errors that can corrupt
+ * Transport._timeline under main-thread stalls and then spam-fire
+ * indefinitely on every subsequent tick. Live console capture during a
+ * freeze showed:
+ *
+ *   "The time must be greater than or equal to the last scheduled time"
+ *   "Cannot read properties of undefined (reading 'time')"
+ *     at Vi.getTicksAtTime (tone.js)
+ *
+ * The leaf-level try/catch around triggerAttackRelease in the voice
+ * engines catches the FIRST error type but Tone internally schedules
+ * release callbacks via setTimeout, and those async callbacks aren't on
+ * our call stack — when they throw, the throw escapes back through
+ * Tone's tick loop and can corrupt Transport's timeline. The second
+ * error type then fires every tick (60-200 Hz on audio rate) because
+ * timeline has `undefined` entries.
+ *
+ * Suppressing them at the window-level prevents the construction +
+ * propagation overhead from running on every tick — that's the
+ * difference between "audio glitch + brief stall" and "fully frozen
+ * renderer". The corruption itself isn't reversed (would need a Transport
+ * restart), but the symptom is contained.
+ *
+ * We match only these specific Tone-internal messages, so unrelated
+ * errors still surface normally.
+ */
+function installToneErrorGuard(): void {
+  const TONE_ERRORS = [
+    'must be greater than or equal to the last scheduled time',
+    "Cannot read properties of undefined (reading 'time')",
+  ];
+  const shouldSuppress = (msg: unknown): boolean => {
+    if (typeof msg !== 'string') return false;
+    return TONE_ERRORS.some((needle) => msg.includes(needle));
+  };
+  window.addEventListener(
+    'error',
+    (e: ErrorEvent) => {
+      const msg = e.error?.message ?? e.message;
+      if (shouldSuppress(msg)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    true, // capture phase — get the event before any handler can re-throw
+  );
+  window.addEventListener('unhandledrejection', (e) => {
+    const reason = (e as PromiseRejectionEvent).reason;
+    const msg = reason?.message ?? String(reason);
+    if (shouldSuppress(msg)) {
+      e.preventDefault();
+    }
+  });
+}
+
 async function bootstrap(): Promise<void> {
+  installToneErrorGuard();
   injectStyles();
 
   // i18n: detection happens automatically when the i18n module loads (it
