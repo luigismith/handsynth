@@ -152,8 +152,13 @@ const HAND_CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
 ];
 
 // Adjacent fingertip pairs for elastic strings.
-//   index tip (8), middle tip (12), ring tip (16), pinky tip (20)
+//   thumb tip (4), index tip (8), middle tip (12), ring tip (16), pinky tip (20)
+// User feedback: "perché il pollice non è legato come le altre dita?" — the
+// thumb (4) was originally excluded because the thumb→index segment crosses
+// the palm at a steep angle, but visually the user expects it connected to
+// the rest of the hand's spider-web. Added.
 const FINGER_STRING_PAIRS: ReadonlyArray<readonly [number, number]> = [
+  [4, 8],
   [8, 12],
   [12, 16],
   [16, 20],
