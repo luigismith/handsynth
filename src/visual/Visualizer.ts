@@ -295,13 +295,21 @@ export class VisualizerImpl implements Visualizer {
     };
     deps.music.on(this.musicEvents);
 
-    // Resize handler.
+    // Resize handler. Wrapped in try/catch so a p5-internal throw (which has
+    // happened before in this codebase — see sketch.ts:resize comment) can
+    // never escape the listener and kill the RAF loop. The error is logged
+    // for visibility but the resize cycle continues.
     this.resizeHandler = (): void => {
       if (!this.sketch) return;
-      const w = parent.clientWidth || window.innerWidth;
-      const h = parent.clientHeight || window.innerHeight;
-      this.sketch.resize(w, h);
-      this.updateVideoCover();
+      try {
+        const w = parent.clientWidth || window.innerWidth;
+        const h = parent.clientHeight || window.innerHeight;
+        this.sketch.resize(w, h);
+        this.updateVideoCover();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[Visualizer] resize handler swallowed:', err);
+      }
     };
     window.addEventListener('resize', this.resizeHandler);
 

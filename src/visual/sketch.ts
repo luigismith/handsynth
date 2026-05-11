@@ -625,12 +625,20 @@ export function createSketch(
     resize(width: number, height: number): void {
       instance.resizeCanvas(width, height);
       if (scanlines) scanlines.resize(instance, width, height);
+      // BUG FIX (live console capture v0.3.1): vignette.remove() throws
+      // `TypeError: Cannot read properties of undefined (reading 'indexOf')`
+      // in p5.Element.remove when the buffer's DOM parent reference is
+      // stale (which happens routinely after the first resize cycle, or
+      // when devicePixelRatio shifts). The throw escapes the resize
+      // handler → escapes the RAF tick → p5 dies → visualizer freezes.
+      // Same family as the earlier scanlines.ts fix. Swallow remove()
+      // errors and let GC reclaim the old buffer.
       if (vignette) {
-        vignette.remove();
+        try { vignette.remove(); } catch { /* p5 internal */ }
         vignette = buildVignette(instance, width, height);
       }
       if (hexGrid) {
-        hexGrid.remove();
+        try { hexGrid.remove(); } catch { /* p5 internal */ }
         hexGrid = buildHexGrid(instance, width, height);
       }
       if (starfield) starfield.reset(width, height);
