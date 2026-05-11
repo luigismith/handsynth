@@ -159,15 +159,12 @@ export class PadEngine {
       volume: -6,
     });
     poly.set({ detune: detuneCents });
-    // PERF FIX (live capture: V climbing 8→16→22 over 45 s):
-    // Tone.PolySynth default maxPolyphony is 32. With pad release 4 s
-    // and chord changes ~1/s, voices accumulate before the release
-    // tail decays → audio thread mixing load climbs → glitches.
-    // Cap at 6 per layer: when a 7th note triggers, the oldest is
-    // stolen instead of queued. 4-note chord + 2 voices of overlap
-    // headroom is enough for the smooth chord-change feel, without
-    // unbounded growth. Set on the instance (not in options).
-    poly.maxPolyphony = 6;
+    // NOTE: tried `poly.maxPolyphony = 6` here to cap voice-pool
+    // overflow during sustained play. RESULT: pad went completely
+    // silent (V=0 in DIAG, user confirmed no audio). Tone.js 15.x
+    // appears not to honor maxPolyphony setter after construction —
+    // or honors it in a way that disposes existing voices. Reverted;
+    // the voice-climb issue is real but this isn't the way to fix it.
     return poly;
   }
 
