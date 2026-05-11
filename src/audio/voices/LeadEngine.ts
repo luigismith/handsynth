@@ -244,7 +244,7 @@ export class LeadEngine {
    * silently ignored on plain types — no need to gate by oscType here.
    *
    * `timbre` morphs the crossfade A↔B continuously; it does NOT need the
-   * 30 ms fade gate because the crossfade itself is the fade.
+   * 50 ms fade gate because the crossfade itself is the fade.
    */
   applyVoiceShape(shape: VoiceShape['lead'] | undefined): void {
     if (!shape) return;
@@ -252,12 +252,12 @@ export class LeadEngine {
     // rebuilds its underlying node when `type` changes; if a note is
     // sustaining when a preset chip is clicked, the user hears a click
     // as the wave snaps mid-cycle. Fade out → swap → fade back up
-    // (30 ms each side) hides the discontinuity. Only when type swaps;
+    // (50 ms each side) hides the discontinuity. Only when type swaps;
     // modIndex / harmonicity / envelope changes don't recreate nodes.
     const willSwapType = !!shape.oscType;
     if (willSwapType) {
       this.out.gain.cancelScheduledValues(0);
-      this.out.gain.rampTo(0, 0.03);
+      this.out.gain.rampTo(0, 0.05);
     }
     if (shape.oscType) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -289,7 +289,7 @@ export class LeadEngine {
     }
     if (willSwapType) {
       // Restore nominal lead level (0.85, matching the constructor default).
-      this.out.gain.rampTo(0.85, 0.03);
+      this.out.gain.rampTo(0.85, 0.05);
     }
   }
 

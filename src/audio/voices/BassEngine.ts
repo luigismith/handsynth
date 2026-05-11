@@ -183,18 +183,18 @@ export class BassEngine {
    * voices on a muted layer.
    *
    * `timbre` morphs the crossfade A↔B continuously; it does NOT need the
-   * 30 ms fade gate because the crossfade itself is the fade.
+   * 50 ms fade gate because the crossfade itself is the fade.
    */
   applyVoiceShape(shape: VoiceShape['bass'] | undefined): void {
     if (!shape) return;
     // GLITCH MITIGATION: same as Pad/Lead — OmniOscillator type swap
-    // produces a click on sustaining bass notes. 30 ms fade-out around
+    // produces a click on sustaining bass notes. 50 ms fade-out around
     // the swap hides it. subLevel changes (sub.volume.rampTo) already
     // smooth themselves; only the main waveform swap needs the gate.
     const willSwapType = !!shape.waveform;
     if (willSwapType) {
       this.out.gain.cancelScheduledValues(0);
-      this.out.gain.rampTo(0, 0.03);
+      this.out.gain.rampTo(0, 0.05);
     }
     if (shape.waveform) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -213,7 +213,7 @@ export class BassEngine {
     }
     if (willSwapType) {
       // Restore nominal bass level (0.9, matching the constructor default).
-      this.out.gain.rampTo(0.9, 0.03);
+      this.out.gain.rampTo(0.9, 0.05);
     }
   }
 

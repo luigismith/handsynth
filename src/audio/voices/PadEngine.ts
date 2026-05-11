@@ -191,21 +191,21 @@ export class PadEngine {
    * splits it ±half. Clamped to [2..40] to avoid pathological detune.
    *
    * `timbre` is the continuous A/B crossfade morph; it ramps smoothly so it
-   * does NOT need the 30 ms fade gate (the crossfade IS the fade).
+   * does NOT need the 50 ms fade gate (the crossfade IS the fade).
    */
   applyVoiceShape(shape: VoiceShape['pad'] | undefined): void {
     if (!shape) return;
     // GLITCH MITIGATION: changing OmniOscillator type rebuilds the
     // underlying oscillator atomically — any in-flight voices snap to the
     // new waveform mid-cycle, producing an audible click. Brief fade-out
-    // on the engine output Gain hides the discontinuity. 30 ms is short
-    // enough to feel instant on a preset chip click; 30 ms ramp back up
+    // on the engine output Gain hides the discontinuity. 50 ms is short
+    // enough to feel instant on a preset chip click; 50 ms ramp back up
     // restores the pad smoothly. Only ramp when waveform actually changes
     // (the only path that rebuilds the oscillator).
     const willSwapType = !!shape.waveform;
     if (willSwapType) {
       this.out.gain.cancelScheduledValues(0);
-      this.out.gain.rampTo(0, 0.03);
+      this.out.gain.rampTo(0, 0.05);
     }
     if (shape.waveform) {
       const w = this.normalizeWaveform(shape.waveform);
@@ -238,7 +238,7 @@ export class PadEngine {
     }
     if (willSwapType) {
       // Fade back up to nominal pad level (0.7) after a brief silence.
-      this.out.gain.rampTo(0.7, 0.03);
+      this.out.gain.rampTo(0.7, 0.05);
     }
   }
 
