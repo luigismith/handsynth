@@ -9,20 +9,15 @@
 import { describe, it, expect } from 'vitest';
 import type { FaceState, FaceLandmark, Hand } from '@contracts/contracts';
 import {
-  drawEyeLasers,
   drawFaceSkeleton,
   drawFakeArms,
   FACE_LEFT_EYE,
-  FACE_LEFT_EYE_INNER_CORNER,
-  FACE_LEFT_EYE_OUTER_CORNER,
   FACE_LEFT_BROW,
   FACE_LIPS_INNER,
   FACE_LIPS_OUTER,
   FACE_NOSE_BRIDGE,
   FACE_OVAL,
   FACE_RIGHT_EYE,
-  FACE_RIGHT_EYE_INNER_CORNER,
-  FACE_RIGHT_EYE_OUTER_CORNER,
   FACE_RIGHT_BROW,
 } from './sketch';
 
@@ -303,101 +298,6 @@ describe('drawFakeArms', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// drawEyeLasers — Superman laser eyes
-// ---------------------------------------------------------------------------
-
-/**
- * Build a face fixture with valid eye-corner landmarks at the documented
- * MediaPipe indices. Without these the laser function early-returns even
- * with eyesWide above threshold.
- */
-function makeFaceWithEyeCorners(over: Partial<FaceState> = {}): FaceState {
-  const lms = makeFaceLandmarks();
-  // Place eye corners at distinct pixel positions so the centroids land
-  // on different points and the helpers don't collapse to (0,0).
-  lms[FACE_LEFT_EYE_OUTER_CORNER] = { x: 0.30, y: 0.45, z: 0 };
-  lms[FACE_LEFT_EYE_INNER_CORNER] = { x: 0.40, y: 0.45, z: 0 };
-  lms[FACE_RIGHT_EYE_OUTER_CORNER] = { x: 0.70, y: 0.45, z: 0 };
-  lms[FACE_RIGHT_EYE_INNER_CORNER] = { x: 0.60, y: 0.45, z: 0 };
-  return {
-    ...makeFace({ landmarks: lms }),
-    ...over,
-  };
-}
-
-describe('drawEyeLasers', () => {
-  it('is a no-op when eyesWide is at or below 0.15', () => {
-    const s = createStub();
-    drawEyeLasers(
-      s as unknown as Parameters<typeof drawEyeLasers>[0],
-      makeFaceWithEyeCorners({ eyesWide: 0.15 }),
-      1280,
-      720,
-      0,
-    );
-    // No stroke / line calls — only a defensive early return.
-    expect(s.calls.length).toBe(0);
-  });
-
-  it('is a no-op when landmarks are missing', () => {
-    const s = createStub();
-    drawEyeLasers(
-      s as unknown as Parameters<typeof drawEyeLasers>[0],
-      makeFace({ landmarks: undefined, eyesWide: 0.9 }),
-      1280,
-      720,
-      0,
-    );
-    expect(s.calls.length).toBe(0);
-  });
-
-  it('emits at least 6 stroke calls (3 layers x 2 eyes) when above threshold', () => {
-    const s = createStub();
-    drawEyeLasers(
-      s as unknown as Parameters<typeof drawEyeLasers>[0],
-      makeFaceWithEyeCorners({ eyesWide: 0.8 }),
-      1280,
-      720,
-      0,
-    );
-    const strokes = s.calls.filter((c) => c.fn === 'stroke').length;
-    expect(strokes).toBeGreaterThanOrEqual(6);
-  });
-
-  it('wraps the laser draw in a push/pop pair', () => {
-    const s = createStub();
-    drawEyeLasers(
-      s as unknown as Parameters<typeof drawEyeLasers>[0],
-      makeFaceWithEyeCorners({ eyesWide: 0.7 }),
-      1280,
-      720,
-      0,
-    );
-    const pushes = s.calls.filter((c) => c.fn === 'push').length;
-    const pops = s.calls.filter((c) => c.fn === 'pop').length;
-    expect(pushes).toBeGreaterThanOrEqual(1);
-    expect(pops).toBe(pushes);
-    // First push and last pop frame the body of the function.
-    expect(s.calls[0]?.fn).toBe('push');
-    expect(s.calls[s.calls.length - 1]?.fn).toBe('pop');
-  });
-
-  it('reduced-motion mode draws a single thin line per eye, no glow stack', () => {
-    const s = createStub();
-    drawEyeLasers(
-      s as unknown as Parameters<typeof drawEyeLasers>[0],
-      makeFaceWithEyeCorners({ eyesWide: 0.9 }),
-      1280,
-      720,
-      0,
-      null,
-      /* reducedMotion */ true,
-    );
-    // One stroke + one line per eye = 2 strokes, 2 lines.
-    const strokes = s.calls.filter((c) => c.fn === 'stroke').length;
-    const lines = s.calls.filter((c) => c.fn === 'line').length;
-    expect(strokes).toBe(2);
-    expect(lines).toBe(2);
-  });
-});
+// Removed: drawEyeLasers tests (5 cases) — the Superman laser-eyes feature
+// was deleted per user request. The FaceState.eyesWide scalar still exists
+// in the contract but no consumer uses it.

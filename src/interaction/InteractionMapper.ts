@@ -148,10 +148,8 @@ const WAVE_LFO_HZ = 5;
 //   pose.yaw   -> filterResonance offset (±FACE_RESONANCE_GAIN)
 //   pose.pitch -> intensity boost (+FACE_INTENSITY_GAIN * sin(pitch))
 //   mouthOpen  -> rising-edge stab trigger + 4-dim continuous controller
-//   eyesWide   -> reverbWet additive lift (+FACE_EYES_WIDE_REVERB_GAIN) AND
-//                 filterResonance Q boost (+FACE_EYES_WIDE_Q_GAIN, clamped).
-//                 "Explosive" sound when the user widens their eyes — pairs
-//                 with the Superman laser-eye visual.
+//   (removed eyesWide mapping — see commit history; was the audio half of
+//    the deleted Superman laser-eyes visual)
 //   smile      -> brightness lift +FACE_SMILE_BRIGHTNESS_GAIN, masterDuck
 //                 reduction -FACE_SMILE_DUCK_REDUCE (smile = brighter, louder).
 //   frown      -> filterCutoff cap toward FACE_FROWN_CUTOFF_FLOOR Hz at full
@@ -234,18 +232,8 @@ const FACE_MOUTH_REVERB_LIFT = 0.3;
 const FACE_MOUTH_BRIGHTNESS_GAIN = 0.4;
 
 /**
- * Eyes-wide additive contributions, layered on top of the hand-derived
- * target. eyesWide=1 -> +0.25 reverbWet AND +4 Q. The combination lifts
- * the wash and pinches the resonance — together they read as "explosive"
- * even when the underlying gesture mix is quiet. Pairs with the Superman
- * laser-eye visual.
- */
-const FACE_EYES_WIDE_REVERB_GAIN = 0.25;
-const FACE_EYES_WIDE_Q_GAIN = 4;
-
-/**
- * Expression contributions. Each is layered AFTER the eyesWide / mouth / pose
- * blocks so the four discrete expressions are the loudest interpretive layer.
+ * Expression contributions. Each is layered AFTER the mouth/pose blocks so
+ * the four discrete expressions are the loudest interpretive layer.
  * Calibrations:
  *   - smile: at full smile, brightness gets +0.2 and masterDuck is reduced
  *     by 0.15 — so smiling literally makes the room brighter and louder.
@@ -1079,18 +1067,11 @@ export class InteractionMapperImpl implements InteractionMapper {
         handBrightness2 + m * FACE_MOUTH_BRIGHTNESS_GAIN,
       );
 
-      // Eyes-wide additive: lift reverbWet and Q on top of everything
-      // already composed. Layered AFTER the mouth block so wide eyes +
-      // open mouth read as the most extreme combined sound.
-      const w = clamp01(f.eyesWide);
-      out.reverbWet = clamp01(
-        (out.reverbWet ?? 0.4) + w * FACE_EYES_WIDE_REVERB_GAIN,
-      );
-      out.filterResonance = clamp(
-        (out.filterResonance ?? 1) + w * FACE_EYES_WIDE_Q_GAIN,
-        Q_MIN,
-        Q_MAX,
-      );
+      // (Removed) eyesWide → reverbWet+Q lift. The Superman laser-eyes
+      // visual was deleted per user request, and its audio counterpart
+      // (this lift) was the only remaining consumer of eyesWide. The
+      // FaceState scalar is kept for back-compat but unused. f.eyesWide
+      // is intentionally not referenced here.
 
       // -----------------------------------------------------------------
       // Expression layer — smile / frown / surprise / anger. Layered last

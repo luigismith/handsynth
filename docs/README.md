@@ -6,7 +6,7 @@ This folder holds the marketing/visual assets referenced from the top-level `REA
 
 | File | Description |
 |---|---|
-| `hero.png` | Hero image at the top of the README. AI-generated rendering: laser eyes, hand skeleton, face mesh — the look HandSynth aims for. Replace with a real photograph or screenshot when you have one you like. |
+| `hero.png` | Hero image at the top of the README. AI-generated rendering: hand skeleton, face mesh — the look HandSynth aims for. Replace with a real photograph or screenshot when you have one you like. |
 | `screenshot-onboard.png` | The onboarding card (`HANDSYNTH` title, `> Alza le mani` terminal-style subtitle, orange CTA). |
 | `screenshot-skeleton.png` | The visualizer in action with hand + face skeletons rendered. |
 | `screenshot-patch.png` | The PATCH editor (gear icon, top-right) showing knobs + factory presets + patches list. |

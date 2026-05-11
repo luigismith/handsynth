@@ -704,7 +704,13 @@ describe('InteractionMapper face integration', () => {
     mapper.stop();
   });
 
-  it('eyesWide=1 lifts target.reverbWet by FACE_EYES_WIDE_REVERB_GAIN (0.25)', () => {
+  // Removed: 2 eyesWide tests for the deleted Superman laser-eye feature.
+  // The eyesWide scalar is still emitted by FaceTracker for back-compat
+  // but no longer drives any audio param.
+
+  it('eyesWide=1 no longer affects reverbWet or filterResonance (feature removed)', () => {
+    // Regression: prove the old laser-eye audio bump is gone. Pinning this
+    // so a future change can't silently re-introduce the mapping.
     const mapper = new InteractionMapperImpl();
     const audio = makeAudioStub();
     const music = makeMusicStub();
@@ -714,76 +720,37 @@ describe('InteractionMapper face integration', () => {
     mapper.setVibe(VIBE);
     mapper.start();
 
-    // Baseline (eyesWide=0): hand-driven reverb with no extra lift.
     face.emit('face:update', blankFace({ eyesWide: 0 }));
-    hands.emit('gesture:update', blankState());
-    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
     const baselineReverb =
       audio.paramCalls
         .map((p) => p.reverbWet)
         .filter((v): v is number => typeof v === 'number')
         .pop() ?? 0;
+    const baselineQ =
+      audio.paramCalls
+        .map((p) => p.filterResonance)
+        .filter((v): v is number => typeof v === 'number')
+        .pop() ?? 0;
 
-    // Eyes wide: reverb should rise by ~0.25.
     face.emit('face:update', blankFace({ eyesWide: 1 }));
-    hands.emit('gesture:update', blankState());
-    hands.emit('gesture:update', blankState());
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
+    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
     const wideReverb =
       audio.paramCalls
         .map((p) => p.reverbWet)
         .filter((v): v is number => typeof v === 'number')
         .pop() ?? 0;
-
-    // Allow for clamp01 ceiling — rise should be at least 0.2 in any case.
-    expect(wideReverb - baselineReverb).toBeGreaterThan(0.2);
-    // And it should not exceed 1.
-    expect(wideReverb).toBeLessThanOrEqual(1);
-    mapper.stop();
-  });
-
-  it('eyesWide=1 lifts filterResonance by FACE_EYES_WIDE_Q_GAIN, clamped to Q_MAX', () => {
-    const mapper = new InteractionMapperImpl();
-    const audio = makeAudioStub();
-    const music = makeMusicStub();
-    const hands = makeHandsStub();
-    const face = makeFaceStub();
-    mapper.attach({ audio, music, hands, face });
-    mapper.setVibe(VIBE);
-    mapper.start();
-
-    // Baseline (eyesWide=0): hand-driven Q from leftOpenness=0.5 ≈ 7.25.
-    face.emit('face:update', blankFace({ eyesWide: 0 }));
-    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
-    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
-    const baseline =
+    const wideQ =
       audio.paramCalls
         .map((p) => p.filterResonance)
         .filter((v): v is number => typeof v === 'number')
         .pop() ?? 0;
 
-    // Eyes wide: +4 Q lift, well within Q_MAX=14.
-    face.emit('face:update', blankFace({ eyesWide: 1 }));
-    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
-    hands.emit('gesture:update', blankState({ leftOpenness: 0.5 }));
-    const wide =
-      audio.paramCalls
-        .map((p) => p.filterResonance)
-        .filter((v): v is number => typeof v === 'number')
-        .pop() ?? 0;
-
-    expect(wide - baseline).toBeCloseTo(4, 5);
-    expect(wide).toBeLessThanOrEqual(14);
-
-    // Now drive leftOpenness=1 (handQ=14) + eyesWide=1 — should clamp to Q_MAX.
-    face.emit('face:update', blankFace({ eyesWide: 1 }));
-    hands.emit('gesture:update', blankState({ leftOpenness: 1 }));
-    hands.emit('gesture:update', blankState({ leftOpenness: 1 }));
-    const clamped =
-      audio.paramCalls
-        .map((p) => p.filterResonance)
-        .filter((v): v is number => typeof v === 'number')
-        .pop() ?? 0;
-    expect(clamped).toBeCloseTo(14, 5);
+    // No-op: eyesWide should not change anything anymore.
+    expect(wideReverb).toBeCloseTo(baselineReverb, 5);
+    expect(wideQ).toBeCloseTo(baselineQ, 5);
     mapper.stop();
   });
 

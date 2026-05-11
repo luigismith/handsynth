@@ -3,16 +3,15 @@
 ## Benvenuto
 
 HandSynth è un sintetizzatore gestuale che si suona con il corpo. Muovi le mani,
-gira la testa, apri la bocca, spalanca gli occhi, sorridi, aggrotta le ciglia:
-ogni movimento entra a far parte del suono. Non ci sono tasti da imparare, né
-scale da memorizzare. Il cervello musicale dentro l'app rimane sempre nella
-tonalità attiva, quindi è genuinamente impossibile suonare una nota sbagliata.
-Il tuo lavoro è sentire.
+gira la testa, apri la bocca, sorridi, aggrotta le ciglia: ogni movimento entra
+a far parte del suono. Non ci sono tasti da imparare, né scale da memorizzare.
+Il cervello musicale dentro l'app rimane sempre nella tonalità attiva, quindi è
+genuinamente impossibile suonare una nota sbagliata. Il tuo lavoro è sentire.
 
 L'estetica è cyberpunk per scelta. Arancione su antracite, scheletri low-poly,
-laser dagli occhi, una scia di scanline sottile sopra i pannelli. Questo manuale
-percorre ogni gesto, ogni pannello, ogni scorciatoia da tastiera, e qualche
-suggerimento di troubleshooting per quando le cose vanno storte.
+una scia di scanline sottile sopra i pannelli. Questo manuale percorre ogni
+gesto, ogni pannello, ogni scorciatoia da tastiera, e qualche suggerimento di
+troubleshooting per quando le cose vanno storte.
 
 ## Primo avvio
 
@@ -84,17 +83,11 @@ le mappature qui sotto modulano il suono già guidato dalle mani.
 | Pitch della testa (mento in su) | Boost densità note | — |
 | Bocca aperta | Sweep delay wet, cutoff filtro +6k, riverbero +0,3, luminosità +0,4 | particelle dalla bocca |
 | Bocca aperta (fronte di salita) | Stab lead chord-tone | — |
-| Occhi spalancati (deliberato) | Riverbero +0,25, Q filtro +4 | raggi laser stile Superman |
 | Sorriso | Luminosità +0,2, masterDuck ridotto di 0,15 | (il suono si schiarisce, viene avanti) |
 | Cipiglio | Cutoff filtro tirato verso 1,5 kHz | (il suono si scurisce) |
-| Sorpresa (mascella + sopracciglia su + occhi spalancati) | Riverbero +0,3, feedback delay +0,1 | (il suono si apre) |
+| Sorpresa (mascella + sopracciglia su) | Riverbero +0,3, feedback delay +0,1 | (il suono si apre) |
 | Rabbia (sopracciglia giù, niente sorriso) | Drive +0,6, Q filtro +5 | (il suono spunta e graffia) |
 | Viso perso > 1,5 s | Master ducka di +0,15 | — |
-
-**Nota di calibrazione per gli occhi spalancati.** Il trigger ha una zona morta
-deliberata. "Occhi aperti normali" resta a 0; solo uno stare ovviamente
-spalancato peggia il segnale. Scelta deliberata per non far sparare i laser ad
-ogni battito di ciglia.
 
 **Nota di calibrazione per le espressioni.** I quattro scalari delle espressioni
 arrivano dagli output blendshape di MediaPipe. Saturano vicino a 1,0 su una
@@ -261,11 +254,10 @@ La scelta è ricordata in `localStorage`.
 
 ## Suggerimenti
 
-- **Calibrazione.** Il trigger occhi spalancati richiede uno stare deliberato
-  ("BANG, occhi aperti spalancati"). Sorrisi, cipigli ed espressioni di
-  rabbia si registrano a valori frazionari: non aspettarti che un sorrisetto
-  faccia girare la lampadina di luminosità. Tieni l'espressione per mezzo
-  secondo così il filtro One-Euro la prende.
+- **Calibrazione.** Sorrisi, cipigli ed espressioni di rabbia si registrano a
+  valori frazionari: non aspettarti che un sorrisetto faccia girare la
+  lampadina di luminosità. Tieni l'espressione per mezzo secondo così il
+  filtro One-Euro la prende.
 - **Silenziare velocemente.** `Escape` silenzia tutto. `Entrambi i pugni
   chiusi` fa la stessa cosa lato gesto, con una dissolvenza di 200 ms.
 - **Glitch audio.** Se senti crackling, prova `pnpm preview` invece di
@@ -291,11 +283,6 @@ onboarding). Se sei passato oltre l'onboarding e non senti ancora niente,
 clicca da qualche parte nella finestra: alcuni browser sospendono l'AudioContext
 sul cambio tab. La barra di stato del terminale HUD mostra lo stato corrente
 del context (running / suspended).
-
-**I laser scattano quando non dovrebbero.** La soglia degli occhi spalancati
-è alta (~0,92 di apertura media) ma sotto la luce del giorno alcuni utenti
-si registrano più alti. Strizzali un po', oppure spostati verso un'illuminazione
-più tenue dove i blendshape eye-open sono più calmi.
 
 **Audio glitchato / che droppa.** Chiudi le altre tab che fanno webcam o
 audio in tempo reale (Zoom, Meet, Discord con video acceso, ecc.). HandSynth

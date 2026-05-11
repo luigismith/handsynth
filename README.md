@@ -29,7 +29,6 @@ A web app + Electron desktop app that turns your body into an expressive musical
 - **Pinch right** triggers a harmony-aware lead stab
 - **Pinch left** advances the chord progression
 - **Mouth open** sweeps delay wet, filter cutoff, reverb, and brightness simultaneously
-- **Eyes wide** boosts reverb and filter resonance — and shoots Superman-style laser beams from your eyes
 - **Smile / frown / surprise / anger** modulate brightness, cutoff, drive, and resonance — your face is the fourth controller
 - **Both fists** mutes; **both hands above head** is the "drop"
 
@@ -126,7 +125,6 @@ for the full cheat sheet.
 | Head pitch | Note density boost | — |
 | Mouth open | Delay wet + filter cutoff +6k + reverb +0.3 + brightness +0.4 | Mouth-emit particles |
 | Mouth open (rising edge) | Lead chord-tone stab | — |
-| Eyes wide (deliberate) | Reverb wet +0.25 + filter Q +4 | Superman laser beams |
 | Smile | Brightness +0.2, masterDuck −0.15 (brighter, louder) | — |
 | Frown | Filter cutoff pulled toward 1.5 kHz (darkens) | — |
 | Surprise | Reverb +0.3, delay feedback +0.1 (opens up) | — |
@@ -165,7 +163,7 @@ FaceTracker ─┴─→ InteractionMapper ─→ AudioEngine ─→ AnalyserNod
 - **`MusicBrain`** is the generative composer: order-2 Markov chains on scale degrees with Bezier contour shaping, harmonic filter that snaps every note to a chord-tone or consonant tension, Bjorklund Euclidean rhythms for percussion, swing on 16ths.
 - **`HandTracker` / `FaceTracker`** wrap MediaPipe Tasks Vision, do per-landmark One-Euro filtering, derive scalars (openness, pinch, depth, roll, pitch, eyesWide, mouthOpen, etc.), emit events at 24 Hz / 8 Hz respectively to keep main-thread headroom for the audio scheduler.
 - **`InteractionMapper`** is the patch bay — gesture state in, audio params + music inputs out. Per-param epsilon diff so unchanged knobs don't fire ramp events.
-- **`Visualizer`** is a p5.js instance-mode sketch: low-poly orange-on-charcoal cyberpunk style, FFT-reactive triangle particles, hex grid backdrop, hand silhouettes with diamond fingertips, full face mesh with iris rings, fake-arm bezier connectors, Superman laser eyes.
+- **`Visualizer`** is a p5.js instance-mode sketch: low-poly orange-on-charcoal cyberpunk style, FFT-reactive triangle particles, hex grid backdrop, hand silhouettes with diamond fingertips, full face mesh with iris rings, fake-arm bezier connectors.
 - **`SettingsPanel`** is the analog-synth-style PATCH editor with knobs, factory presets, and patch save/load.
 - **`Terminal`** is the translucent left-side event log.
 

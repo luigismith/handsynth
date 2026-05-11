@@ -13,9 +13,9 @@ The music brain inside the app stays inside the active key, so it is genuinely
 impossible to play a wrong note. Your job is to feel.
 
 The aesthetic is cyberpunk on purpose. Orange-on-charcoal, low-poly skeletons,
-laser eyes, a thin scanline sweep over the panels. This manual walks through
-every gesture, every panel, every keyboard shortcut, and a few troubleshooting
-tips for when things go sideways.
+a thin scanline sweep over the panels. This manual walks through every gesture,
+every panel, every keyboard shortcut, and a few troubleshooting tips for when
+things go sideways.
 
 ## First start
 
@@ -83,17 +83,11 @@ mappings below modulate the existing hand-driven sound.
 | Head pitch (chin up) | Note density boost | — |
 | Mouth open | Delay wet sweep, filter cutoff +6k, reverb +0.3, brightness +0.4 | mouth-emitted particles |
 | Mouth open (rising edge) | Lead chord-tone stab | — |
-| Eyes wide (deliberate) | Reverb +0.25, filter Q +4 | Superman laser beams |
 | Smile | Brightness +0.2, masterDuck reduced 0.15 | (sound brightens, pushes forward) |
 | Frown | Filter cutoff pulled toward 1.5 kHz | (sound darkens) |
-| Surprise (jaw + brow up + eyes wide) | Reverb +0.3, delay feedback +0.1 | (sound opens up) |
+| Surprise (jaw + brow up) | Reverb +0.3, delay feedback +0.1 | (sound opens up) |
 | Anger (brows down, no smile) | Drive +0.6, filter Q +5 | (sound peaks and grits) |
 | Face lost > 1.5 s | Master ducks +0.15 | — |
-
-**Calibration note for eyes wide.** The wide-eye trigger has a deliberate dead
-zone. Normal "eyes open" stays at 0; only an obvious wide stare ("spalanca gli
-occhi") actually pegs the signal. This was a deliberate choice so blinks don't
-fire lasers every time.
 
 **Calibration note for expressions.** The four expression scalars come from
 MediaPipe's blendshape outputs. They saturate near 1.0 on a clear, deliberate
@@ -275,10 +269,6 @@ macOS System Settings → Camera), grant access and reload.
 If you got past onboarding and still hear nothing, click anywhere in the
 window — some browsers suspend the AudioContext on tab-switch. The terminal
 HUD's status bar shows the current context state (running / suspended).
-
-**Lasers fire when not desired.** The wide-eye threshold is set high (~0.92
-mean openness) but in bright daylight some users register higher. Squint a
-bit, or move toward dimmer lighting where eye-open blendshapes are calmer.
 
 **Audio is glitchy / dropping.** Close other tabs running real-time webcam
 or audio (Zoom, Meet, Discord with video on, etc). HandSynth shares the
