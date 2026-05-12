@@ -127,6 +127,52 @@ const dict: Record<EnDictKey, string> = {
   // Errors / autopilot ------------------------------------------------------
   'error.startupFailed': 'Avvio non riuscito. Riprova.',
   'error.autopilot': 'Webcam non disponibile — modalita autopilot attiva.',
+
+  // Calibration + tutorial wizard ------------------------------------------
+  'calib.counter.calibration': 'CALIBRAZIONE',
+  'calib.counter.tutorial': 'TUTORIAL',
+  'calib.quit': 'Esci dalla procedura',
+  'calib.skip': 'Salta',
+  'calib.next': 'Avanti',
+  'calib.finish': 'Fine',
+  'calib.collecting': 'Sto raccogliendo · {{s}}s',
+  'calib.collected': 'Acquisito — premi Avanti quando vuoi',
+  'calib.waitingGesture': 'In attesa del gesto…',
+  'calib.gestureOk': 'Perfetto — premi Avanti quando vuoi',
+
+  // Sample steps
+  'calib.position.title': 'Trova la posizione',
+  'calib.position.desc': 'Mettiti a una distanza comoda dalla camera. Tieni entrambe le mani visibili — devono entrare nel riquadro con un po\' di margine.',
+  'calib.vertical.title': 'Estensione verticale',
+  'calib.vertical.desc': 'Alza piano entrambe le mani il più in alto che ti sembra naturale, poi abbassale il più giù che riesci — ripeti un paio di volte.',
+  'calib.horizontal.title': 'Apertura delle mani',
+  'calib.horizontal.desc': 'Avvicina le mani davanti a te, poi allargale il più possibile — ripeti un paio di volte.',
+  'calib.shape.title': 'Apri e chiudi',
+  'calib.shape.desc': 'Chiudi i pugni stretti, poi spalanca le dita. Falla con entrambe le mani un paio di volte.',
+  'calib.lateral.title': 'Lato a lato',
+  'calib.lateral.desc': 'Sposta la mano destra da un lato all\'altro del riquadro — sinistra, destra, ripeti.',
+
+  // Tutorial steps
+  'tut.pitchHigh.title': 'Solleva la mano in alto',
+  'tut.pitchHigh.desc': 'Porta una delle due mani verso il bordo alto del riquadro. Ascolta — il suono si schiarisce salendo.',
+  'tut.pitchHigh.hint': 'Prova a spostare la mano più vicina al bordo superiore dello schermo.',
+  'tut.pitchLow.title': 'Abbassa la mano',
+  'tut.pitchLow.desc': 'Riportala verso il basso. Senti come la texture si ammorbidisce.',
+  'tut.fist.title': 'Stringi un pugno',
+  'tut.fist.desc': 'Chiudi una mano a pugno. Il filtro si chiude — perfetto per i breakdown.',
+  'tut.open.title': 'Apri la mano',
+  'tut.open.desc': 'Spalanca le dita. Il suono si apre — la tua mano È il cutoff.',
+  'tut.mute.title': 'Silenzia con due pugni',
+  'tut.mute.desc': 'Chiudi entrambe le mani a pugno insieme. L\'audio viene tagliato.',
+  'tut.mute.hint': 'Assicurati che entrambi i pugni siano visibili — riapri per togliere il muto.',
+  'tut.mouth.title': 'Spalanca la bocca',
+  'tut.mouth.desc': 'Aprila come per cantare "AAH". Scintille volano dalle labbra e parte un flourish armonico.',
+  'tut.mouth.hint': 'La camera deve vedere il viso — gira la testa verso lo schermo.',
+
+  // Recalibrate button (SettingsPanel)
+  'panel.patch.recalibrateBtn': 'Ricalibra',
+  'panel.patch.recalibrateAria': 'Ripeti calibrazione e tutorial',
+  'panel.patch.section.calibration': 'Calibrazione',
 };
 
 export default dict;

@@ -52,6 +52,10 @@ import type {
 import { stripOctave } from '@music/harmony';
 import { GestureInterpreter } from '@hands/GestureInterpreter';
 import { FACTORY_PRESETS } from '@presets/factory-presets';
+// Calibration: pure-function remap factory. Top-level import (browser ESM
+// doesn't honor `require`). The mapper's setCalibration method wires the
+// resulting per-channel remap fns into hot-path fields.
+import { makeRemap, type CalibrationProfile } from '../calibration/types';
 
 // ---------------------------------------------------------------------------
 // Tuning constants
@@ -561,6 +565,27 @@ export class InteractionMapperImpl implements InteractionMapper {
   private frameTick = 0;
 
   // -------------------------------------------------------------------------
+  // Calibration remap — per-user expansion of the raw GestureState channels
+  // onto the full 0..1 audio-input range.
+  //
+  // Without calibration, the existing math below treats `meanHeight` etc.
+  // as already-spread 0..1 values. In practice a user at a fixed distance
+  // never reaches 0 or 1 — they hit, say, 0.32..0.68. The synth then only
+  // covers ~36% of the brightness/intensity range no matter how hard they
+  // move. Calibration captures the user's actual observed envelope; the
+  // remap stretches it to fill the full 0..1 audio range linearly.
+  //
+  // Each fn is built once on `setCalibration` and called per-frame inside
+  // `handleGestureUpdate`. Default state: identity (no remap) — guaranteed
+  // safe for any caller that doesn't wire calibration.
+  // -------------------------------------------------------------------------
+  private remapMeanHeight: (v: number) => number = (v) => v;
+  private remapMeanDepth: (v: number) => number = (v) => v;
+  private remapHandsDistance3D: (v: number) => number = (v) => v;
+  private remapRightOpenness: (v: number) => number = (v) => v;
+  private remapLeftOpenness: (v: number) => number = (v) => v;
+
+  // -------------------------------------------------------------------------
   // Discrete-gesture interpreter — owned by the mapper. Subscribed in
   // start(), unsubscribed in stop(). Driven from `handleGestureUpdate`
   // by extracting left/right Hand objects from the GestureState.
@@ -741,6 +766,33 @@ export class InteractionMapperImpl implements InteractionMapper {
   private manualIntensity: number | null = null;
 
   /**
+   * Apply a user calibration profile. The mapper internally builds linear
+   * remap functions for the five spatial/hand-shape channels (meanHeight,
+   * meanDepth, handsDistance3D, leftOpenness, rightOpenness) that stretch
+   * the user's observed envelope onto the full 0..1 range used by the
+   * existing math.
+   *
+   * Pass `null` to clear and fall back to identity. Calling this is safe
+   * at any time (during start, between frames, etc.) — assigns to the
+   * remap fields are atomic from the per-frame handler's perspective.
+   */
+  setCalibration(profile: CalibrationProfile | null): void {
+    if (!profile) {
+      this.remapMeanHeight = (v) => v;
+      this.remapMeanDepth = (v) => v;
+      this.remapHandsDistance3D = (v) => v;
+      this.remapRightOpenness = (v) => v;
+      this.remapLeftOpenness = (v) => v;
+      return;
+    }
+    this.remapMeanHeight = makeRemap(profile.handY);
+    this.remapMeanDepth = makeRemap(profile.meanDepth);
+    this.remapHandsDistance3D = makeRemap(profile.handsDistance3D);
+    this.remapRightOpenness = makeRemap(profile.openness);
+    this.remapLeftOpenness = makeRemap(profile.openness);
+  }
+
+  /**
    * Drive the mapper from a synthetic gesture stream when no webcam is
    * available. Slow sinusoidal wandering on meanHeight + handsDistance, with
    * occasional pinch triggers. Runs at ~60 Hz via setInterval.
@@ -802,7 +854,24 @@ export class InteractionMapperImpl implements InteractionMapper {
   // Gesture handling
   // -------------------------------------------------------------------------
 
-  private handleGestureUpdate(state: GestureState): void {
+  private handleGestureUpdate(rawState: GestureState): void {
+    // CALIBRATION: rewrite the five spatial/openness channels so the user's
+    // observed range is stretched to fill 0..1. Without calibration each
+    // remap fn is the identity, so this is a no-op until setCalibration()
+    // has been called with a real profile.
+    //
+    // We rebuild the GestureState (shallow copy + 5 field overrides) so
+    // downstream code — including the interpreter feeder below — sees the
+    // calibrated values. Per-finger data is untouched (those are normalized
+    // by the HandTracker against its own thresholds, not the user's range).
+    const state: GestureState = {
+      ...rawState,
+      meanHeight: this.remapMeanHeight(rawState.meanHeight),
+      meanDepth: this.remapMeanDepth(rawState.meanDepth),
+      handsDistance3D: this.remapHandsDistance3D(rawState.handsDistance3D),
+      rightOpenness: this.remapRightOpenness(rawState.rightOpenness),
+      leftOpenness: this.remapLeftOpenness(rawState.leftOpenness),
+    };
     this.lastSeenState = state;
 
     // Feed the discrete-gesture interpreter. It internally edge-detects

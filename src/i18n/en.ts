@@ -139,6 +139,53 @@ const dict = {
   // Errors / autopilot ------------------------------------------------------
   'error.startupFailed': 'Startup failed. Try again.',
   'error.autopilot': 'Webcam unavailable — autopilot mode active.',
+
+  // Calibration + tutorial wizard ------------------------------------------
+  // Header / common
+  'calib.counter.calibration': 'CALIBRATION',
+  'calib.counter.tutorial': 'TUTORIAL',
+  'calib.quit': 'Quit wizard',
+  'calib.skip': 'Skip',
+  'calib.next': 'Next',
+  'calib.finish': 'Finish',
+  'calib.collecting': 'Collecting · {{s}}s',
+  'calib.collected': 'Captured — press Next when ready',
+  'calib.waitingGesture': 'Waiting for gesture…',
+  'calib.gestureOk': 'Got it — press Next when ready',
+
+  // Sample steps
+  'calib.position.title': 'Find your spot',
+  'calib.position.desc': 'Sit at a comfortable distance from the camera. Keep both hands visible — they should fit inside the frame with a little space to spare.',
+  'calib.vertical.title': 'Vertical range',
+  'calib.vertical.desc': 'Slowly raise both hands as high as feels natural, then lower them as low as you can — repeat a couple of times.',
+  'calib.horizontal.title': 'Hand spread',
+  'calib.horizontal.desc': 'Bring both hands close together in front of you, then spread them out wide — repeat a couple of times.',
+  'calib.shape.title': 'Open and close',
+  'calib.shape.desc': 'Make tight fists, then splay your fingers wide open. Do it a few times with both hands.',
+  'calib.lateral.title': 'Side to side',
+  'calib.lateral.desc': 'Move your right hand from one side of the frame to the other — left to right and back.',
+
+  // Tutorial steps
+  'tut.pitchHigh.title': 'Raise your hand high',
+  'tut.pitchHigh.desc': 'Lift either hand toward the top of the frame. Listen — the music brightens as you climb.',
+  'tut.pitchHigh.hint': 'Try moving your hand closer to the top of the screen.',
+  'tut.pitchLow.title': 'Drop your hand low',
+  'tut.pitchLow.desc': 'Bring it back down toward the bottom. Notice how the texture softens.',
+  'tut.fist.title': 'Make a fist',
+  'tut.fist.desc': 'Close one hand into a fist. The filter clamps down — useful for breakdowns.',
+  'tut.open.title': 'Open your hand',
+  'tut.open.desc': 'Splay your fingers wide. The sound opens up — your hand IS the cutoff.',
+  'tut.mute.title': 'Mute with two fists',
+  'tut.mute.desc': 'Close both hands into fists at the same time. The audio cuts.',
+  'tut.mute.hint': 'Make sure both fists are visible — open them back up to unmute.',
+  'tut.mouth.title': 'Open your mouth wide',
+  'tut.mouth.desc': 'Open it as if singing an "AH". Sparks fly from your lips and a harmonic flourish lands.',
+  'tut.mouth.hint': 'Need the camera to see your face — turn your head toward the screen.',
+
+  // Recalibrate button (SettingsPanel)
+  'panel.patch.recalibrateBtn': 'Recalibrate',
+  'panel.patch.recalibrateAria': 'Re-run calibration and tutorial',
+  'panel.patch.section.calibration': 'Calibration',
 } as const;
 
 /** Literal-key union derived from the dictionary. */

@@ -252,7 +252,9 @@ export class SettingsPanelImpl {
   private patchSaveBtn: HTMLButtonElement | null = null;
   private patchNameInputEl: HTMLInputElement | null = null;
   private patchResetVibeBtn: HTMLButtonElement | null = null;
-  private sectionLabelEls = new Map<KnobSection | 'Vibe' | 'Patches', HTMLDivElement>();
+  /** "Re-run calibration" button (calibration section, below Patches). */
+  private recalibBtn: HTMLButtonElement | null = null;
+  private sectionLabelEls = new Map<KnobSection | 'Vibe' | 'Patches' | 'Calibration', HTMLDivElement>();
   private presetChips: Array<{ chip: HTMLButtonElement; preset: FactoryPreset }> = [];
   /**
    * Per-voice waveform dropdowns. The `id` for each <option> is the
@@ -480,6 +482,37 @@ export class SettingsPanelImpl {
 
     card.appendChild(patchSec);
 
+    // ---- Calibration section ---------------------------------------------
+    // Lets the user re-run the calibration + tutorial wizard at any time.
+    // The button calls a window-level hook (`__hsOpenCalibration`) wired
+    // by main.ts — keeps the SettingsPanel from having to import the
+    // CalibrationPanel directly and depend on the hands/face references.
+    const calibSec = document.createElement('div');
+    calibSec.className = 'hs-settings-section';
+    const calibLbl = document.createElement('div');
+    calibLbl.className = 'hs-settings-section-label';
+    calibSec.appendChild(calibLbl);
+    this.sectionLabelEls.set('Calibration', calibLbl);
+
+    const calibActions = document.createElement('div');
+    calibActions.className = 'hs-actions';
+    const recalibBtn = document.createElement('button');
+    recalibBtn.type = 'button';
+    recalibBtn.className = 'hs-btn hs-btn-tiny';
+    this.recalibBtn = recalibBtn;
+    recalibBtn.addEventListener('click', () => {
+      // The hook is installed by main.ts at boot. Fallback is a no-op so
+      // the button is harmless under test stubs / partial mounts.
+      const fn = (
+        window as unknown as { __hsOpenCalibration?: () => void }
+      ).__hsOpenCalibration;
+      if (typeof fn === 'function') fn();
+    });
+    calibActions.appendChild(recalibBtn);
+    calibSec.appendChild(calibActions);
+
+    card.appendChild(calibSec);
+
     parent.appendChild(card);
     this.cardEl = card;
 
@@ -535,6 +568,8 @@ export class SettingsPanelImpl {
         el.textContent = t('panel.patch.section.vibe');
       } else if (section === 'Patches') {
         el.textContent = t('panel.patch.section.patches');
+      } else if (section === 'Calibration') {
+        el.textContent = t('panel.patch.section.calibration');
       } else {
         el.textContent = t(SECTION_KEY_BY_NAME[section]);
       }
@@ -592,6 +627,13 @@ export class SettingsPanelImpl {
     if (this.patchSaveBtn) this.patchSaveBtn.textContent = t('panel.patch.saveBtn');
     if (this.patchResetVibeBtn)
       this.patchResetVibeBtn.textContent = t('panel.patch.resetVibeBtn');
+    if (this.recalibBtn) {
+      this.recalibBtn.textContent = t('panel.patch.recalibrateBtn');
+      this.recalibBtn.setAttribute(
+        'aria-label',
+        t('panel.patch.recalibrateAria'),
+      );
+    }
     if (this.patchNameInputEl) {
       this.patchNameInputEl.placeholder = t('panel.patch.patchNamePlaceholder');
       this.patchNameInputEl.setAttribute(
@@ -662,6 +704,7 @@ export class SettingsPanelImpl {
     this.patchSaveBtn = null;
     this.patchNameInputEl = null;
     this.patchResetVibeBtn = null;
+    this.recalibBtn = null;
     this.smartPillEl = null;
     this.sectionLabelEls.clear();
     this.presetChips = [];

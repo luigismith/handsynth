@@ -1372,6 +1372,210 @@ export const UI_STYLES = `
     letter-spacing: 0;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Calibration + tutorial wizard
+ *
+ * Full-screen modal (covers everything except the canvas behind it). Same
+ * notched-corner panel as the onboarding card but bigger, with a step
+ * counter in the top-left, quit X in the top-right, big bar that fills
+ * left-to-right as the user moves through the calibration motion, and
+ * a thin progress bar showing remaining time on the step.
+ * --------------------------------------------------------------------- */
+.hs-calib-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 12, 0.78);
+  z-index: 80;
+  pointer-events: auto;
+  animation: hs-fade-in 220ms ease-out both;
+}
+.hs-calib-card {
+  position: relative;
+  background: var(--hs-bg-panel);
+  border: 1px solid var(--hs-grey-2);
+  padding: 24px 28px 22px;
+  width: min(560px, calc(100vw - 32px));
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+.hs-calib-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--hs-orange);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.hs-calib-card::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--hs-orange);
+  pointer-events: none;
+  animation: hs-scan-sweep 5s linear infinite;
+}
+.hs-calib-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.hs-calib-step-counter {
+  font-family: var(--hs-mono);
+  font-size: 11px;
+  letter-spacing: 1.6px;
+  color: var(--hs-text-dim);
+  text-transform: uppercase;
+}
+.hs-calib-quit {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--hs-text-dim);
+  font-family: var(--hs-mono);
+  font-size: 18px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.hs-calib-quit:hover { color: var(--hs-orange); }
+.hs-calib-quit:focus-visible {
+  outline: 1px solid var(--hs-orange);
+  outline-offset: 2px;
+}
+.hs-calib-title {
+  margin: 0;
+  font-family: var(--hs-mono);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--hs-text-bright);
+  letter-spacing: 0.3px;
+  text-transform: none;
+}
+.hs-calib-desc {
+  margin: 0;
+  font-family: var(--hs-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--hs-text);
+  letter-spacing: 0.2px;
+}
+.hs-calib-hint {
+  margin: 0;
+  font-family: var(--hs-mono);
+  font-size: 12px;
+  color: var(--hs-amber);
+  letter-spacing: 0.2px;
+  padding: 6px 10px;
+  background: rgba(255, 170, 68, 0.06);
+  border-left: 2px solid var(--hs-amber);
+}
+.hs-calib-bigbar {
+  position: relative;
+  width: 100%;
+  height: 14px;
+  background: var(--hs-bg-deep);
+  border: 1px solid var(--hs-grey);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.hs-calib-bigbar-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: linear-gradient(90deg, var(--hs-orange-dim), var(--hs-orange) 60%, var(--hs-amber));
+  transition: width 120ms ease-out;
+}
+.hs-calib-bigbar.hs-calib-bigbar-ok .hs-calib-bigbar-fill {
+  background: linear-gradient(90deg, var(--hs-orange), var(--hs-amber));
+  box-shadow: 0 0 8px rgba(255, 170, 68, 0.55);
+}
+.hs-calib-progress {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  background: var(--hs-grey);
+  overflow: hidden;
+}
+.hs-calib-progress-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: var(--hs-orange);
+  transition: width 90ms linear;
+}
+.hs-calib-status {
+  font-family: var(--hs-mono);
+  font-size: 11px;
+  color: var(--hs-text-dim);
+  letter-spacing: 0.6px;
+  min-height: 14px;
+}
+.hs-calib-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.hs-calib-btn {
+  appearance: none;
+  border: 1px solid var(--hs-grey-2);
+  background: transparent;
+  color: var(--hs-text);
+  font-family: var(--hs-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  padding: 9px 18px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.hs-calib-btn:hover { color: var(--hs-text-bright); border-color: var(--hs-orange); }
+.hs-calib-btn:focus-visible {
+  outline: 2px solid var(--hs-orange);
+  outline-offset: 2px;
+}
+.hs-calib-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.hs-calib-btn-primary {
+  background: var(--hs-orange);
+  color: #0a0a0c;
+  border-color: var(--hs-orange);
+}
+.hs-calib-btn-primary:hover:not(:disabled) {
+  background: var(--hs-amber);
+  border-color: var(--hs-amber);
+  color: #0a0a0c;
+}
+.hs-calib-btn-primary:disabled {
+  background: var(--hs-grey);
+  border-color: var(--hs-grey);
+  color: var(--hs-text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hs-calib-overlay { animation: none; }
+  .hs-calib-card::after { animation: none; opacity: 0; }
+  .hs-calib-bigbar-fill { transition: none; }
+  .hs-calib-progress-fill { transition: none; }
+}
 `;
 
 export function injectStyles(): void {

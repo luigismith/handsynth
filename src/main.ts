@@ -34,6 +34,9 @@ import { SettingsPanelImpl } from '@ui/SettingsPanel';
 import { TerminalImpl } from '@ui/Terminal';
 import { HelpPanelImpl } from '@ui/HelpPanel';
 import { HudControlsImpl } from '@ui/HudControls';
+import { CalibrationPanelImpl } from './calibration/CalibrationPanel';
+import { loadCalibration } from './calibration/store';
+import type { CalibrationProfile } from './calibration/types';
 import { injectStyles } from '@ui/styles';
 import { getLang, t as tt } from './i18n';
 
@@ -304,6 +307,67 @@ async function bootstrap(): Promise<void> {
       terminalVisible = !terminalVisible;
     }
   });
+
+  // --------------------------------------------------------------------
+  // Calibration + tutorial wizard.
+  //
+  // Lifecycle:
+  //  1. On boot, load any stored profile. If present, apply it to the
+  //     mapper immediately so per-user range remap is active for every
+  //     frame from now on.
+  //  2. If no profile (first launch) we mount the wizard with a small
+  //     start delay — gives MediaPipe a chance to warm up so the user's
+  //     first move during step 1 produces good samples, not partial
+  //     landmark frames.
+  //  3. Provide a window-level `openCalibration()` callable so the
+  //     SettingsPanel "RICALIBRA" button can re-run the wizard.
+  //  4. Each completion writes back to localStorage AND re-applies on
+  //     the mapper.
+  // --------------------------------------------------------------------
+  const calibHost = $('calibration-host');
+  let activeCalibration: CalibrationPanelImpl | null = null;
+
+  const applyCalibration = (profile: CalibrationProfile | null): void => {
+    interface CalibAware { setCalibration?: (p: CalibrationProfile | null) => void }
+    (mapper as unknown as CalibAware).setCalibration?.(profile);
+  };
+
+  const openCalibration = (): void => {
+    if (activeCalibration) return; // already open — guard against double-clicks
+    const panel = new CalibrationPanelImpl();
+    activeCalibration = panel;
+    panel.mount(calibHost, {
+      hands,
+      face,
+      videoEl: video,
+      onComplete: (profile, _quitEarly) => {
+        // Apply to the mapper regardless of quitEarly so even a partial
+        // profile (mostly defaults) takes effect — better than nothing.
+        applyCalibration(profile);
+        panel.unmount();
+        activeCalibration = null;
+      },
+    });
+  };
+
+  // Expose for the SettingsPanel button.
+  (window as unknown as { __hsOpenCalibration?: () => void })
+    .__hsOpenCalibration = openCalibration;
+
+  // Boot: load existing profile if any. Otherwise, schedule the first-run
+  // wizard a beat after the visualizer comes up — the test chord scheduled
+  // at +200ms is enough audible feedback that the synth is live before we
+  // pop the modal.
+  const storedCalibration = loadCalibration();
+  if (storedCalibration) {
+    applyCalibration(storedCalibration);
+  } else {
+    window.setTimeout(() => {
+      // Re-check inside the timer in case the user opened the panel
+      // manually from another path before this fires.
+      if (!activeCalibration) openCalibration();
+    }, 800);
+  }
 
   // Mirror toggle: 'm' key flips the selfie mirror on the <video> + the
   // HandTracker data flip + the FaceTracker mirror. Use this if the visible
