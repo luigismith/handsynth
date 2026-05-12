@@ -1095,7 +1095,11 @@ export class InteractionMapperImpl implements InteractionMapper {
         const now = performance.now();
         if (now - this.lastMouthStabMs >= FACE_MOUTH_STAB_DEBOUNCE_MS) {
           this.lastMouthStabMs = now;
-          this.triggerStab();
+          // STUNNING-MOUTH UPGRADE: was a single triggerStab(); now a
+          // 1..3-note harmony-aware ascending flourish whose density scales
+          // with how widely the mouth opened. Pairs with the visual burst
+          // spawned at the same threshold in sketch.ts's mouth emitter.
+          this.triggerMouthFlourish(state.mouthOpen);
         }
         this.mouthOpenHigh = true;
       } else if (
@@ -1484,6 +1488,101 @@ export class InteractionMapperImpl implements InteractionMapper {
       time: '+0.005',
     };
     this.audio.triggerLead(event);
+  }
+
+  // -------------------------------------------------------------------------
+  // Mouth flourish — multi-note harmonic burst replacing the single stab on
+  // the mouth rising edge. This is the audio half of the "stunning mouth
+  // feature" — paired visually with the burst spawned by sketch.ts at the
+  // exact same threshold (FACE_MOUTH_STAB_THRESHOLD=0.6, hysteresis 0.4).
+  //
+  // Compared to the previous behavior (`triggerStab()` → one C5 / random
+  // chord-tone at octave 5), the flourish fires 1..3 chord-tones across
+  // octaves 4 / 5 / 6 in an ascending sequence at +5ms, +90ms, +175ms with
+  // velocities (0.80, 0.95, 0.70) — peak in the middle so it reads as a
+  // breath-in flourish, not a metronomic triplet.
+  //
+  // `intensity` (mouthOpen at the rising edge, 0..1) gates note count:
+  //   < 0.65 → 1 note  (just the mid octave 5 chord-tone — subtle accent)
+  //   < 0.85 → 2 notes (octaves 5 + 6 — soaring)
+  //   ≥ 0.85 → 3 notes (full arc 4 → 5 → 6 — full vocal flourish)
+  //
+  // Each note is scheduled via the lead voice's triggerLead path which is
+  // already guarded by triggerAttackRelease time-clamp + try/catch in
+  // LeadEngine, so the flourish is freeze-safe under Tone timeline
+  // corruption (commits 8676c6a, 1a752a6).
+  // -------------------------------------------------------------------------
+
+  private triggerMouthFlourish(intensity: number): void {
+    if (!this.audio) return;
+    const notes = this.lastChordNotes;
+    // No chord context known — degrade to the legacy single-note stab so
+    // we still produce a sound (e.g. before MusicBrain has emitted any
+    // onChord events).
+    if (notes.length === 0) {
+      this.audio.triggerStab();
+      return;
+    }
+
+    const i = Math.max(0, Math.min(1, intensity));
+    const noteCount = i < 0.65 ? 1 : i < 0.85 ? 2 : 3;
+
+    // Pick `noteCount` DISTINCT chord-tones if possible (Fisher-Yates partial
+    // shuffle). If chord has fewer tones than we need, repeat the last pick.
+    const pool = notes.slice();
+    const picks: string[] = [];
+    for (let k = 0; k < noteCount; k += 1) {
+      if (pool.length === 0) {
+        picks.push(picks[picks.length - 1] ?? notes[0]!);
+      } else {
+        const idx = Math.floor(Math.random() * pool.length);
+        picks.push(pool[idx]!);
+        // Remove so the next pick is distinct.
+        pool[idx] = pool[pool.length - 1]!;
+        pool.pop();
+      }
+    }
+
+    // Octave + timing + velocity schedules. Index `noteCount-1` picks the
+    // arc that matches the # of notes — single = octave 5 only; two = octaves
+    // 5+6; three = 4+5+6 ascending.
+    const octaveArcs: ReadonlyArray<ReadonlyArray<number>> = [
+      [5],
+      [5, 6],
+      [4, 5, 6],
+    ];
+    const timeArcs: ReadonlyArray<ReadonlyArray<string>> = [
+      ['+0.005'],
+      ['+0.005', '+0.090'],
+      ['+0.005', '+0.090', '+0.175'],
+    ];
+    const velArcs: ReadonlyArray<ReadonlyArray<number>> = [
+      [0.92],
+      [0.85, 0.95],
+      [0.80, 0.95, 0.70],
+    ];
+    const arcIdx = noteCount - 1;
+    const octaves = octaveArcs[arcIdx]!;
+    const times = timeArcs[arcIdx]!;
+    const vels = velArcs[arcIdx]!;
+
+    for (let k = 0; k < noteCount; k += 1) {
+      const pitch = `${stripOctave(picks[k]!)}${octaves[k]}`;
+      const event: NoteEvent = {
+        pitch,
+        duration: '8n',
+        velocity: vels[k]!,
+        time: times[k]!,
+      };
+      try {
+        this.audio.triggerLead(event);
+      } catch (e) {
+        // Lead engine has its own try/catch internally, but defensive
+        // double-wrap protects against any future change there.
+        // eslint-disable-next-line no-console
+        console.warn('[mapper] mouth flourish note skipped', e);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------

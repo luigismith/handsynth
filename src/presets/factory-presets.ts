@@ -85,6 +85,11 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // Timbres lean toward B for pad/lead (sine/pulse glass) and stay near A
   // for bass (we want the square punch as the harmonic counterpart to all
   // that reverb wash).
+  //
+  // LIGHTEN PASS: reverbWet 0.9 → 0.72 ("alleggerisci tutti i preset" —
+  // the wash was hammering the audio thread because Tone's reverb is the
+  // most expensive node. Still reads as "lush wash" at 0.72; the 0.9 was
+  // beyond the just-noticeable-difference point anyway).
   {
     id: 'lush',
     name: 'LUSH',
@@ -94,9 +99,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       filterResonance: 0.7,
       brightness: 0.42,
       saturatorDrive: 0.8,
-      reverbWet: 0.9,      // pushed higher: lush = wash
-      delayFeedback: 0.3,
-      delayWet: 0.4,
+      reverbWet: 0.72,
+      delayFeedback: 0.28,
+      delayWet: 0.35,
       masterDuck: 0,
       bpm: 86,             // LUSH gets a slower drift tempo
     },
@@ -126,17 +131,23 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // Timbres lean toward A across the board — we want the harmonic content
   // (saw / square) to feed the resonant filter. Pad slightly toward B for
   // a subtle inner sine to keep it readable through the screaming Q.
+  //
+  // LIGHTEN PASS: resonance 13 → 10.5 and drive 2.1 → 1.7. The 13-Q biquad
+  // sustains denormals indefinitely under near-DC harmonics, and the 2.1
+  // drive was clipping into saturator-overdrive on louder vibes (Tycho's
+  // padded chord stacks). 10.5 still reads as "honking 303"; 1.7 is bitey
+  // without making the saturator a hotspot on the audio thread.
   {
     id: 'acid',
     name: 'ACID',
     tagline: '303 squelch — low cutoff, screaming resonance, mid drive.',
     params: {
       filterCutoff: 900,        // darker squelch, more honk
-      filterResonance: 13,      // pushed: Q peak peaks harder
+      filterResonance: 10.5,
       brightness: 0.65,
-      saturatorDrive: 2.1,      // more bite
+      saturatorDrive: 1.7,
       reverbWet: 0.12,          // even drier
-      delayFeedback: 0.45,
+      delayFeedback: 0.42,
       delayWet: 0.22,
       masterDuck: 0,
       bpm: 128,                 // acid = uptempo
@@ -154,18 +165,25 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // rationale: classic dub bus — feedback-saturated delay tail, dark filter,
   // long verb. Slower BPM is part of the identity. Drive stays moderate so
   // the repeats build into a cloud rather than collapse into mush.
+  //
+  // LIGHTEN PASS: feedback 0.78 → 0.62 and reverbWet 0.7 → 0.55. The dub
+  // ID lives in the delay TAIL not the feedback LEVEL — at 0.78 the delay
+  // loop barely decays over 30s, piling up energy on the audio thread and
+  // amplifying clipping. 0.62 still feels endless; 0.55 reverb is plenty
+  // for "echo chamber" since the delay carries the wash. Pulled feedback
+  // 0.78 → 0.62 and verb 0.7 → 0.55.
   {
     id: 'dub',
     name: 'DUB',
     tagline: 'Echo chamber — huge delay feedback, dark filter, slow.',
     params: {
       filterCutoff: 1800,
-      filterResonance: 1.5,
+      filterResonance: 1.4,
       brightness: 0.35,
-      saturatorDrive: 1.2,
-      reverbWet: 0.7,
-      delayFeedback: 0.78,
-      delayWet: 0.6,
+      saturatorDrive: 1.1,
+      reverbWet: 0.55,
+      delayFeedback: 0.62,
+      delayWet: 0.5,
       masterDuck: 0,
       bpm: 78,
     },
@@ -194,6 +212,8 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // small sub.
   // Timbres: all toward A — bright = harmonic-rich, we want the saws to
   // sing through the open filter without sine washing them out.
+  // LIGHTEN PASS: BRIGHT was already the lightest preset — only a small
+  // shave on the reverb and delay to keep ratios consistent with the rest.
   {
     id: 'bright',
     name: 'BRIGHT',
@@ -203,9 +223,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       filterResonance: 0.6,
       brightness: 0.95,         // close to ceiling
       saturatorDrive: 0.75,
-      reverbWet: 0.32,
-      delayFeedback: 0.22,
-      delayWet: 0.22,
+      reverbWet: 0.28,
+      delayFeedback: 0.20,
+      delayWet: 0.20,
       masterDuck: 0,
       bpm: 112,                 // bright = mid-up tempo
     },
@@ -228,6 +248,10 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // Timbres: heavy toward B for pad/lead (we want sine/pulse softness with
   // the closed filter); bass stays slightly toward A so the fatsaw harmonics
   // still poke through the low cutoff for definition.
+  // LIGHTEN PASS: drive 1.55 → 1.3. At 1.55 the saturator's tanh stage
+  // was the audio-thread hotspot during sustained low-cutoff pad chords
+  // (lots of harmonics piling up near DC = lots of denormal compensation).
+  // 1.3 keeps "warm tube" character without the cost.
   {
     id: 'dark',
     name: 'DARK',
@@ -236,10 +260,10 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       filterCutoff: 480,        // even more closed
       filterResonance: 1.3,
       brightness: 0.12,         // close to floor
-      saturatorDrive: 1.55,
-      reverbWet: 0.18,
-      delayFeedback: 0.32,
-      delayWet: 0.18,
+      saturatorDrive: 1.3,
+      reverbWet: 0.16,
+      delayFeedback: 0.28,
+      delayWet: 0.16,
       masterDuck: 0,
       bpm: 72,                  // dark = slow heavy
     },
@@ -259,6 +283,10 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // for room ambience, slight brightness lift to mimic tape's high-end
   // sparkle. Faster BPM bias suits the up-tempo character of tape-loop
   // genres.
+  // LIGHTEN PASS: drive 1.6 → 1.35. The tape "sparkle" is more about the
+  // AM-modulated pad oscillator than about saturator drive. Pulled drive
+  // to keep the saturator out of the hotspot list; reverb/delay are
+  // mid-range and stay close to where they were.
   {
     id: 'tape',
     name: 'TAPE',
@@ -267,10 +295,10 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       filterCutoff: 7500,
       filterResonance: 1.0,
       brightness: 0.6,
-      saturatorDrive: 1.6,
-      reverbWet: 0.45,
-      delayFeedback: 0.45,
-      delayWet: 0.35,
+      saturatorDrive: 1.35,
+      reverbWet: 0.4,
+      delayFeedback: 0.4,
+      delayWet: 0.3,
       masterDuck: 0,
       bpm: 105,
     },
@@ -297,6 +325,13 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
   // rationale: let everything ring out. Maximum reverb, slowed-down tempo,
   // moderate brightness so the wash has motion. Filter wide-ish so high
   // overtones survive into the tail.
+  // LIGHTEN PASS: reverbWet 1.0 → 0.78 and feedback 0.62 → 0.52. Reverb
+  // wet at 1.0 means the DRY path goes to zero — every voice is 100%
+  // through the Tone reverb impulse, which is the most expensive node in
+  // the chain. 0.78 keeps "vacuum drift" identity (you still feel like
+  // you're inside the reverb tail) without forcing every transient
+  // through the convolution path. Feedback drop also keeps the
+  // accumulated tail-energy under control.
   {
     id: 'space',
     name: 'SPACE',
@@ -306,9 +341,9 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       filterResonance: 0.9,
       brightness: 0.55,
       saturatorDrive: 0.9,
-      reverbWet: 1.0,
-      delayFeedback: 0.62,      // longer echo tail for the drift
-      delayWet: 0.5,
+      reverbWet: 0.78,
+      delayFeedback: 0.52,
+      delayWet: 0.45,
       masterDuck: 0,
       bpm: 70,                  // space = even slower drift
     },

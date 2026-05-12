@@ -610,13 +610,19 @@ describe('InteractionMapper face integration', () => {
     expect(audio.leadCalls.length).toBe(0);
     expect(audio.stabCalls).toBe(0);
 
-    // Rising edge through threshold → one stab.
+    // Rising edge through threshold → harmonic flourish (1..3 lead calls
+    // depending on how widely the mouth opened). At mouthOpen=0.8 we sit
+    // in the "two-note" band (0.65..0.85) — assert two leads fire, all
+    // through the harmony-aware triggerLead path (zero bare stabs since
+    // chord context is present).
     face.emit('face:update', blankFace({ mouthOpen: 0.8 }));
-    expect(audio.leadCalls.length + audio.stabCalls).toBe(1);
+    expect(audio.leadCalls.length).toBe(2);
+    expect(audio.stabCalls).toBe(0);
 
-    // Holding above threshold → no re-fire.
+    // Holding above threshold → no re-fire (hysteresis owns the edge state).
     face.emit('face:update', blankFace({ mouthOpen: 0.85 }));
-    expect(audio.leadCalls.length + audio.stabCalls).toBe(1);
+    expect(audio.leadCalls.length).toBe(2);
+    expect(audio.stabCalls).toBe(0);
 
     mapper.stop();
   });

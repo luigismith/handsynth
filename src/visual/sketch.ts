@@ -37,8 +37,13 @@
 
 import type p5 from 'p5';
 import type { Hand, FaceLandmark, FaceState } from '@contracts/contracts';
-// (removed) particles import — particle field deleted per user request
-// "rimuovi particles, non servono" to free per-frame canvas budget.
+// FOCUSED MOUTH EMITTER: replaces the deleted generic ParticleField. Only
+// emits from the lip line, only when the user opens their mouth. The audio
+// side of the same feature lives in InteractionMapper.handleFaceUpdate
+// (delay-wet sweep, brightness lift, harmony-aware flourish on rising edge).
+// User asked: "rimetti le particelle che escono dalla bocca proporzionalmente
+// a quanto la apro, rendi questa feature stupenda".
+import { createMouthEmitter, type MouthEmitter } from './mouth-emitter';
 import { createScanlineLayer, type ScanlineLayer } from './scanlines';
 import { createStarfield, createHorizonGlow, type Starfield, type HorizonGlow } from './starfield';
 // `createBloom` is intentionally imported but currently unused at runtime
@@ -245,7 +250,15 @@ export function createSketch(
   parent: HTMLElement,
   state: SketchState,
 ): SketchHandle {
-  // particles removed (per user request)
+  // Mouth particle emitter — created in setup(), lives across resizes (no
+  // buffer to leak; just a JS object holding a 32-slot pool).
+  let mouth: MouthEmitter | null = null;
+  // Rising-edge tracker for mouth-burst. Mirrors the audio-side hysteresis
+  // (FACE_MOUTH_STAB_THRESHOLD=0.6 / FACE_MOUTH_STAB_RELEASE=0.4) so the
+  // visual flourish lands in lock-step with the harmonic flourish.
+  let mouthOpenHigh = false;
+  const MOUTH_BURST_ENTER = 0.6;
+  const MOUTH_BURST_EXIT = 0.4;
   let scanlines: ScanlineLayer | null = null;
   let vignette: p5.Graphics | null = null;
   let hexGrid: p5.Graphics | null = null;
@@ -313,7 +326,8 @@ export function createSketch(
       // a ~20% headroom boost.
       s.frameRate(24);
 
-      // particles removed
+      mouth = createMouthEmitter();
+      mouth.setReducedMotion(state.reducedMotion);
       scanlines = createScanlineLayer(s, w, h);
       hexGrid = buildHexGrid(s, w, h);
       vignette = buildVignette(s, w, h);
@@ -351,12 +365,13 @@ export function createSketch(
       beat.step(dt);
       const beatV = beat.value;
 
-      // (removed: particles reduced-motion sync)
-      // Forward idle/presence into the particle field so motion slows when
-      // no hands are detected. presence is owned by the Visualizer and
-      // lerped over ~800ms.
-      // Map presence [0..1] to idleDrift [0.3..1].
-      // (removed: particles idle-drift sync)
+      // Forward reduced-motion to the mouth emitter so emission rates drop.
+      // Cheap (just a boolean assign) — fine to call every frame.
+      if (mouth) mouth.setReducedMotion(state.reducedMotion);
+      // Step the mouth simulation each frame regardless of detection state
+      // so already-spawned particles continue to drift/fade out smoothly
+      // even when the user turns away from the camera mid-syllable.
+      if (mouth) mouth.update(dt);
 
       // Smooth the mean hand X for parallax. We compute *canvas-relative*
       // -1..1 so it doesn't depend on canvas size: 0 = center, ±1 = far
@@ -567,7 +582,54 @@ export function createSketch(
         );
         s.pop();
 
-        // (removed: mouth-driven particle emitter)
+        // -------------------------------------------------------------
+        // Mouth particle emission. We compute the lip-line center from
+        // the inner-lip landmarks (which form a tight ring around the
+        // mouth aperture) instead of relying on the chin or the lip
+        // centroid — inner-lip gives us the exact pixel where the user's
+        // breath would visually originate.
+        // -------------------------------------------------------------
+        if (mouth) {
+          const mo = state.face.mouthOpen;
+          let mcx = 0;
+          let mcy = 0;
+          let mn = 0;
+          const lms = state.face.landmarks;
+          if (lms) {
+            for (const idx of FACE_LIPS_INNER) {
+              const lm = lms[idx];
+              if (!lm) continue;
+              const [px, py] = landmarkToScreen(
+                lm.x,
+                lm.y,
+                s.width,
+                s.height,
+                state.videoCover,
+              );
+              mcx += px;
+              mcy += py;
+              mn += 1;
+            }
+          }
+          if (mn > 0) {
+            mcx /= mn;
+            mcy /= mn;
+            // Rising-edge burst — mirrors InteractionMapper's audio
+            // flourish trigger. Hysteresis identical to keep visual/audio
+            // synced (enter at 0.6, exit at 0.4).
+            if (!mouthOpenHigh && mo >= MOUTH_BURST_ENTER) {
+              mouthOpenHigh = true;
+              if (!state.reducedMotion) mouth.emitBurst(mcx, mcy, mo);
+            } else if (mouthOpenHigh && mo <= MOUTH_BURST_EXIT) {
+              mouthOpenHigh = false;
+            }
+            // Continuous stream proportional to mouthOpen.
+            mouth.emit(mcx, mcy, mo);
+          }
+        }
+        // NB: mouth.draw() happens AFTER the face block so already-alive
+        // particles keep drifting + fading even if the user briefly turns
+        // their head and the FaceTracker drops detection.
 
         // Fake arms — face chin → each hand wrist.
         if (state.hands.length > 0) {
@@ -577,6 +639,16 @@ export function createSketch(
           s.pop();
         }
 
+      }
+
+      // Mouth particles — draw after the face block so live particles
+      // continue rendering even while face detection is momentarily lost.
+      // ADD blend so the sparkles stack into a warm bloom over the lip.
+      if (mouth) {
+        s.push();
+        s.blendMode(s.ADD);
+        mouth.draw(s);
+        s.pop();
       }
 
       // Layer 7 — finger strings on top of everything else.
@@ -638,7 +710,9 @@ export function createSketch(
       if (starfield) starfield.reset(width, height);
       if (horizon) horizon.resize(instance, width, height);
       if (bloom) bloom.resize(instance, width, height);
-      // (removed: particles reset on resize)
+      // Clear live mouth particles so they don't land at the wrong
+      // pixel coords after the lip-line shifts under the new canvas size.
+      if (mouth) mouth.reset();
     },
   };
 }
