@@ -28,34 +28,39 @@ export class PercEngine {
   constructor(destination: Tone.ToneAudioNode | AudioNode) {
     this.out = new Tone.Gain(1);
 
+    // DRUM REDESIGN: tighter envelopes + small randomized accent per hit
+    // for organic feel. Previously kick lingered too long (decay 0.4 +
+    // release 1.4) — tail competed with the next chord; pulled to 0.18/
+    // 0.35 for a modern tight kick. Hat sharper. Perc shorter + more
+    // focused BPF.
     this.kick = new Tone.MembraneSynth({
-      pitchDecay: 0.05, // 50ms pitch sweep — classic short kick
-      octaves: 4, // ~80Hz → ~40Hz
+      pitchDecay: 0.035, // 35 ms pitch sweep — snappier impact
+      octaves: 5,        // ~90 Hz → ~28 Hz, more sub
       oscillator: { type: 'sine' },
       envelope: {
         attack: 0.001,
-        decay: 0.4,
-        sustain: 0.01,
-        release: 1.4,
+        decay: 0.18,
+        sustain: 0.001,
+        release: 0.35,
         attackCurve: 'exponential',
       },
-      volume: -3,
+      volume: -2,        // a touch louder, mix-pre
     });
 
     this.hat = new Tone.NoiseSynth({
       noise: { type: 'white' },
       envelope: {
         attack: 0.001,
-        decay: 0.06,
+        decay: 0.04,
         sustain: 0,
-        release: 0.02,
+        release: 0.012,
       },
-      volume: -16,
+      volume: -18,       // sat under the kick + perc, lets it tick rather than splash
     });
     this.hatFilter = new Tone.Filter({
       type: 'highpass',
-      frequency: 8000,
-      Q: 0.7,
+      frequency: 9000,
+      Q: 0.9,
       rolloff: -24,
     });
 
@@ -63,16 +68,16 @@ export class PercEngine {
       noise: { type: 'pink' },
       envelope: {
         attack: 0.002,
-        decay: 0.2,
+        decay: 0.13,
         sustain: 0,
-        release: 0.05,
+        release: 0.04,
       },
-      volume: -14,
+      volume: -12,       // bumped from -14, more presence
     });
     this.percFilter = new Tone.Filter({
       type: 'bandpass',
-      frequency: 4000,
-      Q: 2,
+      frequency: 4200,
+      Q: 2.6,            // more focused: tighter wood-like tick
       rolloff: -12,
     });
 
@@ -110,24 +115,36 @@ export class PercEngine {
   // refusal from escaping back through Transport's tick loop and
   // corrupting its _timeline.
 
+  /**
+   * Velocity humanization: ±VEL_JITTER around 1.0 per hit. Without this every
+   * percussion hit lands at identical velocity → machine-stiff feel. ±0.12
+   * gives a barely-perceptible organic looseness without breaking the
+   * groove.
+   */
+  private static readonly VEL_JITTER = 0.12;
+  private humanVel(base: number = 1): number {
+    const j = (Math.random() * 2 - 1) * PercEngine.VEL_JITTER;
+    return Math.max(0.2, Math.min(1, base + j));
+  }
+
   triggerKick(time?: number | string): void {
     const now = Tone.now();
     const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
-    try { this.kick.triggerAttackRelease('C2', '8n', t); }
+    try { this.kick.triggerAttackRelease('C2', '8n', t, this.humanVel(0.95)); }
     catch (e) { console.warn('[perc] kick refused', e); }
   }
 
   triggerHat(time?: number | string): void {
     const now = Tone.now();
     const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
-    try { this.hat.triggerAttackRelease('32n', t); }
+    try { this.hat.triggerAttackRelease('32n', t, this.humanVel(0.85)); }
     catch (e) { console.warn('[perc] hat refused', e); }
   }
 
   triggerPerc(time?: number | string): void {
     const now = Tone.now();
     const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
-    try { this.perc.triggerAttackRelease('16n', t); }
+    try { this.perc.triggerAttackRelease('16n', t, this.humanVel(0.9)); }
     catch (e) { console.warn('[perc] perc refused', e); }
   }
 

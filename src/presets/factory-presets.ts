@@ -90,14 +90,15 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     name: 'LUSH',
     tagline: 'Wide pad — high reverb, smooth top end, low resonance.',
     params: {
-      filterCutoff: 9000,
-      filterResonance: 0.8,
-      brightness: 0.4,
-      saturatorDrive: 0.85,
-      reverbWet: 0.85,
+      filterCutoff: 9500,
+      filterResonance: 0.7,
+      brightness: 0.42,
+      saturatorDrive: 0.8,
+      reverbWet: 0.9,      // pushed higher: lush = wash
       delayFeedback: 0.3,
-      delayWet: 0.35,
+      delayWet: 0.4,
       masterDuck: 0,
+      bpm: 86,             // LUSH gets a slower drift tempo
     },
     // DIFFERENTIATION FIX: timbre values lowered from 0.65/0.4/0.25 →
     // 0.20/0.10/0.10. With the B-side always being pure sine (pad),
@@ -130,14 +131,15 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     name: 'ACID',
     tagline: '303 squelch — low cutoff, screaming resonance, mid drive.',
     params: {
-      filterCutoff: 1200,
-      filterResonance: 11,
-      brightness: 0.7,
-      saturatorDrive: 1.8,
-      reverbWet: 0.18,
-      delayFeedback: 0.4,
-      delayWet: 0.25,
+      filterCutoff: 900,        // darker squelch, more honk
+      filterResonance: 13,      // pushed: Q peak peaks harder
+      brightness: 0.65,
+      saturatorDrive: 2.1,      // more bite
+      reverbWet: 0.12,          // even drier
+      delayFeedback: 0.45,
+      delayWet: 0.22,
       masterDuck: 0,
+      bpm: 128,                 // acid = uptempo
     },
     // DIFFERENTIATION FIX: ACID wants raw buzz — pull every voice almost
     // entirely to A-side (the resonant filter feeds on the square/saw
@@ -197,14 +199,15 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     name: 'BRIGHT',
     tagline: 'Lights on — wide-open filter, airy top, low drive.',
     params: {
-      filterCutoff: 12000,
-      filterResonance: 0.7,
-      brightness: 0.85,
-      saturatorDrive: 0.8,
-      reverbWet: 0.35,
-      delayFeedback: 0.25,
-      delayWet: 0.25,
+      filterCutoff: 14000,      // pushed open further
+      filterResonance: 0.6,
+      brightness: 0.95,         // close to ceiling
+      saturatorDrive: 0.75,
+      reverbWet: 0.32,
+      delayFeedback: 0.22,
+      delayWet: 0.22,
       masterDuck: 0,
+      bpm: 112,                 // bright = mid-up tempo
     },
     // DIFFERENTIATION FIX: BRIGHT was already close to A-side at 0.2/0.2/
     // 0.25. Pull bass to 0.10 so the fatsawtooth body matches the lead's
@@ -230,14 +233,15 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
     name: 'DARK',
     tagline: 'Smothered — low cutoff, warm drive, sparse reverb.',
     params: {
-      filterCutoff: 600,
-      filterResonance: 1.2,
-      brightness: 0.2,
-      saturatorDrive: 1.4,
-      reverbWet: 0.2,
-      delayFeedback: 0.3,
-      delayWet: 0.2,
+      filterCutoff: 480,        // even more closed
+      filterResonance: 1.3,
+      brightness: 0.12,         // close to floor
+      saturatorDrive: 1.55,
+      reverbWet: 0.18,
+      delayFeedback: 0.32,
+      delayWet: 0.18,
       masterDuck: 0,
+      bpm: 72,                  // dark = slow heavy
     },
     // DIFFERENTIATION FIX: triangle is already warm and round — the
     // previous 0.7 timbre was washing the triangle character entirely
@@ -303,10 +307,10 @@ export const FACTORY_PRESETS: readonly FactoryPreset[] = [
       brightness: 0.55,
       saturatorDrive: 0.9,
       reverbWet: 1.0,
-      delayFeedback: 0.5,
-      delayWet: 0.45,
+      delayFeedback: 0.62,      // longer echo tail for the drift
+      delayWet: 0.5,
       masterDuck: 0,
-      bpm: 82,
+      bpm: 70,                  // space = even slower drift
     },
     // Voice: airy FM-sine pad with massive detune for choral width and a
     // 2.5s attack so chord changes drift in like wind, AM-sine lead for a

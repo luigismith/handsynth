@@ -419,9 +419,11 @@ describe('SettingsPanelImpl', () => {
       (d) => d.getAttribute('aria-label') === 'BPM',
     );
     const before = bpmDial?.getAttribute('aria-valuenow');
-    // ACID has no bpm field.
+    // INIT is the only preset without a bpm field (it's the neutral
+    // reset). All flavour presets ship their own tempo character as of
+    // the differentiation pass.
     const chip = parent.querySelector(
-      `.hs-preset-chip[data-preset-id="acid"]`,
+      `.hs-preset-chip[data-preset-id="init"]`,
     ) as HTMLButtonElement;
     chip.click();
     expect(bpmDial?.getAttribute('aria-valuenow')).toBe(before);
