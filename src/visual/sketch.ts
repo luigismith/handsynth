@@ -306,7 +306,11 @@ export function createSketch(
       // material. Halving the draw rate halves the main-thread time spent
       // in p5's hot loop, leaving the audio scheduler enough headroom to
       // post sample-accurate triggers without underruns.
-      s.frameRate(30);
+      // LITE MODE: 30 → 24 fps. p5 redraw cycle is the second biggest
+      // main-thread consumer after MediaPipe. 24 fps reads as cinematic
+      // and is still smooth for the visualizer; gives MediaPipe + audio
+      // a ~20% headroom boost.
+      s.frameRate(24);
 
       particles = createParticleField(w, h);
       particles.setReducedMotion(state.reducedMotion);

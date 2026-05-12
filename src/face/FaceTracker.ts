@@ -55,7 +55,11 @@ const FACE_LOST_EDGE_SECONDS = 1.5;
  * at the same rate as before — it just sees fresh landmarks every 125 ms
  * instead of every 80 ms. Inaudibly slower; main-thread freed considerably.
  */
-const MAX_UPDATE_HZ = 8;
+// LITE MODE: 8 Hz → 5 Hz. Face state changes slowly (mouth open/close
+// ~2 Hz max, head turn ~3-4 Hz). 5 Hz still captures every meaningful
+// pose update while saving ~40 % of FaceLandmarker inference work per
+// second.
+const MAX_UPDATE_HZ = 5;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 /** Filter resets after this re-entry gap. */

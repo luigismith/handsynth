@@ -66,7 +66,11 @@ const NO_HANDS_EDGE_SECONDS = 2.0;
  * frame-throttled push smooth out the lower temporal density; gestures
  * still feel snappy.
  */
-const MAX_UPDATE_HZ = 24;
+// LITE MODE: 24 Hz → 18 Hz. Each emit triggers a mapper handleGestureUpdate
+// cascade (per-finger + 3D + face + discrete-gesture + setParams diff).
+// 18 Hz is still well above the human just-noticeable-difference for hand
+// motion (~5-8 Hz); the 25 % saving goes to the audio thread.
+const MAX_UPDATE_HZ = 18;
 const MIN_UPDATE_INTERVAL_MS = 1000 / MAX_UPDATE_HZ;
 
 // ---------------------------------------------------------------------------
