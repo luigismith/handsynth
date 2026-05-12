@@ -37,7 +37,8 @@
 
 import type p5 from 'p5';
 import type { Hand, FaceLandmark, FaceState } from '@contracts/contracts';
-import { createParticleField, type ParticleField } from './particles';
+// (removed) particles import — particle field deleted per user request
+// "rimuovi particles, non servono" to free per-frame canvas budget.
 import { createScanlineLayer, type ScanlineLayer } from './scanlines';
 import { createStarfield, createHorizonGlow, type Starfield, type HorizonGlow } from './starfield';
 // `createBloom` is intentionally imported but currently unused at runtime
@@ -244,7 +245,7 @@ export function createSketch(
   parent: HTMLElement,
   state: SketchState,
 ): SketchHandle {
-  let particles: ParticleField | null = null;
+  // particles removed (per user request)
   let scanlines: ScanlineLayer | null = null;
   let vignette: p5.Graphics | null = null;
   let hexGrid: p5.Graphics | null = null;
@@ -312,8 +313,7 @@ export function createSketch(
       // a ~20% headroom boost.
       s.frameRate(24);
 
-      particles = createParticleField(w, h);
-      particles.setReducedMotion(state.reducedMotion);
+      // particles removed
       scanlines = createScanlineLayer(s, w, h);
       hexGrid = buildHexGrid(s, w, h);
       vignette = buildVignette(s, w, h);
@@ -351,13 +351,12 @@ export function createSketch(
       beat.step(dt);
       const beatV = beat.value;
 
-      // Reduced-motion may have toggled — keep particles in sync.
-      particles?.setReducedMotion(state.reducedMotion);
+      // (removed: particles reduced-motion sync)
       // Forward idle/presence into the particle field so motion slows when
       // no hands are detected. presence is owned by the Visualizer and
       // lerped over ~800ms.
       // Map presence [0..1] to idleDrift [0.3..1].
-      particles?.setIdleDrift(0.3 + 0.7 * state.presence);
+      // (removed: particles idle-drift sync)
 
       // Smooth the mean hand X for parallax. We compute *canvas-relative*
       // -1..1 so it doesn't depend on canvas size: 0 = center, ±1 = far
@@ -468,21 +467,7 @@ export function createSketch(
         }
       }
 
-      // ---------------------------------------------------------------
-      // Layers 3+ — particles. Update once, draw once on main canvas.
-      // ---------------------------------------------------------------
-      if (particles) {
-        particles.update({
-          fft: state.fftBins,
-          width: s.width,
-          height: s.height,
-          dt,
-        });
-        s.push();
-        s.blendMode(s.ADD);
-        particles.draw(s);
-        s.pop();
-      }
+      // (removed: particles layer)
 
       // ---------------------------------------------------------------
       // Bloom buffer: collect bright elements at downsampled resolution.
@@ -502,8 +487,7 @@ export function createSketch(
             buf.scale(1 / BLOOM_DOWNSCALE);
             buf.blendMode(buf.ADD);
 
-            // Particles (re-draw — they're cheap, ~120 triangles).
-            if (particles) particles.draw(buf);
+            // (removed: particles in bloom buffer)
 
             // Finger strings (with pulse). Re-using the same draw fn.
             if (state.hands.length > 0) {
@@ -583,21 +567,7 @@ export function createSketch(
         );
         s.pop();
 
-        // Mouth-driven particle emitter — spawn breath from the user's
-        // mouth with rate + size scaling on `mouthOpen`. The mouth center
-        // is computed from the inner lip landmarks; cover transform is
-        // applied so the spawn position matches the visible mouth.
-        if (particles && state.face.mouthOpen > 0.05) {
-          const lms = state.face.landmarks;
-          const top = lms[13];
-          const bot = lms[14];
-          if (top && bot) {
-            const lx = (top.x + bot.x) / 2;
-            const ly = (top.y + bot.y) / 2;
-            const [mx, my] = landmarkToScreen(lx, ly, s.width, s.height, state.videoCover);
-            particles.emitFromMouth(mx, my, state.face.mouthOpen);
-          }
-        }
+        // (removed: mouth-driven particle emitter)
 
         // Fake arms — face chin → each hand wrist.
         if (state.hands.length > 0) {
@@ -668,7 +638,7 @@ export function createSketch(
       if (starfield) starfield.reset(width, height);
       if (horizon) horizon.resize(instance, width, height);
       if (bloom) bloom.resize(instance, width, height);
-      if (particles) particles.reset(width, height);
+      // (removed: particles reset on resize)
     },
   };
 }
