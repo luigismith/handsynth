@@ -119,21 +119,24 @@ const FINGER_CURL_BETA = 0.08;
 function makeSlot(): SmoothingSlot {
   const landmarks: OneEuroVec3[] = [];
   for (let i = 0; i < NUM_LANDMARKS; i += 1) {
-    // beta=0.04 — bumped further (was 0.02, originally 0.007) per user
-    // request for more sensitivity. One Euro's adaptive cutoff at higher
-    // beta is much more reactive at speed, while mincutoff=1.0 still
-    // suppresses jitter at rest. Tradeoff: occasional landmark micro-
-    // overshoots on very fast snaps; mitigated by the scalar filters
-    // (openness/pinch) which use beta=0.04 too downstream.
-    landmarks.push(new OneEuroVec3({ mincutoff: 1.0, beta: 0.04 }));
+    // SENSITIVITY BUMP: beta 0.04 → 0.08 (was originally 0.007, then 0.02,
+    // then 0.04). Doubling again per user request for snappier gesture
+    // response. mincutoff stays at 1.0 to suppress at-rest jitter; the
+    // adaptive cutoff opens further on motion. Tradeoff: occasional
+    // landmark micro-overshoots on very fast snaps, but the downstream
+    // scalar filters (openness/pinch at beta 0.07) damp the worst.
+    landmarks.push(new OneEuroVec3({ mincutoff: 1.0, beta: 0.08 }));
   }
   return {
     landmarks,
-    opennessF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
-    pinchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
-    depthF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
-    rollF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
-    pitchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 }),
+    // SENSITIVITY BUMP: scalar filters beta 0.04 → 0.07. Slightly less
+    // than the landmark beta so the derived scalars stay smoother than
+    // the raw landmarks at rest but still track motion responsively.
+    opennessF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 }),
+    pinchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 }),
+    depthF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 }),
+    rollF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 }),
+    pitchF: new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 }),
     fingerThumbF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
     fingerIndexF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
     fingerMiddleF: new OneEuroFilter({ mincutoff: 2.0, beta: FINGER_CURL_BETA }),
@@ -157,16 +160,19 @@ function resetSlot(slot: SmoothingSlot): void {
   slot.fingerPinkyF.reset();
 }
 
+// SENSITIVITY BUMP: same 0.04 → 0.07 widening applied to derived-scalar
+// filters (mean height, hands distance, etc.) for consistency. Snappier
+// response to inter-hand motion + height changes.
 function makeHandsDistanceFilter(): OneEuroFilter {
-  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 });
+  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 });
 }
 
 function makeMeanHeightFilter(): OneEuroFilter {
-  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 });
+  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 });
 }
 
 function makeScalarFilter(): OneEuroFilter {
-  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.04 });
+  return new OneEuroFilter({ mincutoff: 2.0, beta: 0.07 });
 }
 
 // ---------------------------------------------------------------------------

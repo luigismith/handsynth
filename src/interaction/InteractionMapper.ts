@@ -823,12 +823,26 @@ export class InteractionMapperImpl implements InteractionMapper {
     }
 
     // bothFists → hard mute while held.
+    // MUTE FIX: route through the central toggle exposed on
+    // window.__hsMuteGesture (installed by main.ts) so the HUD button +
+    // Escape key + this gesture all keep ONE shared mute state. Without
+    // it, releasing fists would forcibly unmute even if the user
+    // intentionally muted via STOP / Escape; and toggling via STOP
+    // wouldn't sync the mapper's internal fistsHeld flag.
     if (state.bothFists && !this.fistsHeld) {
       this.fistsHeld = true;
-      this.audio?.setMute(true);
+      const gestureMute = (window as unknown as {
+        __hsMuteGesture?: (m: boolean) => void;
+      }).__hsMuteGesture;
+      if (gestureMute) gestureMute(true);
+      else this.audio?.setMute(true);
     } else if (!state.bothFists && this.fistsHeld) {
       this.fistsHeld = false;
-      this.audio?.setMute(false);
+      const gestureMute = (window as unknown as {
+        __hsMuteGesture?: (m: boolean) => void;
+      }).__hsMuteGesture;
+      if (gestureMute) gestureMute(false);
+      else this.audio?.setMute(false);
     }
 
     // bothAboveHead → drop while held.

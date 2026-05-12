@@ -24,6 +24,14 @@ export interface HudControlsDeps {
   audio: AudioEngine;
   toggleTerminal: () => void;
   toggleHelp: () => void;
+  /**
+   * Optional central mute toggle. When provided, the STOP button routes
+   * through this callback instead of calling `audio.setMute` directly —
+   * lets main.ts own the single mute boolean and keep all paths
+   * (HUD click, Escape key, bothFists gesture) in sync. If absent
+   * (e.g. unit-test stubs), falls back to the old self-toggle.
+   */
+  toggleMute?: () => void;
 }
 
 export class HudControlsImpl {
@@ -52,9 +60,16 @@ export class HudControlsImpl {
       // Power glyph — keeps things readable in monospace.
       '⏻',
       () => {
-        this.muted = !this.muted;
-        this.deps?.audio.setMute(this.muted);
-        this.applyMutedClass();
+        // MUTE FIX: prefer the central toggle if provided so we stay in
+        // sync with the Escape key + bothFists gesture paths. Fall back
+        // to the legacy self-toggle when no callback is wired (tests).
+        if (this.deps?.toggleMute) {
+          this.deps.toggleMute();
+        } else {
+          this.muted = !this.muted;
+          this.deps?.audio.setMute(this.muted);
+          this.applyMutedClass();
+        }
       },
     );
 

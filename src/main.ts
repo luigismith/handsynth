@@ -241,9 +241,32 @@ async function bootstrap(): Promise<void> {
   // the user used the 't' key in between.
   let terminalVisible = false;
 
-  // Track mute state locally (AudioEngine doesn't emit mute events). HUD
-  // owns its own copy too — we keep them in sync via setMuted().
+  // MUTE FIX: single source of truth for the mute state. Previously the
+  // HUD STOP button, the Escape key, and the bothFists gesture each had
+  // their own boolean and called audio.setMute() directly — so the first
+  // Escape after a HUD click did nothing (already muted) and the
+  // bothFists release path could undo a user-set mute. Now everyone
+  // routes through `toggleMute()` here; `isMuted` is the only state and
+  // it always notifies all listeners (audio + HUD).
   let isMuted = false;
+  const toggleMute = (): void => {
+    isMuted = !isMuted;
+    audio.setMute(isMuted);
+    hud.setMuted(isMuted);
+  };
+  // Allow the mapper's bothFists path to drive mute coherently. Without
+  // this, releasing the both-fists gesture would always call
+  // setMute(false) — unmuting the user even if they wanted muted.
+  const setMutedFromGesture = (m: boolean): void => {
+    if (isMuted === m) return;
+    isMuted = m;
+    audio.setMute(isMuted);
+    hud.setMuted(isMuted);
+  };
+  // Expose the gesture-mute callback on a window-level hook the mapper
+  // can read at construction time without a contract change.
+  (window as unknown as { __hsMuteGesture?: (m: boolean) => void })
+    .__hsMuteGesture = setMutedFromGesture;
 
   const hud = new HudControlsImpl();
   hud.mount(hudHost, {
@@ -253,6 +276,10 @@ async function bootstrap(): Promise<void> {
       terminal.setVisible(terminalVisible);
     },
     toggleHelp: () => help.setVisible(!help.isVisible()),
+    // HUD click now toggles via the central state, NOT directly via
+    // audio.setMute. The HUD's own internal `muted` boolean is still
+    // updated reactively via setMuted() inside toggleMute.
+    toggleMute,
   });
 
   // Global key bindings for the new icons. The HelpPanel handles F1 / h /
@@ -262,9 +289,7 @@ async function bootstrap(): Promise<void> {
     if (e.repeat) return;
     if (isTypingTarget(e.target)) return;
     if (e.key === 'Escape' && !help.isVisible()) {
-      isMuted = !isMuted;
-      audio.setMute(isMuted);
-      hud.setMuted(isMuted);
+      toggleMute();
       e.preventDefault();
     }
   });
