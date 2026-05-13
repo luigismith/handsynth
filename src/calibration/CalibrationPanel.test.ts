@@ -1,9 +1,18 @@
 // Owner: ux-curator
 //
-// Smoke tests for CalibrationPanelImpl — verifies the wizard DOM mounts,
-// localized strings render, sample steps capture min/max, tutorial steps
-// advance via predicate, quit + skip paths, and the onComplete callback
-// fires with a profile shaped correctly.
+// Smoke tests for CalibrationPanelImpl after the hands-free redesign.
+// Verifies:
+//   - Single overlay mounts with target zones + card + skip button (no Next)
+//   - First step renders the localized title + pose icon
+//   - Quit fires onComplete(profile, quitEarly=true)
+//   - Skip advances without writing data (no min/max captured)
+//   - Mount + unmount are idempotent
+//
+// Auto-advance + RAF-driven progression are integration concerns —
+// covered indirectly here by verifying that the panel never EXPOSES a
+// Next button. Time-based progression is asserted via the store/types
+// unit tests for makeRemap (range collection happens through the same
+// channel path either way).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CalibrationPanelImpl } from './CalibrationPanel';
@@ -17,11 +26,6 @@ import type {
   FaceState,
   Hand,
 } from '@contracts/contracts';
-
-// ---------------------------------------------------------------------------
-// HandTracker / FaceTracker stubs — capture the gesture:update / face:update
-// subscriber so the test can synthesize events.
-// ---------------------------------------------------------------------------
 
 function makeHandTrackerStub(): HandTracker & {
   emitGesture: (s: GestureState) => void;
@@ -60,8 +64,6 @@ function makeFaceTrackerStub(): FaceTracker & {
   } as unknown as FaceTracker & { emitFace: (s: FaceState) => void };
 }
 
-// Build a minimal GestureState with sensible defaults; override any field
-// per-test by passing a partial.
 function makeGesture(over: Partial<GestureState> = {}): GestureState {
   const rightHand: Hand = {
     handedness: 'Right',
@@ -94,7 +96,7 @@ function makeGesture(over: Partial<GestureState> = {}): GestureState {
   };
 }
 
-describe('CalibrationPanelImpl', () => {
+describe('CalibrationPanelImpl (hands-free)', () => {
   let parent: HTMLDivElement;
   let hands: ReturnType<typeof makeHandTrackerStub>;
   let face: ReturnType<typeof makeFaceTrackerStub>;
@@ -114,66 +116,35 @@ describe('CalibrationPanelImpl', () => {
     __resetForTests('en');
   });
 
-  it('mounts a single overlay with header + buttons', () => {
+  it('mounts a single overlay with card + zones + Skip only (no Next)', () => {
     const panel = new CalibrationPanelImpl();
     panel.mount(parent, { hands, face, onComplete: vi.fn() });
     expect(parent.querySelector('.hs-calib-overlay')).not.toBeNull();
     expect(parent.querySelector('.hs-calib-card')).not.toBeNull();
     expect(parent.querySelector('.hs-calib-quit')).not.toBeNull();
-    expect(parent.querySelectorAll('.hs-calib-btn').length).toBe(2);
+    // Two zone slots (A + B) always exist; A may be visible depending on step.
+    expect(parent.querySelectorAll('.hs-calib-zone').length).toBe(2);
+    // Exactly ONE critical-path button: Skip. (Auto-advance replaces Next.)
+    const btns = parent.querySelectorAll('.hs-calib-btn');
+    expect(btns.length).toBe(1);
+    expect(btns[0]!.classList.contains('hs-calib-btn-secondary')).toBe(true);
     panel.unmount();
     expect(parent.querySelector('.hs-calib-overlay')).toBeNull();
   });
 
-  it('renders the first step title (english)', () => {
+  it('renders the first step title + pose icon', () => {
     const panel = new CalibrationPanelImpl();
     panel.mount(parent, { hands, face, onComplete: vi.fn() });
     const title = parent.querySelector('.hs-calib-title');
-    // First step is the "position" sample step.
     expect(title?.textContent).toBe('Find your spot');
+    // Icon host renders an SVG for non-`none` icons (position step has
+    // 'two-hands-frame').
+    const iconHost = parent.querySelector('.hs-calib-icon');
+    expect(iconHost?.querySelector('svg')).not.toBeNull();
     panel.unmount();
   });
 
-  it('captures min/max for sample step and writes into the profile', () => {
-    const onComplete = vi.fn();
-    const panel = new CalibrationPanelImpl();
-    panel.mount(parent, { hands, face, onComplete });
-    // First step samples `meanDepth` and writes into profile.meanDepth.
-    // Feed 10 samples spanning [0.2, 0.85].
-    for (let i = 0; i < 10; i += 1) {
-      const v = 0.2 + (0.65 * i) / 9;
-      hands.emitGesture(makeGesture({ meanDepth: v }));
-    }
-    // Click Next on the first step. Since duration hasn't elapsed yet the
-    // Next button is disabled — we drive the panel to advance via the
-    // private path by simulating a click. The button is only enabled
-    // after the timer, so we hit Skip instead to force advance without
-    // writing. To exercise the WRITE path we'll call advance via the
-    // Next button after manually enabling it; simulate by directly
-    // calling: dispatch a click on the primary button after enabling it.
-    const nextBtn = parent.querySelector(
-      '.hs-calib-btn-primary',
-    ) as HTMLButtonElement;
-    nextBtn.disabled = false;
-    nextBtn.click();
-    // Advance through ALL remaining steps via Skip so we reach finish().
-    const skipBtn = parent.querySelector(
-      '.hs-calib-btn-secondary',
-    ) as HTMLButtonElement;
-    for (let i = 1; i < CALIBRATION_STEPS.length; i += 1) {
-      skipBtn.click();
-    }
-    expect(onComplete).toHaveBeenCalledTimes(1);
-    const callArg = onComplete.mock.calls[0]![0] as Record<string, unknown>;
-    const md = callArg.meanDepth as { min: number; max: number };
-    expect(md.min).toBeCloseTo(0.2, 2);
-    expect(md.max).toBeCloseTo(0.85, 2);
-    // tutorialCompleted = true because we walked to the end.
-    expect(callArg.tutorialCompleted).toBe(true);
-    panel.unmount();
-  });
-
-  it('Quit button fires onComplete with quitEarly=true', () => {
+  it('quit button fires onComplete with quitEarly=true', () => {
     const onComplete = vi.fn();
     const panel = new CalibrationPanelImpl();
     panel.mount(parent, { hands, face, onComplete });
@@ -186,29 +157,26 @@ describe('CalibrationPanelImpl', () => {
     panel.unmount();
   });
 
-  it('Skip on a sample step does NOT write its range into the profile', () => {
+  it('Skip on every step walks to the end without writing data', () => {
     const onComplete = vi.fn();
     const panel = new CalibrationPanelImpl();
     panel.mount(parent, { hands, face, onComplete });
-    // Feed samples that WOULD produce a wide range.
+    // Feed some samples that WOULD produce a wide range — but we skip
+    // before the RUN phase commits, so they should NOT land in the
+    // profile.
     for (let i = 0; i < 12; i += 1) {
-      const v = 0.1 + (0.8 * i) / 11;
-      hands.emitGesture(makeGesture({ meanDepth: v }));
+      hands.emitGesture(makeGesture({ meanDepth: 0.1 + (0.8 * i) / 11 }));
     }
-    const skip = parent.querySelector(
-      '.hs-calib-btn-secondary',
-    ) as HTMLButtonElement;
-    // Walk to the end via Skip on every step.
-    for (let i = 0; i < CALIBRATION_STEPS.length; i += 1) {
-      skip.click();
-    }
+    const skip = parent.querySelector('.hs-calib-btn-secondary') as HTMLButtonElement;
+    for (let i = 0; i < CALIBRATION_STEPS.length; i += 1) skip.click();
     expect(onComplete).toHaveBeenCalledTimes(1);
     const callArg = onComplete.mock.calls[0]![0] as Record<string, unknown>;
-    // Default range survives because we skipped without confirming the
-    // first sample step.
     const md = callArg.meanDepth as { min: number; max: number };
+    // Default range survives because we never let the RUN phase elapse.
     expect(md.min).toBe(0);
     expect(md.max).toBe(1);
+    // Completed the wizard so tutorialCompleted = true.
+    expect(callArg.tutorialCompleted).toBe(true);
     panel.unmount();
   });
 
@@ -216,7 +184,6 @@ describe('CalibrationPanelImpl', () => {
     const panel = new CalibrationPanelImpl();
     panel.mount(parent, { hands, face, onComplete: vi.fn() });
     panel.mount(parent, { hands, face, onComplete: vi.fn() });
-    // Still exactly one overlay.
     expect(parent.querySelectorAll('.hs-calib-overlay').length).toBe(1);
     panel.unmount();
   });
@@ -226,5 +193,21 @@ describe('CalibrationPanelImpl', () => {
     panel.mount(parent, { hands, face, onComplete: vi.fn() });
     panel.unmount();
     expect(() => panel.unmount()).not.toThrow();
+  });
+
+  it('GET-READY countdown is visible on the first sample step', () => {
+    const panel = new CalibrationPanelImpl();
+    panel.mount(parent, { hands, face, onComplete: vi.fn() });
+    // Force one rAF cycle so tickUi runs and the prep countdown renders.
+    // Happy-dom's rAF is synchronous-ish; we trigger by waiting one tick.
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        const prep = parent.querySelector('.hs-calib-prep') as HTMLElement;
+        expect(prep).not.toBeNull();
+        expect(prep.hidden).toBe(false);
+        panel.unmount();
+        resolve();
+      });
+    });
   });
 });

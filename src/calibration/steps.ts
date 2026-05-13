@@ -10,6 +10,16 @@
 //     instruction, listen for the gesture, advance when observed. Used
 //     for the playable tutorial.
 //
+// HANDS-FREE FLOW (user pain-point: "se ho le mani occupate a fare quello
+// che dice, come faccio a cliccare?"):
+//   - Every step auto-advances. Sample steps complete on timer; tutorial
+//     steps complete the first sustained frame the predicate is true.
+//   - The card is purely informational + status. No "Next" button on the
+//     critical path — only Skip + Quit remain (escape hatches).
+//   - Each step carries hint metadata: which on-screen target zone to
+//     highlight (so the user knows WHERE to put their hand), and which
+//     pose icon to render inside the card (so they know WHICH gesture).
+//
 // Each step has a unique `id`, an i18n key prefix, optional timing config,
 // and a `kind`-specific payload. The panel renders generic UI from the
 // definition — no per-step view code lives in CalibrationPanel.ts.
@@ -46,8 +56,57 @@ export type ProfileTarget =
   | 'handsDistance3D';
 
 /**
+ * Visual hint: an on-screen target zone overlaid on the live camera so the
+ * user knows where to put their hand. Rendered by the panel as a glowing
+ * bracketed rectangle outside the wizard card (between card and webcam),
+ * sized to be visible without occluding the actual hand skeleton.
+ *
+ * - `top` / `bottom`: upper / lower band of the frame (vertical reach)
+ * - `left` / `right`: left / right band (horizontal sweep)
+ * - `center`: centered ~40% rectangle (general "be in view")
+ * - `topThenBottom`: animated — top zone glows 2s then bottom zone glows 2s,
+ *   used by "vertical range" so the user knows to traverse both extremes
+ * - `apartThenTogether`: two zones at the sides that pulse, then a single
+ *   centre zone — for horizontal spread sampling
+ * - `none`: no on-screen target (pose-only steps like "make a fist")
+ */
+export type TargetZone =
+  | 'none'
+  | 'top'
+  | 'bottom'
+  | 'left'
+  | 'right'
+  | 'center'
+  | 'topThenBottom'
+  | 'apartThenTogether';
+
+/**
+ * Pose icon — small SVG glyph rendered prominently inside the wizard card.
+ * Tells the user WHICH gesture to make. Each icon is hand-drawn inline
+ * SVG in the panel renderer (so we don't ship a font / asset bundle).
+ */
+export type PoseIcon =
+  | 'none'
+  | 'two-hands-frame' // both hands inside a rectangle (positioning)
+  | 'arrows-up-down' // raise / lower
+  | 'arrows-out-in' // hands apart / together
+  | 'open-fist-cycle' // alternating open hand <> fist
+  | 'arrows-left-right' // sweep side to side
+  | 'arrow-up' // raise high
+  | 'arrow-down' // lower
+  | 'fist' // single fist
+  | 'open-hand' // single open hand
+  | 'two-fists' // both fists (mute)
+  | 'mouth-open'; // open mouth wide
+
+/**
  * "Sample" step — collect channel values over a fixed duration. Auto-
- * advances when duration elapses. Skippable.
+ * advances when duration elapses.
+ *
+ * `prepMs` is a pre-roll grace period before sampling begins: the user has
+ * time to read the title and position themselves before min/max collection
+ * starts. The panel renders a "GET READY 3·2·1" countdown during prepMs
+ * and only feeds samples to the accumulator once it elapses.
  */
 export interface SampleStep {
   kind: 'sample';
@@ -56,20 +115,24 @@ export interface SampleStep {
   titleKey: DictKey;
   /** i18n key for the helper text under the title. */
   descKey: DictKey;
-  /** ms to collect before auto-advance. */
+  /** ms of get-ready countdown before sampling starts. */
+  prepMs: number;
+  /** ms to collect samples after the countdown. */
   durationMs: number;
   /** GestureState channels to sample (e.g. ['rightOpenness','leftOpenness']). */
   channels: ReadonlyArray<SampleChannel>;
   /** Profile field to write the combined min/max into. */
   target: ProfileTarget;
+  /** On-screen target zone hint. */
+  zone: TargetZone;
+  /** Pose icon shown inside the card. */
+  icon: PoseIcon;
 }
 
 /**
  * Tutorial gesture predicate — invoked each frame with the latest
- * GestureState. The step completes the first frame this returns true.
- * Defining predicates as named module-level functions (rather than
- * arrows in the array literal) keeps the step list declarative and the
- * predicates unit-testable in isolation.
+ * GestureState. The step completes the first SUSTAINED frame this
+ * returns true (see `holdMs` for the debounce window).
  */
 export type GesturePredicate = (state: {
   meanHeight: number;
@@ -86,20 +149,29 @@ export type GesturePredicate = (state: {
 
 /**
  * "Tutorial" step — show an instruction, wait for the user to perform
- * the gesture. Optionally times out so the user can skip a gesture
- * they can't physically perform (e.g. accessibility mode).
+ * the gesture. The panel holds the predicate for `holdMs` to debounce
+ * false positives (a momentary spike of mouthOpen during a yawn etc.),
+ * then auto-advances. `timeoutHintMs` controls when the encouragement
+ * hint appears (doesn't auto-skip — Skip button is the explicit
+ * escape).
  */
 export interface TutorialStep {
   kind: 'tutorial';
   id: string;
   titleKey: DictKey;
   descKey: DictKey;
-  /** Optional hint shown under the description. */
+  /** Optional hint shown under the description after `timeoutHintMs`. */
   hintKey?: DictKey;
   /** Frame predicate — return true to advance. */
   predicate: GesturePredicate;
-  /** ms after which a "Skip" prompt is offered. Step doesn't auto-skip. */
+  /** ms the predicate must remain true continuously before completing. */
+  holdMs: number;
+  /** ms after which the encouragement hint appears (visual only). */
   timeoutHintMs: number;
+  /** On-screen target zone hint. */
+  zone: TargetZone;
+  /** Pose icon shown inside the card. */
+  icon: PoseIcon;
 }
 
 export type CalibrationStep = SampleStep | TutorialStep;
@@ -146,13 +218,20 @@ function mouthOpenedWide(s: { mouthOpen: number }): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Calibration steps. Tuned for ~30s total wall-clock. Each sample step is
- * 6-8s — long enough for the user to actually reach the extremes, short
- * enough that the wizard doesn't drag.
+ * Default debounce window for tutorial-step completion. 350ms feels
+ * instant to the user but is long enough to filter out single-frame
+ * predicate spikes (e.g. a yawn registering as mouth-open during the
+ * fist step).
+ */
+const DEFAULT_HOLD_MS = 350;
+
+/**
+ * Calibration steps. Each step auto-advances — no clicking required from
+ * the user. Sample steps run a "GET READY" prep countdown so the user can
+ * read the prompt and position before collection begins.
  *
- * Tutorial section comes AFTER calibration so the user has already moved
- * their hands through the full envelope; the audio feedback during the
- * tutorial then uses the calibrated remap and FEELS responsive.
+ * Tutorial section comes AFTER calibration so the audio response during
+ * tutorial uses the calibrated remap and FEELS responsive.
  */
 export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
   // ---- Calibration phase ------------------------------------------------
@@ -161,45 +240,60 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     id: 'position',
     titleKey: 'calib.position.title',
     descKey: 'calib.position.desc',
-    durationMs: 6000,
+    prepMs: 2500,
+    durationMs: 4000,
     channels: ['meanDepth'],
     target: 'meanDepth',
+    zone: 'center',
+    icon: 'two-hands-frame',
   },
   {
     kind: 'sample',
     id: 'vertical',
     titleKey: 'calib.vertical.title',
     descKey: 'calib.vertical.desc',
-    durationMs: 7000,
+    prepMs: 2500,
+    durationMs: 6000,
     channels: ['meanHeight'],
     target: 'handY',
+    zone: 'topThenBottom',
+    icon: 'arrows-up-down',
   },
   {
     kind: 'sample',
     id: 'horizontal',
     titleKey: 'calib.horizontal.title',
     descKey: 'calib.horizontal.desc',
-    durationMs: 7000,
+    prepMs: 2500,
+    durationMs: 6000,
     channels: ['handsDistance3D'],
     target: 'handsDistance3D',
+    zone: 'apartThenTogether',
+    icon: 'arrows-out-in',
   },
   {
     kind: 'sample',
     id: 'shape',
     titleKey: 'calib.shape.title',
     descKey: 'calib.shape.desc',
-    durationMs: 7000,
+    prepMs: 2500,
+    durationMs: 6000,
     channels: ['rightOpenness', 'leftOpenness'],
     target: 'openness',
+    zone: 'none',
+    icon: 'open-fist-cycle',
   },
   {
     kind: 'sample',
     id: 'lateral',
     titleKey: 'calib.lateral.title',
     descKey: 'calib.lateral.desc',
-    durationMs: 6000,
+    prepMs: 2500,
+    durationMs: 5500,
     channels: ['rightPalmX'],
     target: 'handX',
+    zone: 'apartThenTogether',
+    icon: 'arrows-left-right',
   },
 
   // ---- Tutorial phase ---------------------------------------------------
@@ -210,7 +304,10 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     descKey: 'tut.pitchHigh.desc',
     hintKey: 'tut.pitchHigh.hint',
     predicate: reachedHigh,
-    timeoutHintMs: 10000,
+    holdMs: DEFAULT_HOLD_MS,
+    timeoutHintMs: 7000,
+    zone: 'top',
+    icon: 'arrow-up',
   },
   {
     kind: 'tutorial',
@@ -218,7 +315,10 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     titleKey: 'tut.pitchLow.title',
     descKey: 'tut.pitchLow.desc',
     predicate: reachedLow,
-    timeoutHintMs: 10000,
+    holdMs: DEFAULT_HOLD_MS,
+    timeoutHintMs: 7000,
+    zone: 'bottom',
+    icon: 'arrow-down',
   },
   {
     kind: 'tutorial',
@@ -226,7 +326,10 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     titleKey: 'tut.fist.title',
     descKey: 'tut.fist.desc',
     predicate: madeFist,
-    timeoutHintMs: 10000,
+    holdMs: DEFAULT_HOLD_MS,
+    timeoutHintMs: 7000,
+    zone: 'none',
+    icon: 'fist',
   },
   {
     kind: 'tutorial',
@@ -234,7 +337,10 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     titleKey: 'tut.open.title',
     descKey: 'tut.open.desc',
     predicate: openedWide,
-    timeoutHintMs: 10000,
+    holdMs: DEFAULT_HOLD_MS,
+    timeoutHintMs: 7000,
+    zone: 'none',
+    icon: 'open-hand',
   },
   {
     kind: 'tutorial',
@@ -243,7 +349,10 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     descKey: 'tut.mute.desc',
     hintKey: 'tut.mute.hint',
     predicate: bothFistsClosed,
-    timeoutHintMs: 12000,
+    holdMs: 500, // a bit longer for the deliberate "BOTH fists" intent
+    timeoutHintMs: 9000,
+    zone: 'none',
+    icon: 'two-fists',
   },
   {
     kind: 'tutorial',
@@ -252,7 +361,10 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     descKey: 'tut.mouth.desc',
     hintKey: 'tut.mouth.hint',
     predicate: mouthOpenedWide,
-    timeoutHintMs: 12000,
+    holdMs: 400,
+    timeoutHintMs: 9000,
+    zone: 'none',
+    icon: 'mouth-open',
   },
 ];
 

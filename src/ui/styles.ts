@@ -1388,22 +1388,119 @@ export const UI_STYLES = `
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 10, 12, 0.78);
+  /* Lower alpha than the original modal: the user NEEDS to see their own
+   * skeleton through the overlay to know where their hand is relative to
+   * the target zone. 0.55 is just enough to focus attention on the card
+   * without hiding the visualizer underneath. */
+  background: rgba(10, 10, 12, 0.55);
   z-index: 80;
   pointer-events: auto;
   animation: hs-fade-in 220ms ease-out both;
+}
+
+/* --- Target zones -----------------------------------------------------
+ * Full-screen rectangles that highlight WHERE the user should put their
+ * hand. Rendered behind the wizard card but ABOVE the dim overlay, so they
+ * show on top of the live visualizer + the dim wash. The user's actual
+ * hand skeleton renders inside the rectangle when they hit the target —
+ * immediate visual confirmation.
+ * --------------------------------------------------------------------- */
+.hs-calib-zone {
+  position: absolute;
+  pointer-events: none;
+  border: 1px dashed var(--hs-orange-glow);
+  opacity: 0.35;
+  transition: opacity 220ms ease-out, box-shadow 220ms ease-out, border-color 220ms ease-out;
+  /* L-shaped corner brackets via inset shadows. */
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 106, 20, 0.18);
+}
+.hs-calib-zone::before,
+.hs-calib-zone::after {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--hs-orange);
+}
+.hs-calib-zone::before {
+  top: -2px;
+  left: -2px;
+  border-right: 0;
+  border-bottom: 0;
+}
+.hs-calib-zone::after {
+  bottom: -2px;
+  right: -2px;
+  border-left: 0;
+  border-top: 0;
+}
+.hs-calib-zone.hs-calib-zone-active {
+  opacity: 1;
+  border-color: var(--hs-amber);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 170, 68, 0.40),
+    0 0 24px rgba(255, 170, 68, 0.35);
+  animation: hs-calib-zone-pulse 1.6s ease-in-out infinite;
+}
+@keyframes hs-calib-zone-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 170, 68, 0.40), 0 0 18px rgba(255, 170, 68, 0.25); }
+  50%      { box-shadow: inset 0 0 0 1px rgba(255, 170, 68, 0.55), 0 0 30px rgba(255, 170, 68, 0.45); }
 }
 .hs-calib-card {
   position: relative;
   background: var(--hs-bg-panel);
   border: 1px solid var(--hs-grey-2);
-  padding: 24px 28px 22px;
-  width: min(560px, calc(100vw - 32px));
+  padding: 22px 26px 20px;
+  /* Narrower card so the on-screen target zones (which sit BEHIND the card
+   * around its edges) are more visible. Wider would cover them. */
+  width: min(440px, calc(100vw - 32px));
   clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: stretch;
+  gap: 10px;
   overflow: hidden;
+  transition: border-color 220ms ease, box-shadow 220ms ease;
+}
+.hs-calib-card.hs-calib-card-done {
+  border-color: var(--hs-amber);
+  box-shadow: 0 0 32px rgba(255, 170, 68, 0.30);
+}
+
+/* Pose icon — large SVG glyph above the title. The currentColor stroke
+ * makes the SVG paths inherit the warm orange accent. Sized for at-a-
+ * glance recognition: the user shouldn't need to read text to know
+ * which gesture to perform. */
+.hs-calib-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hs-orange);
+  min-height: 52px;
+  margin-top: 2px;
+}
+.hs-calib-icon svg {
+  width: 52px;
+  height: 52px;
+}
+
+/* GET-READY prep countdown — sits in place of the bigbar during prepMs.
+ * Big monospace digit, pulses gently. */
+.hs-calib-prep {
+  font-family: var(--hs-mono);
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--hs-amber);
+  text-align: center;
+  line-height: 1;
+  padding: 8px 0 4px;
+  animation: hs-calib-prep-pulse 1s ease-in-out infinite;
+}
+@keyframes hs-calib-prep-pulse {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%      { opacity: 1.0; transform: scale(1.06); }
 }
 .hs-calib-card::before {
   content: '';
@@ -1575,6 +1672,8 @@ export const UI_STYLES = `
   .hs-calib-card::after { animation: none; opacity: 0; }
   .hs-calib-bigbar-fill { transition: none; }
   .hs-calib-progress-fill { transition: none; }
+  .hs-calib-zone.hs-calib-zone-active { animation: none; }
+  .hs-calib-prep { animation: none; }
 }
 `;
 

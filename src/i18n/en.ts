@@ -146,24 +146,24 @@ const dict = {
   'calib.counter.tutorial': 'TUTORIAL',
   'calib.quit': 'Quit wizard',
   'calib.skip': 'Skip',
-  'calib.next': 'Next',
-  'calib.finish': 'Finish',
+  'calib.getReady': 'Get ready · position your hand in the target zone',
   'calib.collecting': 'Collecting · {{s}}s',
-  'calib.collected': 'Captured — press Next when ready',
-  'calib.waitingGesture': 'Waiting for gesture…',
-  'calib.gestureOk': 'Got it — press Next when ready',
+  'calib.captured': 'Captured ✓',
+  'calib.waitingGesture': 'Waiting for the gesture…',
+  'calib.holding': 'Hold it…',
 
-  // Sample steps
+  // Sample steps. Descriptions are written assuming the user has NO free
+  // hand to click anything — they auto-advance.
   'calib.position.title': 'Find your spot',
-  'calib.position.desc': 'Sit at a comfortable distance from the camera. Keep both hands visible — they should fit inside the frame with a little space to spare.',
+  'calib.position.desc': 'Place both hands inside the highlighted zone. Keep them relaxed — the wizard advances on its own.',
   'calib.vertical.title': 'Vertical range',
-  'calib.vertical.desc': 'Slowly raise both hands as high as feels natural, then lower them as low as you can — repeat a couple of times.',
+  'calib.vertical.desc': 'Follow the glowing zone: reach up while it lights at the top, then drop down while it lights at the bottom. Loop a couple of times.',
   'calib.horizontal.title': 'Hand spread',
-  'calib.horizontal.desc': 'Bring both hands close together in front of you, then spread them out wide — repeat a couple of times.',
+  'calib.horizontal.desc': 'Spread your hands toward the side zones, then bring them back close together. Repeat smoothly.',
   'calib.shape.title': 'Open and close',
-  'calib.shape.desc': 'Make tight fists, then splay your fingers wide open. Do it a few times with both hands.',
+  'calib.shape.desc': 'Open your fingers wide, then squeeze them into fists. Cycle a few times — both hands.',
   'calib.lateral.title': 'Side to side',
-  'calib.lateral.desc': 'Move your right hand from one side of the frame to the other — left to right and back.',
+  'calib.lateral.desc': 'Sweep your right hand toward the left zone, then toward the right zone. Smooth pendulum.',
 
   // Tutorial steps
   'tut.pitchHigh.title': 'Raise your hand high',

@@ -133,24 +133,24 @@ const dict: Record<EnDictKey, string> = {
   'calib.counter.tutorial': 'TUTORIAL',
   'calib.quit': 'Esci dalla procedura',
   'calib.skip': 'Salta',
-  'calib.next': 'Avanti',
-  'calib.finish': 'Fine',
+  'calib.getReady': 'Preparati · posiziona la mano nella zona evidenziata',
   'calib.collecting': 'Sto raccogliendo · {{s}}s',
-  'calib.collected': 'Acquisito — premi Avanti quando vuoi',
+  'calib.captured': 'Acquisito ✓',
   'calib.waitingGesture': 'In attesa del gesto…',
-  'calib.gestureOk': 'Perfetto — premi Avanti quando vuoi',
+  'calib.holding': 'Tieni la posizione…',
 
-  // Sample steps
+  // Sample steps — descrizioni pensate per l\'uso "hands-free": il wizard
+  // va avanti da solo, niente click richiesti.
   'calib.position.title': 'Trova la posizione',
-  'calib.position.desc': 'Mettiti a una distanza comoda dalla camera. Tieni entrambe le mani visibili — devono entrare nel riquadro con un po\' di margine.',
+  'calib.position.desc': 'Metti entrambe le mani dentro la zona illuminata. Rilassate — il wizard avanza da solo.',
   'calib.vertical.title': 'Estensione verticale',
-  'calib.vertical.desc': 'Alza piano entrambe le mani il più in alto che ti sembra naturale, poi abbassale il più giù che riesci — ripeti un paio di volte.',
+  'calib.vertical.desc': 'Segui la zona che brilla: alza le mani quando si accende in alto, abbassale quando si accende in basso. Ripeti un paio di volte.',
   'calib.horizontal.title': 'Apertura delle mani',
-  'calib.horizontal.desc': 'Avvicina le mani davanti a te, poi allargale il più possibile — ripeti un paio di volte.',
+  'calib.horizontal.desc': 'Apri le mani verso le zone laterali, poi riavvicinale al centro. Movimento fluido.',
   'calib.shape.title': 'Apri e chiudi',
-  'calib.shape.desc': 'Chiudi i pugni stretti, poi spalanca le dita. Falla con entrambe le mani un paio di volte.',
+  'calib.shape.desc': 'Apri bene le dita, poi stringile a pugno. Cicla qualche volta — entrambe le mani.',
   'calib.lateral.title': 'Lato a lato',
-  'calib.lateral.desc': 'Sposta la mano destra da un lato all\'altro del riquadro — sinistra, destra, ripeti.',
+  'calib.lateral.desc': 'Porta la mano destra prima verso la zona sinistra, poi verso la zona destra. Come un pendolo.',
 
   // Tutorial steps
   'tut.pitchHigh.title': 'Solleva la mano in alto',
