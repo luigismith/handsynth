@@ -19,6 +19,7 @@ import type {
   HeadPose,
 } from '@contracts/contracts';
 import { OneEuroFilter } from '@hands/one-euro-filter';
+import { MEDIAPIPE_WASM_BASE } from '@hands/mediapipe-wasm';
 import {
   apparentFaceWidth,
   apparentSizeToCloseness,
@@ -36,8 +37,6 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-const MEDIAPIPE_WASM_BASE =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 const FACE_LANDMARKER_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 
@@ -377,6 +376,9 @@ export class FaceTrackerImpl implements FaceTracker {
     } catch (err) {
       const e =
         err instanceof Error ? err : new Error('FaceLandmarker.detectForVideo failed');
+      // Keep the throttle: a persistently failing call must not retry on
+      // every video frame.
+      this.lastEmitMs = nowMs;
       this.emitter.emit('error', e);
       return;
     }

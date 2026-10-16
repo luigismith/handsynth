@@ -35,13 +35,12 @@ import {
   isFist,
 } from './gestures';
 import { classifyHandShape } from './gesture-classifier';
+import { MEDIAPIPE_WASM_BASE } from './mediapipe-wasm';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const MEDIAPIPE_WASM_BASE =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 const HAND_LANDMARKER_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
@@ -460,6 +459,9 @@ export class HandTrackerImpl implements HandTracker {
       result = lm.detectForVideo(v, nowMs);
     } catch (err) {
       const e = err instanceof Error ? err : new Error('detectForVideo failed');
+      // Keep the throttle: a persistently failing call (lost GPU context)
+      // must not retry on every video frame.
+      this.lastEmitMs = nowMs;
       this.emitter.emit('error', e);
       return;
     }
@@ -485,6 +487,11 @@ export class HandTrackerImpl implements HandTracker {
         tSec,
       );
     } else {
+      // Hold the last two-hand distances: a one-frame dropout of either
+      // hand (frame edge, crossing hands) must not slam the filter cutoff
+      // (driven by handsDistance3D) to its 200 Hz floor and back.
+      smoothedHandsDistance = this.prevState?.handsDistance ?? 0;
+      smoothedHandsDistance3D = this.prevState?.handsDistance3D ?? 0;
       this.handsDistanceF.reset();
       this.handsDistance3DF.reset();
     }
