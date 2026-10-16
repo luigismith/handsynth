@@ -27,6 +27,7 @@
 import * as Tone from 'tone';
 import type { ChordEvent, VibePreset } from '@contracts/contracts';
 import type { VoiceShape } from '../voice-shape';
+import { resolveStartTime } from './start-time';
 
 const ATTACK = 2.5;
 const DECAY = 0.8;
@@ -286,12 +287,10 @@ export class PadEngine {
    * the gate.
    */
   triggerChord(event: ChordEvent): void {
-    // FREEZE FIX: see LeadEngine.trigger for the full explanation. Clamp
-    // time to max(time, now) and wrap each trigger in try/catch so a Tone
-    // refusal can't escape and corrupt Transport's _timeline.
-    const now = Tone.now();
-    const eventTime = event.time;
-    const t = typeof eventTime === 'number' ? Math.max(eventTime, now) : eventTime ?? now;
+    // FREEZE FIX: see LeadEngine.trigger and start-time.ts. PolySynths
+    // accept overlapping starts, so only past times need clamping; the
+    // try/catch keeps a Tone refusal from corrupting Transport's _timeline.
+    const t = resolveStartTime(event.time);
     const v = this.currentTimbre;
     const fireA = v < 1 - TIMBRE_EDGE_EPS;
     const fireB = v > TIMBRE_EDGE_EPS;

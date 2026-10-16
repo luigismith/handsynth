@@ -29,6 +29,7 @@
 import * as Tone from 'tone';
 import type { NoteEvent, VibePreset } from '@contracts/contracts';
 import type { VoiceShape } from '../voice-shape';
+import { StartGuard } from './start-time';
 
 const PORTAMENTO = 0.05;
 const VIBRATO_HZ = 5.5;
@@ -62,6 +63,8 @@ export class LeadEngine {
    * in PadEngine for the rationale.
    */
   private currentTimbre = 0;
+  /** mono + monoB always start together, so one guard covers both. */
+  private readonly startGuard = new StartGuard();
 
   constructor(destination: Tone.ToneAudioNode | AudioNode) {
     this.out = new Tone.Gain(0.85);
@@ -192,13 +195,11 @@ export class LeadEngine {
     //   "Cannot read properties of undefined (reading 'time')"
     // → main thread stalled continuously → freeze.
     //
-    // Clamp `t` to `max(time, now)` so we never schedule in the past, and
-    // wrap the trigger in try/catch so any remaining Tone refusal
-    // (overlapping envelope, MonoSynth retrigger conflict) doesn't escape
-    // the tick handler and corrupt Transport. Worst case: that single note
-    // doesn't play; better than freezing the app.
-    const now = Tone.now();
-    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    // StartGuard (start-time.ts) keeps starts strictly increasing and
+    // never in the past, without moving look-ahead Transport times. The
+    // try/catch stays as a last line of defence so any remaining Tone
+    // refusal doesn't escape the tick handler and corrupt Transport.
+    const t = this.startGuard.next(time);
     const tim = this.currentTimbre;
     if (tim < 1 - TIMBRE_EDGE_EPS) {
       try { this.mono.triggerAttackRelease(note, duration, t, v); }

@@ -181,7 +181,8 @@ export async function createMasterChain(): Promise<MasterChain> {
   // can splice in a Tone.Convolver-based wet/dry path here if the IR is
   // present. (Fallback contract is satisfied: if the IR is missing we use
   // the algorithmic reverb, which we already do unconditionally.)
-  fetch('/ir/hall.wav', { method: 'HEAD' })
+  // BASE_URL keeps the probe valid under a sub-path (GitHub Pages) and file://.
+  fetch(`${import.meta.env.BASE_URL}ir/hall.wav`, { method: 'HEAD' })
     .then((r) => {
       if (!r.ok) throw new Error(`hall.wav HTTP ${r.status}`);
       console.info(
@@ -246,6 +247,11 @@ export async function createMasterChain(): Promise<MasterChain> {
   };
 
   // -- Helpers --------------------------------------------------------------
+  /** duck 0..1 → master gain 1..0.4. */
+  function duckToGain(duck: number): number {
+    return 1 - 0.6 * Math.max(0, Math.min(1, duck));
+  }
+
   function setSaturatorDrive(v: number, smooth: boolean) {
     if (saturatorWorklet) {
       const p = saturatorWorklet.parameters.get('drive');
@@ -305,10 +311,11 @@ export async function createMasterChain(): Promise<MasterChain> {
       state.current.brightness = b;
     }
     if (typeof p.duck === 'number') {
-      // duck 0..1 → gain 1..0.4. Hard mute is a separate code path.
-      const g = 1 - 0.6 * Math.max(0, Math.min(1, p.duck));
-      masterGain.gain.rampTo(g, SMOOTH_S);
       state.current.duck = p.duck;
+      // masterGain carries both duck and mute. While muted only record the
+      // level (setMute(false) restores to it): ramping here would cancel
+      // the mute on the next gesture frame.
+      if (!state.muted) masterGain.gain.rampTo(duckToGain(p.duck), SMOOTH_S);
     }
   }
 
@@ -364,7 +371,7 @@ export async function createMasterChain(): Promise<MasterChain> {
     },
     setMute(m: boolean): void {
       state.muted = m;
-      masterGain.gain.rampTo(m ? 0 : 1, MUTE_FADE_S);
+      masterGain.gain.rampTo(m ? 0 : duckToGain(state.current.duck), MUTE_FADE_S);
     },
     dipForTransition(): void {
       // GLITCH FIX (audio audit): vibe switch was causing audible clicks
@@ -375,8 +382,8 @@ export async function createMasterChain(): Promise<MasterChain> {
       // doesn't. So we dip the master output instead, absorbing every
       // voice-level click in one go. ~200 ms round-trip: 60 ms down →
       // 50 ms held at 0 (cascade runs during) → 90 ms back up. If the
-      // user is muted, restore to 0 instead of 1.
-      const target = state.muted ? 0 : 1;
+      // user is muted, restore to 0 instead of the duck level.
+      const target = state.muted ? 0 : duckToGain(state.current.duck);
       const t0 = Tone.now();
       try {
         masterGain.gain.cancelScheduledValues(t0);

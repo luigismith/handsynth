@@ -144,11 +144,15 @@ export class AudioEngineImpl implements AudioEngine {
   /**
    * Idempotent. Awaits Tone.start() (user-gesture context unlock), builds
    * master chain, instantiates voices. Safe to call multiple times — second
-   * and subsequent calls return the same promise.
+   * and subsequent calls return the same promise. A failed init is not
+   * cached, so the onboarding Retry button can actually retry.
    */
   init(): Promise<void> {
     if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInit();
+    this.initPromise = this.doInit().catch((err: unknown) => {
+      this.initPromise = null;
+      throw err;
+    });
     return this.initPromise;
   }
 

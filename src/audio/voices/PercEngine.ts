@@ -15,6 +15,7 @@
 
 import * as Tone from 'tone';
 import type { VibePreset } from '@contracts/contracts';
+import { StartGuard } from './start-time';
 
 export class PercEngine {
   private kick: Tone.MembraneSynth;
@@ -122,28 +123,29 @@ export class PercEngine {
    * groove.
    */
   private static readonly VEL_JITTER = 0.12;
+  /** One guard per synth: kick and hat may legitimately start together. */
+  private readonly kickStart = new StartGuard();
+  private readonly hatStart = new StartGuard();
+  private readonly percStart = new StartGuard();
   private humanVel(base: number = 1): number {
     const j = (Math.random() * 2 - 1) * PercEngine.VEL_JITTER;
     return Math.max(0.2, Math.min(1, base + j));
   }
 
   triggerKick(time?: number | string): void {
-    const now = Tone.now();
-    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    const t = this.kickStart.next(time);
     try { this.kick.triggerAttackRelease('C2', '8n', t, this.humanVel(0.95)); }
     catch (e) { console.warn('[perc] kick refused', e); }
   }
 
   triggerHat(time?: number | string): void {
-    const now = Tone.now();
-    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    const t = this.hatStart.next(time);
     try { this.hat.triggerAttackRelease('32n', t, this.humanVel(0.85)); }
     catch (e) { console.warn('[perc] hat refused', e); }
   }
 
   triggerPerc(time?: number | string): void {
-    const now = Tone.now();
-    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    const t = this.percStart.next(time);
     try { this.perc.triggerAttackRelease('16n', t, this.humanVel(0.9)); }
     catch (e) { console.warn('[perc] perc refused', e); }
   }

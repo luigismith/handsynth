@@ -25,6 +25,7 @@
 import * as Tone from 'tone';
 import type { NoteEvent, VibePreset } from '@contracts/contracts';
 import type { VoiceShape } from '../voice-shape';
+import { StartGuard } from './start-time';
 
 const PORTAMENTO = 0.08;
 const HPF_FREQ = 30;
@@ -54,6 +55,8 @@ export class BassEngine {
    * for the rationale.
    */
   private currentTimbre = 0;
+  /** main, mainB and sub always start together, so one guard covers all. */
+  private readonly startGuard = new StartGuard();
 
   constructor(destination: Tone.ToneAudioNode | AudioNode) {
     this.out = new Tone.Gain(0.9);
@@ -239,11 +242,10 @@ export class BassEngine {
     time?: number | string,
   ): void {
     const v = Math.max(0.01, Math.min(1, velocity));
-    // FREEZE FIX: see LeadEngine.trigger for the full explanation. Clamp
-    // time to max(time, now) and wrap each trigger in try/catch so a Tone
-    // refusal can't escape and corrupt Transport's _timeline.
-    const now = Tone.now();
-    const t = typeof time === 'number' ? Math.max(time, now) : time ?? now;
+    // FREEZE FIX: see LeadEngine.trigger and start-time.ts. Strictly
+    // increasing starts + try/catch so a Tone refusal can't escape and
+    // corrupt Transport's _timeline.
+    const t = this.startGuard.next(time);
     const tim = this.currentTimbre;
     if (tim < 1 - TIMBRE_EDGE_EPS) {
       try { this.main.triggerAttackRelease(note, duration, t, v); }
