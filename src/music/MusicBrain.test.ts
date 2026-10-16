@@ -4,7 +4,7 @@
 // Pure logic only — no Tone.js scheduling tested here (that's an integration
 // concern owned by qa-listener).
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   getChordTones,
   getScale,
@@ -346,3 +346,28 @@ function midiToSpelling(midi: number): string {
   const pc = PCS[midi % 12];
   return `${pc}${oct}`;
 }
+
+describe('MusicBrain tempo', () => {
+  it('per-frame setInput only re-sends tempo/swing when they change', () => {
+    const brain = makeBrainAtVibe('tycho');
+    // Pretend the transport is running without touching Tone: swap in a
+    // fake sequencer and flip the started flag.
+    const fake = { setBPM: vi.fn(), setSwing: vi.fn() };
+    const internals = brain as unknown as {
+      sequencer: typeof fake;
+      isStarted: boolean;
+    };
+    internals.sequencer = fake;
+    internals.isStarted = true;
+
+    const input: MusicBrainInput = { intensity: 0.5, mood: 'calm', vibe: VIBES.tycho };
+    for (let i = 0; i < 50; i += 1) brain.setInput({ ...input, intensity: i / 50 });
+    expect(fake.setBPM).toHaveBeenCalledTimes(1);
+    expect(fake.setSwing).toHaveBeenCalledTimes(1);
+
+    // A new vibe (new tempo) is sent once.
+    for (let i = 0; i < 10; i += 1) brain.setInput({ ...input, vibe: VIBES.bonobo });
+    expect(fake.setBPM).toHaveBeenCalledTimes(2);
+    expect(fake.setBPM).toHaveBeenLastCalledWith(VIBES.bonobo.bpm);
+  });
+});

@@ -1352,6 +1352,63 @@ describe('InteractionMapper audio-glitch regressions', () => {
     mapper.stop();
   });
 
+  it('a slowly moving param still reaches the engine while others jitter', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+
+    // Right openness creeps up by less than reverbWet's ε per frame, while
+    // the left hand jitters enough to produce a diff on every frame.
+    for (let i = 0; i < 100; i += 1) {
+      hands.emit(
+        'gesture:update',
+        blankState({
+          rightOpenness: 0.3 + 0.002 * i,
+          leftOpenness: i % 2 === 0 ? 0.2 : 0.8,
+        }),
+      );
+    }
+    const wets = audio.paramCalls
+      .map((p) => p.reverbWet)
+      .filter((v): v is number => typeof v === 'number');
+    expect(wets.length).toBeGreaterThan(1);
+    // The creep (0.3 → ~0.5 openness) must show up in what was sent.
+    expect(wets[wets.length - 1]! - wets[0]!).toBeGreaterThan(0.05);
+    mapper.stop();
+  });
+
+  it('left-pinky tremolo stops when the pinky opens or the hand leaves', () => {
+    const mapper = new InteractionMapperImpl();
+    const audio = makeAudioStub();
+    const music = makeMusicStub();
+    const hands = makeHandsStub();
+    mapper.attach({ audio, music, hands });
+    mapper.setVibe(VIBE);
+    mapper.start();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = mapper as any;
+
+    // Curled left pinky → tremolo on.
+    hands.emit('gesture:update', blankState({ hands: [handWithFingers('left', { pinky: 1 })] }));
+    expect(internals.pinkyTremolo).toBeGreaterThan(0.5);
+
+    // Pinky extended again → off (it used to stay latched at the peak).
+    hands.emit('gesture:update', blankState({ hands: [handWithFingers('left', { pinky: 0 })] }));
+    expect(internals.pinkyTremolo).toBe(0);
+
+    // Curl again, then the hand leaves the frame → off.
+    hands.emit('gesture:update', blankState({ hands: [handWithFingers('left', { pinky: 1 })] }));
+    hands.emit('gesture:update', blankState({ hands: [] }));
+    expect(internals.pinkyTremolo).toBe(0);
+    // The wave-gesture level is untouched by the pinky.
+    expect(internals.waveLevel).toBe(0);
+    mapper.stop();
+  });
+
   it('wave LFO bypassed when waveLevel <= 0.01 (no extra pushes)', () => {
     const mapper = new InteractionMapperImpl();
     const audio = makeAudioStub();

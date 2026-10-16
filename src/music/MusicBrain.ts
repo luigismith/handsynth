@@ -88,6 +88,9 @@ export class MusicBrainImpl implements MusicBrain {
   private bassState: BassGeneratorState | null = null;
   private perc: PercPatterns = { kick: [], hat: [], perc: [] };
   private isStarted = false;
+  /** Tempo / swing last sent to the transport (null = not yet). */
+  private appliedBpm: number | null = null;
+  private appliedSwing: number | null = null;
   /** Stable RNG; pluggable in tests via setRng. */
   private rng: () => number = Math.random;
   /**
@@ -120,8 +123,11 @@ export class MusicBrainImpl implements MusicBrain {
       onBar: (bar) => this.onBar(bar),
     });
     const swing = this.vibe?.swing ?? 0;
+    const bpm = this.input.bpm ?? this.vibe?.bpm ?? 100;
     this.sequencer.setSwing(swing);
-    this.sequencer.setBPM(this.input.bpm ?? this.vibe?.bpm ?? 100);
+    this.sequencer.setBPM(bpm);
+    this.appliedSwing = swing;
+    this.appliedBpm = bpm;
     this.sequencer.start();
   }
 
@@ -157,10 +163,21 @@ export class MusicBrainImpl implements MusicBrain {
     this.perc = buildPercPatterns(this.effectiveIntensity());
 
     if (this.isStarted) {
+      // Only touch the transport when the requested tempo/swing changes.
+      // setInput runs on every gesture frame (18-60 Hz): an unconditional
+      // rampTo snapped the BPM knob and preset tempos back to the vibe
+      // tempo within a frame, and piled automation events onto the
+      // transport's bpm param for the whole session.
       const bpm = input.bpm ?? input.vibe.bpm;
-      // Smooth BPM ramp (rampTo handled by sequencer wrapper).
-      this.sequencer.setBPM(bpm);
-      this.sequencer.setSwing(input.vibe.swing);
+      if (bpm !== this.appliedBpm) {
+        // Smooth BPM ramp (rampTo handled by sequencer wrapper).
+        this.sequencer.setBPM(bpm);
+        this.appliedBpm = bpm;
+      }
+      if (input.vibe.swing !== this.appliedSwing) {
+        this.sequencer.setSwing(input.vibe.swing);
+        this.appliedSwing = input.vibe.swing;
+      }
     }
   }
 

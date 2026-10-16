@@ -604,6 +604,11 @@ export class InteractionMapperImpl implements InteractionMapper {
 
   /** Current wave level (0..1) — continuous controller, no decay. */
   private waveLevel = 0;
+  /** Tremolo depth from the left pinky, recomputed every gesture frame
+   *  (0 when that hand is not in view). Kept apart from `waveLevel`: only
+   *  wave_level events lower that one, so writing the pinky into it
+   *  latched the tremolo on for the rest of the session. */
+  private pinkyTremolo = 0;
   /** Index into the current factory preset list — for swipe prev/next. */
   private factoryPresetIndex = 0;
   /** Pending fist_pump fires per hand for the both-hand gating window. */
@@ -1010,7 +1015,12 @@ export class InteractionMapperImpl implements InteractionMapper {
     const diff = diffParams(this.lastParamSnapshot, target);
     if (diff || this.handsBackFade) {
       this.audio?.setParams(diff ?? target);
-      this.lastParamSnapshot = target;
+      // Record only what was actually sent: a param drifting by less than
+      // its ε per frame must keep accumulating against its last SENT
+      // value, or it never reaches the engine while other params jitter.
+      this.lastParamSnapshot = diff
+        ? { ...this.lastParamSnapshot, ...diff }
+        : target;
     }
     void this.frameTick;
 
@@ -1208,9 +1218,10 @@ export class InteractionMapperImpl implements InteractionMapper {
    *   middle → reverbWet (additional 0.7..0.05) — folded onto right-hand
    *             reverb because Tone master chain has no separate decay knob
    *   ring   → masterDuck offset (±0.10)
-   *   pinky  → tremolo depth — sets the waveLevel field (drives the existing
-   *             brightness-LFO from `applyDiscreteGesturePulses`). No native
-   *             tremolo API on AudioEngine.
+   *   pinky  → tremolo depth — sets `pinkyTremolo`, which joins the wave
+   *             gesture level in the brightness-LFO of
+   *             `applyDiscreteGesturePulses`. No native tremolo API on
+   *             AudioEngine.
    */
   private applyPerFingerMappings(
     target: Partial<AudioEngineParams>,
@@ -1220,6 +1231,7 @@ export class InteractionMapperImpl implements InteractionMapper {
     const left = state.hands.find((h) => h.side === 'left');
     const rf = right?.fingers;
     const lf = left?.fingers;
+    this.pinkyTremolo = 0;
     if (!rf && !lf) return target;
 
     // PERF: mutate `target` in place — was `const out = { ...target }`
@@ -1301,12 +1313,10 @@ export class InteractionMapperImpl implements InteractionMapper {
         typeof out.masterDuck === 'number' ? out.masterDuck : 0;
       out.masterDuck = clamp01(baseDuckL + l.masterDuckOffset * w);
 
-      // Tremolo depth → waveLevel. Replaces (additive max) — if the wave
-      // velocity gesture has already set a higher waveLevel we don't drop
-      // it. Per-finger drives a steady tremolo when held; the velocity
-      // gesture still spikes it on a fast wave.
-      const pinkyTrem = clamp01(l.tremoloDepth * w * 2); // ×2 so a full pinky curl can hit ~0.7 depth
-      if (pinkyTrem > this.waveLevel) this.waveLevel = pinkyTrem;
+      // Tremolo depth. The LFO uses max(pinky, wave gesture): per-finger
+      // drives a steady tremolo while held; the velocity gesture still
+      // spikes it on a fast wave.
+      this.pinkyTremolo = clamp01(l.tremoloDepth * w * 2); // ×2 so a full pinky curl can hit ~0.7 depth
     }
 
     return out;
@@ -1898,7 +1908,8 @@ export class InteractionMapperImpl implements InteractionMapper {
     // = 5, AND quantises the value so the diff fires at most ~10 Hz —
     // the listener still perceives a tremolo-like wobble because the
     // sample-and-hold steps are AT the LFO frequency, not under it.
-    if (this.waveLevel > 0.01) {
+    const tremoloDepth = Math.max(this.waveLevel, this.pinkyTremolo);
+    if (tremoloDepth > 0.01) {
       const baseB =
         typeof out.brightness === 'number' ? out.brightness : 0.5;
       // Quantise phase to 4 steps per LFO cycle: sign(sin) when |sin| > 0.5,
@@ -1908,7 +1919,7 @@ export class InteractionMapperImpl implements InteractionMapper {
       const rawPhase = Math.sin(2 * Math.PI * (now / 1000) * WAVE_LFO_HZ);
       const phase = rawPhase > 0.5 ? 1 : rawPhase < -0.5 ? -1 : 0;
       out.brightness = clamp01(
-        baseB + phase * this.waveLevel * WAVE_BRIGHTNESS_DEPTH,
+        baseB + phase * tremoloDepth * WAVE_BRIGHTNESS_DEPTH,
       );
     }
 
