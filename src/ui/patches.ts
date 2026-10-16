@@ -96,8 +96,15 @@ export function loadPatches(): Patch[] {
   if (!ls) return [];
   const env = safeParse(ls.getItem(STORAGE_KEY));
   if (!env) return [];
-  // Defensive copy — callers never share refs with storage.
-  return env.patches.map((p) => ({ ...p, params: { ...p.params } }));
+  // Drop malformed entries (one null would throw below and abort the
+  // whole SettingsPanel mount). Defensive copy — callers never share refs
+  // with storage.
+  return env.patches
+    .filter(
+      (p): p is Patch =>
+        !!p && typeof p === 'object' && !!p.params && typeof p.params === 'object',
+    )
+    .map((p) => ({ ...p, params: { ...p.params } }));
 }
 
 function persist(patches: Patch[]): void {

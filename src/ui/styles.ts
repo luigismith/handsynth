@@ -110,10 +110,6 @@ export const UI_STYLES = `
   pointer-events: none;
   animation: hs-scan-sweep 5s linear infinite;
 }
-.hs-onboard-card.hs-fade-out {
-  opacity: 0;
-  pointer-events: none;
-}
 .hs-onboard-title {
   margin: 0 0 8px 0;
   font-family: var(--hs-mono);
@@ -185,6 +181,14 @@ export const UI_STYLES = `
 @keyframes hs-load-dots {
   0%, 100% { opacity: 0.25; letter-spacing: 0; }
   50%      { opacity: 0.85; letter-spacing: 1px; }
+}
+.hs-onboard-btn:disabled { opacity: 0.55; cursor: progress; animation: none; }
+.hs-onboard-status {
+  margin-top: 14px;
+  font-family: var(--hs-mono);
+  font-size: 12px;
+  color: var(--hs-orange);
+  letter-spacing: 0.5px;
 }
 .hs-onboard-error {
   margin-top: 14px;

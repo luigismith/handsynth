@@ -19,7 +19,8 @@ const dict: Record<EnDictKey, string> = {
   'onboarding.cta': 'Permetti webcam e iniziare',
   'onboarding.ctaAria': 'Iniziare HandSynth',
   'onboarding.retry': 'Riprova',
-  'onboarding.cheats': '[ <-> ] FILTRO  [ ^ ] DENSITA  [ * ] STAB',
+  'onboarding.starting': '> Avvio… carico i modelli delle mani, poi consenti la fotocamera quando il browser lo chiede.',
+  'onboarding.cheats': '[ <-> ] FILTRO  [ ^ ] DENSITÀ  [ * ] STAB',
 
   // PATCH editor ------------------------------------------------------------
   'panel.patch.title': 'PATCH',
@@ -126,7 +127,7 @@ const dict: Record<EnDictKey, string> = {
 
   // Errors / autopilot ------------------------------------------------------
   'error.startupFailed': 'Avvio non riuscito. Riprova.',
-  'error.autopilot': 'Webcam non disponibile — modalita autopilot attiva.',
+  'error.autopilot': 'Webcam non disponibile — modalità autopilot attiva.',
 
   // Calibration + tutorial wizard ------------------------------------------
   'calib.counter.calibration': 'CALIBRAZIONE',
@@ -138,6 +139,8 @@ const dict: Record<EnDictKey, string> = {
   'calib.captured': 'Acquisito ✓',
   'calib.waitingGesture': 'In attesa del gesto…',
   'calib.holding': 'Tieni la posizione…',
+  'calib.noDataRetry': 'Nessun movimento rilevato · tieni le mani in vista, riproviamo',
+  'calib.noDataSkip': 'Ancora nessun movimento · per questo passo resta il valore predefinito',
 
   // Sample steps — descrizioni pensate per l\'uso "hands-free": il wizard
   // va avanti da solo, niente click richiesti.

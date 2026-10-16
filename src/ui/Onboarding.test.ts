@@ -82,6 +82,29 @@ describe('OnboardingImpl', () => {
     await second;
   });
 
+  it('stays visible with a status line while starting, and is clickable again after an error', async () => {
+    const ob = new OnboardingImpl();
+    ob.mount(parent);
+    const card = parent.querySelector('.hs-onboard-card') as HTMLElement;
+    const button = parent.querySelector('button') as HTMLButtonElement;
+    const status = parent.querySelector('.hs-onboard-status') as HTMLElement;
+    expect(status.hidden).toBe(true);
+
+    const start = ob.awaitStart();
+    button.click();
+    await start;
+    expect(card.classList.contains('hs-fade-out')).toBe(false);
+    expect(button.disabled).toBe(true);
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toMatch(/loading/i);
+
+    ob.showError('Audio init failed');
+    expect(button.disabled).toBe(false);
+    expect(status.hidden).toBe(true);
+    const errEl = parent.querySelector('.hs-onboard-error') as HTMLElement;
+    expect(errEl.hidden).toBe(false);
+  });
+
   it('renders English strings by default', () => {
     const ob = new OnboardingImpl();
     ob.mount(parent);

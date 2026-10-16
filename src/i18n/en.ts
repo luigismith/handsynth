@@ -31,6 +31,7 @@ const dict = {
   'onboarding.cta': 'Allow webcam and begin',
   'onboarding.ctaAria': 'Begin HandSynth',
   'onboarding.retry': 'Retry',
+  'onboarding.starting': '> Starting… loading hand models, then allow the camera when the browser asks.',
   'onboarding.cheats': '[ <-> ] FILTER  [ ^ ] DENSITY  [ * ] STAB',
 
   // PATCH editor ------------------------------------------------------------
@@ -151,6 +152,8 @@ const dict = {
   'calib.captured': 'Captured ✓',
   'calib.waitingGesture': 'Waiting for the gesture…',
   'calib.holding': 'Hold it…',
+  'calib.noDataRetry': 'No movement detected · keep your hands in view, one more try',
+  'calib.noDataSkip': 'Still no movement · keeping the default for this step',
 
   // Sample steps. Descriptions are written assuming the user has NO free
   // hand to click anything — they auto-advance.

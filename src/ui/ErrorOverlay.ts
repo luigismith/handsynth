@@ -5,6 +5,7 @@
 // modalità autopilot attiva").
 
 import { injectStyles } from './styles';
+import { t } from '../i18n';
 
 export interface ErrorOverlayApi {
   mount(parent: HTMLElement): void;
@@ -47,7 +48,7 @@ export class ErrorOverlayImpl implements ErrorOverlayApi {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'hs-error-btn';
-      btn.textContent = 'Riprova';
+      btn.textContent = t('onboarding.retry');
       btn.addEventListener('click', () => {
         this.hide();
         onRetry();

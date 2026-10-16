@@ -38,6 +38,8 @@ import { CalibrationPanelImpl } from './calibration/CalibrationPanel';
 import { loadCalibration } from './calibration/store';
 import type { CalibrationProfile } from './calibration/types';
 import { injectStyles } from '@ui/styles';
+import { KEY_OPTION_IDS } from '@presets/key-options';
+import { SCALE_OPTION_IDS } from '@presets/scale-options';
 import { getLang, t as tt } from './i18n';
 
 function $(id: string): HTMLElement {
@@ -109,6 +111,27 @@ function installToneErrorGuard(): void {
   });
 }
 
+/**
+ * Tracker `error` events can fire on every video frame (e.g. a lost GPU
+ * context). Log them, at most once per 5 s per source, so a dead tracker
+ * is visible in the console without flooding it.
+ */
+function rateLimitedErrorLog(source: string): (e: Error) => void {
+  let lastMs = -Infinity;
+  let suppressed = 0;
+  return (e: Error): void => {
+    const now = performance.now();
+    if (now - lastMs < 5000) {
+      suppressed += 1;
+      return;
+    }
+    const extra = suppressed > 0 ? ` (+${suppressed} more since last report)` : '';
+    console.error(`[${source}] tracking error${extra}`, e);
+    lastMs = now;
+    suppressed = 0;
+  };
+}
+
 async function bootstrap(): Promise<void> {
   installToneErrorGuard();
   injectStyles();
@@ -145,6 +168,9 @@ async function bootstrap(): Promise<void> {
   const face = new FaceTrackerImpl();
   const mapper = new InteractionMapperImpl();
   const visual = new VisualizerImpl();
+  // Nobody else listens to tracker errors; without this they vanish.
+  hands.on('error', rateLimitedErrorLog('hands'));
+  face.on('error', rateLimitedErrorLog('face'));
 
   // Phase 1: onboarding waits for the click.
   onboarding.mount(onboardingHost);
@@ -152,10 +178,11 @@ async function bootstrap(): Promise<void> {
   // Phase 2: try to start the full stack. If anything user-recoverable
   // fails we re-prompt (showError + awaitStart returns a fresh promise).
   let started = false;
+  let handsLive = false;
   while (!started) {
     await onboarding.awaitStart();
     try {
-      await startSession({
+      ({ handsLive } = await startSession({
         audio,
         music,
         hands,
@@ -165,7 +192,7 @@ async function bootstrap(): Promise<void> {
         videoEl: video,
         canvasEl: canvas,
         onAutopilotEngaged: (msg) => errorOverlay.showWarning(msg),
-      });
+      }));
       started = true;
     } catch (err) {
       console.error('[main] startup failed', err);
@@ -252,16 +279,25 @@ async function bootstrap(): Promise<void> {
   // routes through `toggleMute()` here; `isMuted` is the only state and
   // it always notifies all listeners (audio + HUD).
   let isMuted = false;
+  /** True while the current mute comes from holding both fists. */
+  let mutedByGesture = false;
   const toggleMute = (): void => {
     isMuted = !isMuted;
+    mutedByGesture = false;
     audio.setMute(isMuted);
     hud.setMuted(isMuted);
   };
-  // Allow the mapper's bothFists path to drive mute coherently. Without
-  // this, releasing the both-fists gesture would always call
-  // setMute(false) — unmuting the user even if they wanted muted.
+  // Allow the mapper's bothFists path to drive mute coherently. Fists
+  // mute while held; releasing them only undoes a mute the gesture made,
+  // never one set with STOP / Escape.
   const setMutedFromGesture = (m: boolean): void => {
-    if (isMuted === m) return;
+    if (m) {
+      if (isMuted) return;
+      mutedByGesture = true;
+    } else {
+      if (!mutedByGesture) return;
+      mutedByGesture = false;
+    }
     isMuted = m;
     audio.setMute(isMuted);
     hud.setMuted(isMuted);
@@ -291,7 +327,9 @@ async function bootstrap(): Promise<void> {
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
     if (isTypingTarget(e.target)) return;
-    if (e.key === 'Escape' && !help.isVisible()) {
+    // HelpPanel's listener runs first and closes itself on Escape
+    // (preventDefault): that press must not also mute.
+    if (e.key === 'Escape' && !e.defaultPrevented && !help.isVisible()) {
       toggleMute();
       e.preventDefault();
     }
@@ -358,10 +396,14 @@ async function bootstrap(): Promise<void> {
   // wizard a beat after the visualizer comes up — the test chord scheduled
   // at +200ms is enough audible feedback that the synth is live before we
   // pop the modal.
+  //
+  // Only with live hands: in autopilot the wizard can't measure anything,
+  // and finishing it would save an all-defaults profile that suppresses
+  // the first-run wizard once the camera works.
   const storedCalibration = loadCalibration();
   if (storedCalibration) {
     applyCalibration(storedCalibration);
-  } else {
+  } else if (handsLive) {
     window.setTimeout(() => {
       // Re-check inside the timer in case the user opened the panel
       // manually from another path before this fires.
@@ -485,7 +527,9 @@ interface StartSessionDeps {
  *  4. Hand init may throw (permission denied / model fetch failed). On
  *     throw we still produce music via mapper.startAutopilot().
  */
-async function startSession(deps: StartSessionDeps): Promise<void> {
+async function startSession(
+  deps: StartSessionDeps,
+): Promise<{ handsLive: boolean }> {
   const { audio, music, hands, face, mapper, visual, videoEl, canvasEl } = deps;
   const initialVibe = VIBES[DEFAULT_VIBE];
 
@@ -561,9 +605,13 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
     const raw = localStorage.getItem('hs.musicSettings');
     if (raw) {
       const parsed = JSON.parse(raw) as { key?: unknown; mode?: unknown };
+      // Same validation as SettingsPanel: a key/mode renamed or removed by
+      // a later build must not reach getScale (it degrades to one note).
       if (
         typeof parsed.key === 'string' &&
-        typeof parsed.mode === 'string'
+        typeof parsed.mode === 'string' &&
+        KEY_OPTION_IDS.has(parsed.key) &&
+        SCALE_OPTION_IDS.has(parsed.mode)
       ) {
         music.setScale(parsed.key, parsed.mode);
       }
@@ -642,6 +690,17 @@ async function startSession(deps: StartSessionDeps): Promise<void> {
       console.warn('[boot] test chord failed', e);
     }
   }, 200);
+
+  return { handsLive };
 }
 
-void bootstrap();
+bootstrap().catch((err: unknown) => {
+  // A throw after onboarding (e.g. a panel failing to mount) would
+  // otherwise leave a half-wired UI with only a console trace.
+  console.error('[main] bootstrap failed', err);
+  const host = document.getElementById('error-overlay');
+  if (!host) return;
+  const overlay = new ErrorOverlayImpl();
+  overlay.mount(host);
+  overlay.showError(tt('error.startupFailed'), () => window.location.reload());
+});

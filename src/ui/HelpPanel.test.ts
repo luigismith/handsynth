@@ -36,6 +36,14 @@ describe('markdownToHtml', () => {
     expect(html).toContain('>docs<');
   });
 
+  it('points relative repo links at GitHub (they are not in the web build)', () => {
+    const html = markdownToHtml('See [install](./INSTALL.md) and [x](https://example.com).');
+    expect(html).toContain(
+      'href="https://github.com/luigismith/handsynth/blob/main/INSTALL.md"',
+    );
+    expect(html).toContain('href="https://example.com"');
+  });
+
   it('renders pipe tables with header / body rows', () => {
     const md = `| Key | Action |\n|---|---|\n| Esc | mute |\n| F1 | help |`;
     const html = markdownToHtml(md);

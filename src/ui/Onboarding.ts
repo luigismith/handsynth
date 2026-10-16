@@ -33,7 +33,10 @@ export class OnboardingImpl implements OnboardingApi {
   private cheatsEl: HTMLDivElement | null = null;
   private button: HTMLButtonElement | null = null;
   private errorEl: HTMLDivElement | null = null;
+  private statusEl: HTMLDivElement | null = null;
   private hasErrorShown = false;
+  /** True between the CTA click and success (unmount) or showError. */
+  private starting = false;
   private unsubLang: (() => void) | null = null;
 
   private startResolvers: Array<() => void> = [];
@@ -70,7 +73,15 @@ export class OnboardingImpl implements OnboardingApi {
     errorEl.hidden = true;
     errorEl.setAttribute('role', 'alert');
 
-    card.append(title, sub, button, cheats, errorEl);
+    // Startup feedback: models download + camera prompt can take seconds,
+    // and the card must stay visible so a failure can be read and retried.
+    const statusEl = document.createElement('div');
+    statusEl.className = 'hs-onboard-status';
+    statusEl.hidden = true;
+    statusEl.setAttribute('role', 'status');
+    statusEl.setAttribute('aria-live', 'polite');
+
+    card.append(title, sub, button, cheats, statusEl, errorEl);
     parent.appendChild(card);
 
     this.root = parent;
@@ -80,6 +91,7 @@ export class OnboardingImpl implements OnboardingApi {
     this.cheatsEl = cheats;
     this.button = button;
     this.errorEl = errorEl;
+    this.statusEl = statusEl;
 
     this.applyLang();
     this.unsubLang = subscribeLang(() => this.applyLang());
@@ -99,6 +111,7 @@ export class OnboardingImpl implements OnboardingApi {
     if (this.titleEl) this.titleEl.textContent = t('onboarding.title');
     if (this.subEl) this.subEl.textContent = t('onboarding.subtitle');
     if (this.cheatsEl) this.cheatsEl.textContent = t('onboarding.cheats');
+    if (this.statusEl) this.statusEl.textContent = t('onboarding.starting');
     if (this.button) {
       this.button.textContent = this.hasErrorShown
         ? t('onboarding.retry')
@@ -125,7 +138,10 @@ export class OnboardingImpl implements OnboardingApi {
     this.errorEl.textContent = message;
     this.errorEl.hidden = false;
     this.hasErrorShown = true;
+    this.starting = false;
+    if (this.statusEl) this.statusEl.hidden = true;
     if (this.button) {
+      this.button.disabled = false;
       this.button.textContent = t('onboarding.retry');
       this.button.focus();
     }
@@ -148,7 +164,9 @@ export class OnboardingImpl implements OnboardingApi {
     this.cheatsEl = null;
     this.button = null;
     this.errorEl = null;
+    this.statusEl = null;
     this.root = null;
+    this.starting = false;
     this.hasErrorShown = false;
     // Resolve any leftover awaiters so callers don't hang.
     for (const r of this.startResolvers) r();
@@ -156,12 +174,16 @@ export class OnboardingImpl implements OnboardingApi {
   }
 
   private handleStart(): void {
+    if (this.starting) return; // ignore double clicks while starting
+    this.starting = true;
     this.resolved = true;
     const resolvers = this.startResolvers.splice(0);
     for (const r of resolvers) r();
 
-    // Visual fade — DOM is removed by unmount() called by main.ts after
-    // resolve. We still kick a fade class so the user sees the transition.
-    if (this.card) this.card.classList.add('hs-fade-out');
+    // Keep the card on screen while main.ts starts the session: it calls
+    // unmount() on success, or showError() so the user can read and retry.
+    if (this.button) this.button.disabled = true;
+    if (this.errorEl) this.errorEl.hidden = true;
+    if (this.statusEl) this.statusEl.hidden = false;
   }
 }

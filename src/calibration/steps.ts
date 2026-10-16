@@ -140,6 +140,10 @@ export type GesturePredicate = (state: {
   handsDistance3D: number;
   rightOpenness: number;
   leftOpenness: number;
+  // Openness of an absent hand reads 0 (see buildGestureState), so
+  // shape predicates must check presence or a missing hand looks like a fist.
+  rightPresent: boolean;
+  leftPresent: boolean;
   bothFists: boolean;
   // Mouth-open value from the FaceState — separate from GestureState so
   // we can require either modality. Defaults to 0 if face tracking is
@@ -153,7 +157,8 @@ export type GesturePredicate = (state: {
  * false positives (a momentary spike of mouthOpen during a yawn etc.),
  * then auto-advances. `timeoutHintMs` controls when the encouragement
  * hint appears (doesn't auto-skip — Skip button is the explicit
- * escape).
+ * escape), except for `requiresFace` steps, which auto-skip after it
+ * when no face has been tracked recently.
  */
 export interface TutorialStep {
   kind: 'tutorial';
@@ -168,6 +173,9 @@ export interface TutorialStep {
   holdMs: number;
   /** ms after which the encouragement hint appears (visual only). */
   timeoutHintMs: number;
+  /** The gesture needs face tracking: without a face in view the step
+   *  can never pass, so it auto-skips after `timeoutHintMs`. */
+  requiresFace?: boolean;
   /** On-screen target zone hint. */
   zone: TargetZone;
   /** Pose icon shown inside the card. */
@@ -190,17 +198,27 @@ function reachedLow(s: { meanHeight: number }): boolean {
   return s.meanHeight < 0.35;
 }
 
-/** Make a fist on either hand. */
-function madeFist(s: { rightOpenness: number; leftOpenness: number }): boolean {
-  return s.rightOpenness < 0.25 || s.leftOpenness < 0.25;
-}
-
-/** Open hand wide on either hand. */
-function openedWide(s: {
+interface HandShapeInput {
   rightOpenness: number;
   leftOpenness: number;
-}): boolean {
-  return s.rightOpenness > 0.75 || s.leftOpenness > 0.75;
+  rightPresent: boolean;
+  leftPresent: boolean;
+}
+
+/** Make a fist on either hand (that is actually in view). */
+function madeFist(s: HandShapeInput): boolean {
+  return (
+    (s.rightPresent && s.rightOpenness < 0.25) ||
+    (s.leftPresent && s.leftOpenness < 0.25)
+  );
+}
+
+/** Open hand wide on either hand (that is actually in view). */
+function openedWide(s: HandShapeInput): boolean {
+  return (
+    (s.rightPresent && s.rightOpenness > 0.75) ||
+    (s.leftPresent && s.leftOpenness > 0.75)
+  );
 }
 
 /** Two fists simultaneously (the mute gesture). */
@@ -363,6 +381,7 @@ export const CALIBRATION_STEPS: ReadonlyArray<CalibrationStep> = [
     predicate: mouthOpenedWide,
     holdMs: 400,
     timeoutHintMs: 9000,
+    requiresFace: true,
     zone: 'none',
     icon: 'mouth-open',
   },

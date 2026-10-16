@@ -72,8 +72,9 @@ import { saveCalibration } from './store';
 
 export interface CalibrationPanelDeps {
   hands: HandTracker;
-  /** Optional — face tracking is best-effort. Mouth-open tutorial step
-   *  is auto-skipped (treated as complete on timeout) when absent. */
+  /** Optional — face tracking is best-effort. Steps flagged
+   *  `requiresFace` auto-skip after their hint timeout when no face has
+   *  been tracked recently (always, when this is absent). */
   face?: FaceTracker;
   /** Webcam <video> — needed to stamp videoWidth/Height into the profile. */
   videoEl?: HTMLVideoElement | null;
@@ -96,6 +97,10 @@ interface ChannelStats {
 const MIN_SAMPLES = 8;
 /** How long the "CAPTURED ✓" / "GOT IT ✓" celebration shows before advance. */
 const DONE_FLASH_MS = 700;
+/** The "no movement detected" message needs longer than a glance to read. */
+const NO_DATA_FLASH_MS = 1800;
+/** A face is "in view" if a detected face:update arrived within this window. */
+const FACE_STALE_MS = 1500;
 
 /** Per-step lifecycle phase. */
 type Phase = 'prep' | 'run' | 'wait' | 'hold' | 'done';
@@ -142,6 +147,14 @@ export class CalibrationPanelImpl {
   private tutorialHintShown = false;
   /** Latest mouth-open value — captured from FaceTracker if present. */
   private mouthOpen = 0;
+  /** performance.now() of the last face:update with a detected face. */
+  private lastFaceMs = -Infinity;
+  /** How long the current DONE flash lasts. */
+  private doneFlashMs = DONE_FLASH_MS;
+  /** Set when the DONE flash should re-run the current step, not advance. */
+  private retryPending = false;
+  /** Sample step already retried once for lack of data (-1 = none). */
+  private retriedIdx = -1;
   /** Latest gesture state — cached so the rAF tick can re-evaluate predicates
    *  even on frames when no fresh gesture:update arrived. */
   private latestState: GestureState | null = null;
@@ -239,7 +252,7 @@ export class CalibrationPanelImpl {
     const skip = document.createElement('button');
     skip.type = 'button';
     skip.className = 'hs-calib-btn hs-calib-btn-secondary';
-    skip.addEventListener('click', () => this.advance(/* skipped */ true));
+    skip.addEventListener('click', () => this.advance());
     buttons.appendChild(skip);
 
     card.append(
@@ -285,6 +298,7 @@ export class CalibrationPanelImpl {
     if (deps.face) {
       this.faceCb = (state: FaceState): void => {
         this.mouthOpen = state.detected ? state.mouthOpen : 0;
+        if (state.detected) this.lastFaceMs = performance.now();
       };
       deps.face.on('face:update', this.faceCb);
     }
@@ -387,7 +401,11 @@ export class CalibrationPanelImpl {
     this.tutorialHintShown = false;
     this.phaseStartMs = performance.now();
     this.holdStartMs = 0;
+    this.retryPending = false;
     if (this.hintEl) this.hintEl.hidden = true;
+    // Only the sample-step prep phase shows the countdown; a Skip during
+    // prep must not leave its digit on the next step.
+    if (this.prepCountdownEl) this.prepCountdownEl.hidden = true;
     if (this.bigBarFillEl) this.bigBarFillEl.style.width = '0%';
     if (this.bigBarEl) this.bigBarEl.classList.remove('hs-calib-bigbar-ok');
     if (this.statusEl) this.statusEl.textContent = '';
@@ -420,28 +438,27 @@ export class CalibrationPanelImpl {
 
     // Animate zones that alternate. Slow 2s cycle so user has time to
     // register each target.
-    this.animateZone(step.zone, now);
+    this.animateZone(step.zone, elapsed);
 
     if (this.phase === 'done') {
-      // We're in the celebration flash — wait DONE_FLASH_MS then advance.
-      if (elapsed >= DONE_FLASH_MS) {
-        this.advance(/* skipped */ false);
+      // We're in the flash — wait for it to end, then advance (or re-run
+      // a sample step that captured nothing).
+      if (elapsed >= this.doneFlashMs) {
+        if (this.retryPending) this.beginStep(this.idx);
+        else this.advance();
       }
       return;
     }
 
     if (step.kind === 'sample') {
       if (this.phase === 'prep') {
-        const t = Math.max(0, step.prepMs - elapsed);
-        const sec = Math.ceil(t / 1000);
+        const remainingMs = Math.max(0, step.prepMs - elapsed);
         if (this.prepCountdownEl) {
           this.prepCountdownEl.hidden = false;
-          this.prepCountdownEl.textContent = sec > 0 ? String(sec) : 'GO';
+          this.prepCountdownEl.textContent = String(Math.ceil(remainingMs / 1000));
         }
         if (this.progressFillEl) this.progressFillEl.style.width = '0%';
-        if (this.statusEl) this.statusEl.textContent = t > 0
-          ? this.localizedReady()
-          : '';
+        if (this.statusEl) this.statusEl.textContent = t('calib.getReady');
         if (this.bigBarFillEl) this.bigBarFillEl.style.width = '0%';
         if (elapsed >= step.prepMs) {
           // Transition PREP → RUN. Reset phase clock.
@@ -467,8 +484,12 @@ export class CalibrationPanelImpl {
       }
       if (frac >= 1) {
         // Sample window closed — write profile + transition to DONE flash.
-        this.commitSampleStep(step);
-        this.enterDoneFlash();
+        const captured = this.commitSampleStep(step);
+        // Nothing usable (hands out of frame): run the step once more
+        // before giving up and keeping the default range.
+        this.retryPending = !captured && this.retriedIdx !== this.idx;
+        if (this.retryPending) this.retriedIdx = this.idx;
+        this.enterDoneFlash(captured);
       }
       return;
     }
@@ -487,13 +508,23 @@ export class CalibrationPanelImpl {
       }
     }
 
+    // A face-only gesture can never pass without a face in view: skip it
+    // instead of making the user take a hand off to click Skip.
+    if (
+      step.requiresFace &&
+      elapsed > step.timeoutHintMs &&
+      now - this.lastFaceMs > FACE_STALE_MS
+    ) {
+      this.advance();
+      return;
+    }
+
     if (this.phase === 'wait') {
       if (this.statusEl) this.statusEl.textContent = t('calib.waitingGesture');
       if (this.bigBarFillEl) this.bigBarFillEl.style.width = '0%';
-      // Predicate is evaluated each frame in onGestureUpdate; on first
-      // true we transition wait → hold. We re-check here using the
-      // cached latest state in case no fresh gesture event arrived since
-      // the last frame (avoids a stuck WAIT when the gesture is stable).
+      // The tutorial state machine lives here only: the predicate is
+      // re-evaluated every frame against the cached latest state, so a
+      // stable gesture still advances when no fresh event arrives.
       if (this.latestState && this.evaluateTutorial(step, this.latestState)) {
         this.phase = 'hold';
         this.holdStartMs = now;
@@ -538,14 +569,31 @@ export class CalibrationPanelImpl {
    * sample step's RUN phase, before the DONE flash. Idempotent: a second
    * call would just overwrite with the same data.
    */
-  private commitSampleStep(step: SampleStep): void {
+  private commitSampleStep(step: SampleStep): boolean {
     const range = this.flattenStats(step.channels);
     if (range) this.profile[step.target] = range;
+    return range !== null;
   }
 
-  private enterDoneFlash(): void {
+  /**
+   * Show the end-of-step flash. `captured = false` (a sample step that saw
+   * no usable data) shows "no movement detected" instead of the success
+   * styling, so the user doesn't believe a step worked when it didn't.
+   */
+  private enterDoneFlash(captured = true): void {
     this.phase = 'done';
     this.phaseStartMs = performance.now();
+    if (!captured) {
+      this.doneFlashMs = NO_DATA_FLASH_MS;
+      if (this.bigBarFillEl) this.bigBarFillEl.style.width = '0%';
+      if (this.statusEl) {
+        this.statusEl.textContent = t(
+          this.retryPending ? 'calib.noDataRetry' : 'calib.noDataSkip',
+        );
+      }
+      return;
+    }
+    this.doneFlashMs = DONE_FLASH_MS;
     if (this.card) this.card.classList.add('hs-calib-card-done');
     if (this.bigBarEl) this.bigBarEl.classList.add('hs-calib-bigbar-ok');
     if (this.bigBarFillEl) this.bigBarFillEl.style.width = '100%';
@@ -580,17 +628,7 @@ export class CalibrationPanelImpl {
       }
       return;
     }
-
-    // Tutorial step — predicate-driven state transitions.
-    const ok = this.evaluateTutorial(step, state);
-    if (this.phase === 'wait' && ok) {
-      this.phase = 'hold';
-      this.holdStartMs = performance.now();
-    } else if (this.phase === 'hold' && !ok) {
-      this.phase = 'wait';
-      this.holdStartMs = 0;
-      if (this.bigBarEl) this.bigBarEl.classList.remove('hs-calib-bigbar-ok');
-    }
+    // Tutorial steps: tickUi evaluates the predicate on `latestState`.
   }
 
   private evaluateTutorial(step: TutorialStep, state: GestureState): boolean {
@@ -600,6 +638,8 @@ export class CalibrationPanelImpl {
       handsDistance3D: state.handsDistance3D,
       rightOpenness: state.rightOpenness,
       leftOpenness: state.leftOpenness,
+      rightPresent: state.hands.some((h) => h.side === 'right'),
+      leftPresent: state.hands.some((h) => h.side === 'left'),
       bothFists: state.bothFists,
       mouthOpen: this.mouthOpen,
     });
@@ -609,17 +649,13 @@ export class CalibrationPanelImpl {
   // Advance / finish
   // -----------------------------------------------------------------------
 
-  private advance(skipped: boolean): void {
-    const step = CALIBRATION_STEPS[this.idx];
-    if (!step) return;
-    // If we're auto-advancing from DONE, the sample step's data is already
-    // committed (during the RUN→DONE transition). If we're SKIPPING from
-    // any other phase, do NOT write — user explicitly opted out of this
-    // step's measurement.
-    if (skipped && step.kind === 'sample' && this.phase === 'run') {
-      // Partial data — discard.
-    }
-
+  /**
+   * Move to the next step. Sample data is only ever committed at the
+   * RUN→DONE transition in tickUi, so a Skip mid-run discards the partial
+   * measurement by construction.
+   */
+  private advance(): void {
+    if (!CALIBRATION_STEPS[this.idx]) return;
     const nextIdx = this.idx + 1;
     if (nextIdx >= CALIBRATION_STEPS.length) {
       this.finish(/* quitEarly */ false);
@@ -744,11 +780,12 @@ export class CalibrationPanelImpl {
    * Drive the A/B crossfade for alternating zones. Runs every UI tick;
    * pure DOM class toggling so it's cheap.
    */
-  private animateZone(zone: TargetZone, now: number): void {
+  private animateZone(zone: TargetZone, phaseElapsedMs: number): void {
     if (!this.zoneAEl || !this.zoneBEl) return;
     if (zone === 'topThenBottom') {
-      // 2s cycle — A glows for the first half, B for the second half.
-      const phase = Math.floor(now / 2000) % 2;
+      // 2s cycle from the start of the phase — A (top) always glows first,
+      // B for the second half.
+      const phase = Math.floor(phaseElapsedMs / 2000) % 2;
       this.zoneAEl.classList.toggle('hs-calib-zone-active', phase === 0);
       this.zoneBEl.classList.toggle('hs-calib-zone-active', phase === 1);
       this.zoneBEl.hidden = false;
@@ -766,9 +803,6 @@ export class CalibrationPanelImpl {
     }
   }
 
-  private localizedReady(): string {
-    return t('calib.getReady');
-  }
 }
 
 // ---------------------------------------------------------------------------

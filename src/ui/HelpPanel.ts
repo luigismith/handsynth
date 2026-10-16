@@ -129,6 +129,17 @@ export function markdownToHtml(md: string): string {
 }
 
 /** HTML-escape used before any inline replacements run. */
+/**
+ * The manuals link to sibling repo files (./INSTALL.md, ./LICENSE) that are
+ * not part of the web build — on the deployed site they would 404. Open
+ * them on GitHub instead.
+ */
+const REPO_FILE_BASE = 'https://github.com/luigismith/handsynth/blob/main/';
+
+function resolveManualHref(url: string): string {
+  return url.startsWith('./') ? REPO_FILE_BASE + url.slice(2) : url;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -169,7 +180,7 @@ function inline(s: string): string {
     (_m, label: string, url: string) =>
       slot(
         '<a href="' +
-          url +
+          resolveManualHref(url) +
           '" target="_blank" rel="noopener noreferrer">' +
           label +
           '</a>',
