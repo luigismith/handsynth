@@ -18,6 +18,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  *   See ARCHITECTURE.md (AudioWorklet integration) for details.
  */
 export default defineConfig({
+  // Relative asset URLs: the same `dist/` works under any sub-path (GitHub
+  // Pages serves it at /handsynth/) and from file:// (Electron's loadFile).
+  base: './',
   resolve: {
     alias: {
       '@audio': resolve(__dirname, 'src/audio'),

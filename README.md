@@ -10,7 +10,8 @@ Cyberpunk visualizer · MediaPipe webcam tracking · Tone.js audio engine.
 
 ![hero](docs/hero.png)
 
-[![tests](https://img.shields.io/badge/tests-438%20passing-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-501%20passing-brightgreen)]()
+[![live demo](https://img.shields.io/badge/live%20demo-luigismith.github.io%2Fhandsynth-orange)](https://luigismith.github.io/handsynth/)
 [![license](https://img.shields.io/badge/license-MIT-blue)]()
 [![platform](https://img.shields.io/badge/platform-web%20%7C%20windows%20%7C%20macos-lightgrey)]()
 
@@ -40,6 +41,10 @@ The music brain stays inside the active scale — **it is impossible to play a w
 
 **Intelligent voicing.** Each pitched voice (pad/lead/bass) runs two oscillator stacks through a Tone.js CrossFade — the analog-synth "WAVE" knob feel. The PATCH editor's VOICE section gives you BOTH a **waveform dropdown** to explicitly pick the A-side oscillator per voice (13 options: sine, triangle, sawtooth, square, pulse, plus the fat/FM/AM variants) AND a **Pad/Lead/Bass Morph** dial to crossfade continuously between that pick and a clean morph destination (sine for pad, pulse for lead, triangle for bass). On top of that, a **SMART** toggle (ON by default) nudges each voice's morph by up to ±0.15 based on the running FX state — low cutoff biases the pad toward sine, high drive pulls everything toward harmonic-rich waveforms for the saturator to bite, high reverb pushes the pad glassy. Subtle, never an override — your knob always wins.
 
+## Try it online
+
+**▶ [luigismith.github.io/handsynth](https://luigismith.github.io/handsynth/)** — runs entirely in your browser (Chrome or Edge recommended). Allow the webcam, raise your hands. Nothing is uploaded: tracking runs locally, only the MediaPipe models are fetched from Google's CDN on first load.
+
 ## Quick start (web)
 
 ```sh
@@ -68,11 +73,11 @@ see [`USER_MANUAL.md`](./USER_MANUAL.md) (English) and
 ```sh
 # Windows .exe (NSIS installer with directory picker + shortcuts)
 pnpm electron:build:win
-# → release/HandSynth-Setup-0.1.0.exe (~87 MB)
+# → release/HandSynth-Setup-<version>.exe (~87 MB)
 
 # macOS .dmg (run on a Mac — cross-build from Windows is unreliable)
 pnpm electron:build:mac
-# → release/HandSynth-0.1.0-arm64.dmg + HandSynth-0.1.0-x64.dmg
+# → release/HandSynth-<version>-arm64.dmg + HandSynth-<version>-x64.dmg
 
 # Dev with hot reload
 pnpm electron:dev
@@ -196,11 +201,11 @@ Full module map and data-flow diagram in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 ```sh
 pnpm typecheck   # tsc strict, no errors
 pnpm lint        # eslint
-pnpm test        # vitest — 275 unit + integration tests
+pnpm test        # vitest — 501 unit + integration tests
 pnpm build       # vite production build
 ```
 
-CI runs all four on every push (see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)).
+CI runs all four on every push (see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)). Every push to `main` that passes the tests is also deployed to GitHub Pages ([`.github/workflows/pages.yml`](./.github/workflows/pages.yml)).
 
 ## Tech
 
@@ -218,9 +223,9 @@ CI runs all four on every push (see [`.github/workflows/ci.yml`](./.github/workf
 
 The app runs heavy real-time work on the main thread (two MediaPipe inferences + p5 sketch + Tone.js scheduler). To keep audio glitch-free under cumulative load:
 
-- HandLandmarker capped at 24 Hz; FaceLandmarker at 8 Hz
-- p5 frameRate capped at 30
-- Per-particle pool with no per-frame allocations
+- HandLandmarker capped at 18 Hz; FaceLandmarker at 5 Hz ("LITE MODE")
+- p5 frameRate capped at 24
+- Mouth-particle pool fixed at 32, no per-frame allocations
 - Per-param epsilon diff so static gestures don't queue ramp events
 - AudioContext built with `latencyHint: 0.15` and Tone `lookAhead: 0.4 s` so short main-thread stalls don't audibly drop audio
 
