@@ -56,6 +56,7 @@ Dallo stesso menu puoi cambiare il codice invito. I link vecchi smettono di funz
 |---|---|
 | Caricare brani | Trascina i file sulla pagina, oppure il tasto ⏏ nel lettore o **+ CARICA** nella libreria. Formati: mp3, flac, wav, ogg, opus, m4a, aac, webm. Titolo e artista arrivano dai tag ID3/FLAC, altrimenti dal nome file `Artista - Titolo.mp3` |
 | Ascoltare | Doppio clic su un brano della libreria o della playlist |
+| Scaricare | Clic destro sul brano (o il tasto **…** in libreria, o **Info brano**) → **Scarica**. Si possono scaricare più brani selezionati insieme |
 | Mandare un brano a un amico | Clic destro sul brano → **Copia link** (serve un account per ascoltarlo) |
 | Playlist condivise | Pulsante **LIST** nella playlist: salva, apri, accoda. Le vedono tutti |
 | Equalizzatore | **ON** lo attiva, **PRESET** carica o salva le curve, **AUTO** ricorda l'EQ di ogni brano |
@@ -80,7 +81,7 @@ Scorciatoie: **X** play, **C** pausa, **V** stop, **Z/B** precedente/successivo,
 - **"Registrazione rifiutata"**: codice invito sbagliato o nome utente già preso. Il codice si controlla dal SQL Editor: `select * from app_settings;`
 - **"Devi prima confermare l'email"**: non hai fatto il punto 3.
 - **"Il database non è configurato"**: non hai eseguito `schema.sql` (punto 2).
-- **Ho perso la password**: l'admin la reimposta da **Authentication → Users** nella dashboard di Supabase.
+- **Ho perso la password**: nella schermata di accesso c'è **Password dimenticata?**, che manda un link per sceglierne una nuova. Attenzione: senza un server email vostro (SMTP) Supabase spedisce solo agli indirizzi dei membri del progetto, cioè all'admin. Per gli amici, l'admin può configurare un SMTP in **Authentication → Emails → SMTP Settings** (va bene anche Gmail con una password per app).
 - **Voglio cambiare l'admin**: `update profiles set is_admin = true where username = 'nome';`
 
 ## File
