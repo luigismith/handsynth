@@ -3,6 +3,7 @@
 import { Backend, FORMATS } from './backend.js';
 import { Engine } from './engine.js';
 import { readTags } from './tags.js';
+import { needsConversion, toMp3, CONVERT_ONLY } from './convert.js';
 import {
   $,
   h,
@@ -457,38 +458,54 @@ class App {
     const input = h('input', {
       type: 'file',
       multiple: true,
-      accept: FORMATS.map((f) => `.${f}`).join(',') + ',audio/*',
+      accept: [...FORMATS, ...CONVERT_ONLY].map((f) => `.${f}`).join(',') + ',audio/*',
     });
     input.addEventListener('change', () => this.upload([...input.files]));
     input.click();
   }
 
   async upload(files) {
-    const ok = files.filter((f) => FORMATS.includes((f.name.split('.').pop() || '').toLowerCase()));
-    const skipped = files.length - ok.length;
-    if (skipped) toast(`${skipped} file ignorati: formati accettati ${FORMATS.join(', ')}`);
-    if (!ok.length) return;
+    const accepted = [...FORMATS, ...CONVERT_ONLY];
+    const extOf = (f) => (f.name.split('.').pop() || '').toLowerCase();
+    const ok = files.filter((f) => accepted.includes(extOf(f)));
+    const failures = files
+      .filter((f) => !ok.includes(f))
+      .map((f) => [f.name, `formato .${extOf(f)} non supportato (vanno bene ${accepted.join(', ')})`]);
+    if (!ok.length) return this.reportUploadFailures(failures, 0);
     if (this._uploadQueue) {
       this._uploadQueue.push(...ok);
       return;
     }
     this._uploadQueue = [...ok];
     let done = 0;
-    let failed = 0;
     const added = [];
     while (this._uploadQueue.length) {
       const file = this._uploadQueue.shift();
-      const total = done + failed + this._uploadQueue.length + 1;
-      const n = done + failed + 1;
-      const label = (p) => `CARICO ${n}/${total}: ${file.name} ${Math.round(p * 100)}%`;
-      this.uploading = label(0);
-      this.setLibraryStatus?.(`Carico ${n}/${total}: ${file.name}…`);
+      const total = done + failures.length + this._uploadQueue.length + 1;
+      const n = done + failures.length + 1;
+      const status = (verb, p) => {
+        const pct = p === undefined ? '' : ` ${Math.round(p * 100)}%`;
+        this.uploading = `${verb} ${n}/${total}: ${file.name}${pct}`;
+        this.setLibraryStatus?.(`${verb === 'CARICO' ? 'Carico' : 'Converto in MP3'} ${n}/${total}: ${file.name}${pct}`);
+      };
+      status('CARICO', 0);
       try {
         const meta = await readTags(file);
-        const t = await this.backend.uploadTrack(file, meta, (p) => {
-          this.uploading = label(p);
-          this.setLibraryStatus?.(`Carico ${n}/${total}: ${file.name} — ${Math.round(p * 100)}%`);
-        });
+        let upload = file;
+        if (needsConversion(file)) {
+          // too big for the free plan (or AIFF): make a 320 kbps MP3 first
+          status('CONVERTO', 0);
+          const mp3 = await toMp3(file, (p) => status('CONVERTO', p));
+          upload = mp3.file;
+          Object.assign(meta, {
+            duration: mp3.duration,
+            bitrate: mp3.bitrate,
+            sampleRate: mp3.sampleRate,
+            channels: mp3.channels,
+            format: 'mp3',
+          });
+        }
+        const t = await this.backend.uploadTrack(upload, meta, (p) => status('CARICO', p));
         this.library.unshift(t);
         this.tracks.set(t.id, t);
         this.backend.prefetchUrls([t]).catch(() => {});
@@ -496,17 +513,36 @@ class App {
         done++;
         this.emit('library');
       } catch (err) {
-        failed++;
-        toast(`“${file.name}”: ${err.message}`);
+        failures.push([file.name, err.message]);
       }
     }
     this._uploadQueue = null;
     this.uploading = null;
     this.setLibraryStatus?.(null);
-    if (done) {
-      toast(`${done} ${done === 1 ? 'brano caricato' : 'brani caricati'}${failed ? `, ${failed} non riusciti` : ''}: ora tutti possono ascoltarli`);
-      if (!this.playlist.length) this.setPlaylist(added, -1);
+    if (done && !this.playlist.length) this.setPlaylist(added, -1);
+    this.reportUploadFailures(failures, done);
+  }
+
+  /** Toasts vanish: when something fails, say exactly which files and why. */
+  reportUploadFailures(failures, done) {
+    const ok = done ? `${done} ${done === 1 ? 'brano caricato' : 'brani caricati'}: ora tutti possono ascoltarli. ` : '';
+    if (!failures.length) {
+      if (done) toast(ok);
+      return;
     }
+    dialog({
+      title: 'CARICAMENTO',
+      body: h(
+        'div',
+        {},
+        h('p', { class: 'dlg-text', text: `${ok}Non sono riuscito a caricare:` }),
+        h(
+          'table',
+          { class: 'info-table' },
+          ...failures.map(([name, why]) => h('tr', {}, h('th', { text: name }), h('td', { text: why }))),
+        ),
+      ),
+    });
   }
 
   async updateTrack(id, patch) {
@@ -729,6 +765,13 @@ class App {
           'Il vostro lettore in streaming privato: caricate i brani che producete e ascoltateli tra amici, con equalizzatore, playlist condivise e un look da lettore anni ’90.',
         ),
         h('p', { class: 'dlg-text small' }, `${this.library.length} brani in libreria · ${this.playlists.length} playlist condivise`),
+        h(
+          'p',
+          { class: 'dlg-text small' },
+          'Conversione in MP3 con LAME (',
+          h('a', { href: 'https://lame.sourceforge.io/', target: '_blank', rel: 'noopener' }, 'lame.sourceforge.io'),
+          ', LGPL, via lamejs).',
+        ),
       ),
     });
   }

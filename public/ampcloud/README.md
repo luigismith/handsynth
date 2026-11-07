@@ -68,10 +68,11 @@ Scorciatoie: **X** play, **C** pausa, **V** stop, **Z/B** precedente/successivo,
 ---
 
 ## Limiti del piano gratuito di Supabase
-- **50 MB per file**. Un mp3 a 320 kbps ne usa circa 2,4 al minuto. Per WAV o FLAC lunghi conviene convertire prima:
+- **50 MB per file**. Un file più grande (un WAV da studio, per esempio) viene convertito dal sito in MP3 a 320 kbps prima di caricarlo, direttamente nel browser: a 320 kbps ci stanno circa 20 minuti. Lo stesso vale per i file AIFF. Puoi anche convertire prima per conto tuo:
   ```bash
   ffmpeg -i brano.wav -b:a 320k brano.mp3
   ```
+- **iPhone**: il selettore file mostra solo l'app **File**. I brani dell'app Musica non si vedono: salvali prima in File (o in iCloud Drive).
 - Spazio e traffico mensile sono limitati (circa 1 GB di file). I numeri attuali sono su https://supabase.com/pricing, l'occupazione in **Project Settings → Usage**.
 - **I progetti gratuiti vanno in pausa dopo una settimana senza attività.** Si riattivano dalla dashboard con **Restore project**: i dati restano.
 
@@ -89,5 +90,6 @@ Scorciatoie: **X** play, **C** pausa, **V** stop, **Z/B** precedente/successivo,
 | `config.js` | URL e chiave pubblica del vostro progetto Supabase |
 | `schema.sql` | tabelle, regole di sicurezza, inviti, storage |
 | `vendor/supabase-2.117.0.js` | libreria ufficiale `@supabase/supabase-js` (licenza MIT, vedi `vendor/supabase-LICENSE.txt`) |
+| `vendor/lame-1.2.1.min.js` | encoder MP3 [LAME](https://lame.sourceforge.io/) in JavaScript (lamejs 1.2.1, LGPL-3.0, non modificato, vedi `vendor/lamejs-LICENSE.txt`) |
 
 La grafica è disegnata da zero in CSS e canvas, senza skin o loghi di altri programmi.
