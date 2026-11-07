@@ -1,7 +1,7 @@
 // AmpCloud bootstrap and app controller: configuration, login, playback
 // queue, uploads, keyboard shortcuts, menus and lock-screen controls.
 import { Backend, FORMATS } from './backend.js';
-import { Engine } from './engine.js';
+import { Engine, IS_IOS } from './engine.js';
 import { readTags } from './tags.js';
 import { needsConversion, toMp3, CONVERT_ONLY } from './convert.js';
 import {
@@ -483,12 +483,27 @@ class App {
 
   // ----- uploads -----
   pickFiles() {
-    const input = h('input', {
-      type: 'file',
-      multiple: true,
-      accept: [...FORMATS, ...CONVERT_ONLY].map((f) => `.${f}`).join(',') + ',audio/*',
-    });
-    input.addEventListener('change', () => this.upload([...input.files]));
+    // One file input kept in the page: iPhone Safari may never fire `change`
+    // on an input that isn't attached to the document.
+    let input = this._picker;
+    if (!input) {
+      input = this._picker = h('input', {
+        type: 'file',
+        multiple: true,
+        tabindex: '-1',
+        'aria-hidden': 'true',
+        style: { position: 'fixed', left: '-9999px', top: '0', width: '1px', height: '1px', opacity: '0' },
+      });
+      // iOS turns `accept` into Apple file types and greys out valid files
+      // (m4a, opus, flac…): there we accept anything and filter afterwards.
+      if (!IS_IOS) input.accept = [...FORMATS, ...CONVERT_ONLY].map((f) => `.${f}`).join(',') + ',audio/*';
+      input.addEventListener('change', () => {
+        const files = [...input.files];
+        input.value = ''; // picking the same file again must fire `change` again
+        if (files.length) this.upload(files);
+      });
+      document.body.append(input);
+    }
     input.click();
   }
 

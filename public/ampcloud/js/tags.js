@@ -62,6 +62,10 @@ const MP3_RATES = [
   [44100, 48000, 32000], // MPEG 1
 ];
 
+// Layer III bitrates (kbps) by index, MPEG-1 and MPEG-2/2.5
+const MP3_L3_V1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+const MP3_L3_V2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+
 function parseMp3Frame(b, from) {
   for (let i = from; i < Math.min(b.length - 4, from + 64 * 1024); i++) {
     if (b[i] !== 0xff || (b[i + 1] & 0xe0) !== 0xe0) continue;
@@ -71,7 +75,8 @@ function parseMp3Frame(b, from) {
     const brIdx = b[i + 2] >> 4;
     if (ver === 1 || layer === 0 || rateIdx === 3 || brIdx === 0 || brIdx === 15) continue;
     const mode = b[i + 3] >> 6;
-    return { sampleRate: MP3_RATES[ver][rateIdx], channels: mode === 3 ? 1 : 2 };
+    const kbps = layer === 1 ? (ver === 3 ? MP3_L3_V1 : MP3_L3_V2)[brIdx] : 0;
+    return { sampleRate: MP3_RATES[ver][rateIdx], channels: mode === 3 ? 1 : 2, frameKbps: kbps };
   }
   return {};
 }
@@ -126,11 +131,13 @@ function probeDuration(file) {
       a.removeAttribute('src');
       resolve(Number.isFinite(d) ? d : 0);
     };
-    const timer = setTimeout(() => done(0), 15000);
+    // iPhone may ignore preload and never load metadata: don't wait forever
+    const timer = setTimeout(() => done(0), 6000);
     a.preload = 'metadata';
     a.onloadedmetadata = () => done(a.duration);
     a.onerror = () => done(0);
     a.src = url;
+    a.load();
   });
 }
 
@@ -153,7 +160,8 @@ export async function readTags(file) {
   }
   delete meta.tagEnd;
   const fromName = splitFilename(file.name);
-  const duration = await probeDuration(file);
+  let duration = await probeDuration(file);
+  if (!duration && meta.frameKbps) duration = (file.size * 8) / (meta.frameKbps * 1000); // CBR estimate
   return {
     title: meta.title || fromName.title || file.name,
     artist: meta.artist || fromName.artist || '',

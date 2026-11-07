@@ -17,6 +17,13 @@ const MIME = {
 };
 export const FORMATS = Object.keys(MIME);
 
+// crypto.randomUUID only exists from iOS 15.4 / Safari 15.4
+const uuid = () =>
+  crypto.randomUUID?.() ??
+  ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
+    (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16),
+  );
+
 const SIGNUP_ERRORS = {
   invalid_invite: 'Codice invito errato',
   bad_username: 'Nome utente: 2-24 caratteri, solo lettere, numeri, _ . -',
@@ -148,7 +155,7 @@ export class Backend {
     if (!token || !this.user) throw new Error('Sessione scaduta: rientra');
     const ext = (file.name.split('.').pop() || '').toLowerCase();
     if (!MIME[ext]) throw new Error(`Formato non supportato (.${ext}). Usa: ${FORMATS.join(', ')}`);
-    const path = `${this.user.id}/${crypto.randomUUID()}.${ext}`;
+    const path = `${this.user.id}/${uuid()}.${ext}`;
 
     await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
