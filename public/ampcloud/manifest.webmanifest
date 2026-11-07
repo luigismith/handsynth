@@ -1,0 +1,11 @@
+{
+  "name": "AmpCloud",
+  "short_name": "AmpCloud",
+  "description": "Streaming privato tra amici dei vostri brani",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101018",
+  "theme_color": "#1b1b29",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
