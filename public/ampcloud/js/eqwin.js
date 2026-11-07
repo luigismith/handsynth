@@ -220,6 +220,7 @@ export function createEqWindow(app) {
     }
   });
 
+  if (!app.engine.graphOk) el.classList.add('nograph');
   app.engine.addEventListener('nograph', () => el.classList.add('nograph'));
   render();
   return el;

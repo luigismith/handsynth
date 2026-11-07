@@ -201,6 +201,31 @@ export class Backend {
     this.urlCache.delete(track.id);
   }
 
+  /** Signed URL already in hand (valid for at least another minute), or null. */
+  cachedUrl(track) {
+    const hit = this.urlCache.get(track.id);
+    return hit && hit.expires > Date.now() + 60_000 ? hit.url : null;
+  }
+
+  /** Sign URLs for many tracks in a few requests, ahead of time. */
+  async prefetchUrls(tracks) {
+    const soon = Date.now() + 30 * 60_000;
+    const need = tracks.filter((t) => !(this.urlCache.get(t.id)?.expires > soon));
+    for (let i = 0; i < need.length; i += 100) {
+      const chunk = need.slice(i, i + 100);
+      const { data, error } = await this.sb.storage.from(BUCKET).createSignedUrls(
+        chunk.map((t) => t.path),
+        SIGNED_URL_TTL,
+      );
+      if (error || !data) continue;
+      const expires = Date.now() + SIGNED_URL_TTL * 1000;
+      for (const row of data) {
+        const t = chunk.find((x) => x.path === row.path);
+        if (t && row.signedUrl) this.urlCache.set(t.id, { url: row.signedUrl, expires });
+      }
+    }
+  }
+
   async streamUrl(track) {
     const hit = this.urlCache.get(track.id);
     if (hit && hit.expires > Date.now() + 60_000) return hit.url;

@@ -220,7 +220,6 @@ export function createMainWindow(app) {
         lctx.fillRect(vx + x, vy + Math.max(0, Math.min(15, y)), 1, 1);
       }
     }
-    if (!eng.graphOk && visMode !== 2) drawText(lctx, 'NO EQ', vx + 26, vy + 6, '#3b6', SMALL);
   }
 
   function drawMarquee(now) {
