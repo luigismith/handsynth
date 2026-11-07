@@ -6,6 +6,6 @@
 // link invito) e li ricorda in quel browser.
 window.AMPCLOUD_CONFIG = {
   appName: 'AmpCloud',
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://hmbdrftvxjmduzlofjcd.supabase.co',
+  supabaseAnonKey: 'sb_publishable_QD2aUEHxOx2oTZct7LL6yg_vHkGwRMh',
 };
