@@ -104,7 +104,7 @@ export class WindowManager {
     if (this.narrow) {
       // phone: one column, in a fixed order, no free dragging
       let y = 0;
-      for (const id of ['main', 'eq', 'pl', 'lib']) {
+      for (const id of ['main', 'lib', 'pl', 'eq']) {
         const w = this.windows.get(id);
         if (!w || w.el.hidden) continue;
         w.el.style.left = '0px';

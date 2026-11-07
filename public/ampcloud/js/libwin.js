@@ -221,7 +221,13 @@ export function createLibraryWindow(app) {
   }
 
   // ----- interaction -----
+  let lastPointer = 'mouse';
+  rows.addEventListener('click', (e) => {
+    const row = e.target.closest('.lib-row');
+    if (row && lastPointer !== 'mouse') app.playNow([row.dataset.id]);
+  });
   rows.addEventListener('pointerdown', (e) => {
+    lastPointer = e.pointerType;
     const row = e.target.closest('.lib-row');
     if (!row) return;
     const id = row.dataset.id;

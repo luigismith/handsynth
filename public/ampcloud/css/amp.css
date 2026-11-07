@@ -72,6 +72,9 @@ canvas {
 #desktop.narrow .grip {
   cursor: ns-resize;
 }
+#desktop.narrow .libwin {
+  max-height: 319px;
+}
 
 /* ------------------------------------------------------------------ windows */
 .win {
@@ -535,7 +538,7 @@ canvas {
   top: 104px;
 }
 .eqwin.nograph::after {
-  content: 'EQ non disponibile su questo server';
+  content: 'EQ non disponibile su questo dispositivo';
   position: absolute;
   left: 86px;
   top: 17px;

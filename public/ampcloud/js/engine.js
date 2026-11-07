@@ -6,16 +6,21 @@
 export const EQ_BANDS = [60, 170, 310, 600, 1000, 3000, 6000, 12000, 14000, 16000];
 export const EQ_LABELS = ['60', '170', '310', '600', '1K', '3K', '6K', '12K', '14K', '16K'];
 
+// iPhone/iPad: audio routed through Web Audio is muted by the silent switch and
+// stops when the screen locks, so there we play the plain element (no EQ).
+export const IS_IOS =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 export class Engine extends EventTarget {
-  constructor() {
+  constructor({ useGraph = !IS_IOS } = {}) {
     super();
     this.ctx = null;
-    this.graphOk = true;
+    this.graphOk = useGraph;
     this.volume = 0.8;
     this.balance = 0;
     this.eq = { on: false, preamp: 0, bands: EQ_BANDS.map(() => 0) };
-    this.main = this._makeAudio(true);
-    this.plain = null;
+    this.main = this._makeAudio(useGraph);
+    this.plain = useGraph ? null : this.main;
     this.audio = this.main;
     this.freq = new Uint8Array(512);
     this.wave = new Uint8Array(1024);
@@ -117,13 +122,16 @@ export class Engine extends EventTarget {
     this.audio.load();
   }
 
+  /** Call straight from a tap/click handler: mobile browsers only allow
+   *  playback started synchronously inside the user gesture. */
   async play() {
     this._wantPlay = true;
     this._ensureGraph();
-    if (this.ctx?.state === 'suspended') await this.ctx.resume().catch(() => {});
     if (this.audio === this.main && this.ctx) this.audio.volume = 1;
+    const started = this.audio.play();
+    if (this.ctx?.state === 'suspended') this.ctx.resume().catch(() => {});
     try {
-      await this.audio.play();
+      await started;
     } catch (err) {
       if (err?.name !== 'AbortError') throw err;
     }

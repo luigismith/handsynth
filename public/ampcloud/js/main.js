@@ -230,6 +230,7 @@ class App {
       const [lib, pls] = await Promise.all([this.backend.listTracks(), this.backend.listPlaylists()]);
       this.library = lib;
       this.tracks = new Map(lib.map((t) => [t.id, t]));
+      this.backend.prefetchUrls(lib).catch(() => {});
       this.playlists = pls;
       const before = this.playlist.length;
       const curId = this.playlist[this.index];
@@ -261,6 +262,7 @@ class App {
   playNow(ids) {
     const valid = ids.filter((id) => this.tracks.has(id));
     if (!valid.length) return;
+    if (valid.length === 1 && this.playlist.includes(valid[0])) return this.playIndex(this.playlist.indexOf(valid[0]));
     const start = this.playlist.length;
     this.setPlaylist([...this.playlist, ...valid]);
     this.playIndex(start);
@@ -279,8 +281,13 @@ class App {
     this.emit('track');
     this.updateMediaSession();
     try {
-      const url = await this.backend.streamUrl(t);
-      if (this.current !== t) return; // user moved on while we were fetching
+      // With a pre-signed URL, load + play run synchronously inside the tap:
+      // iPhone Safari refuses play() that comes after a network wait.
+      let url = this.backend.cachedUrl(t);
+      if (!url) {
+        url = await this.backend.streamUrl(t);
+        if (this.current !== t) return; // user moved on while we were fetching
+      }
       this.engine.load(url);
       if (autoplay) await this.engine.play();
     } catch (err) {
@@ -484,6 +491,7 @@ class App {
         });
         this.library.unshift(t);
         this.tracks.set(t.id, t);
+        this.backend.prefetchUrls([t]).catch(() => {});
         added.push(t.id);
         done++;
         this.emit('library');

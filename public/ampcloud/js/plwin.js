@@ -89,7 +89,9 @@ export function createPlaylistWindow(app) {
           { class: 'pl-empty' },
           'Playlist vuota.',
           h('br'),
-          'Doppio clic su un brano della libreria, oppure trascina qui i tuoi file audio per caricarli.',
+          matchMedia('(pointer: coarse)').matches
+            ? 'Tocca un brano nella libreria condivisa per ascoltarlo.'
+            : 'Doppio clic su un brano della libreria, oppure trascina qui i tuoi file audio per caricarli.',
         ),
       );
     }
@@ -116,7 +118,13 @@ export function createPlaylistWindow(app) {
   setInterval(updateMini, 500);
 
   // ----- selection & activation -----
+  let lastPointer = 'mouse';
+  list.addEventListener('click', (e) => {
+    const row = e.target.closest('.pl-row');
+    if (row && lastPointer !== 'mouse') app.playIndex(Number(row.dataset.i));
+  });
   list.addEventListener('pointerdown', (e) => {
+    lastPointer = e.pointerType;
     const row = e.target.closest('.pl-row');
     if (!row) return;
     const i = Number(row.dataset.i);
