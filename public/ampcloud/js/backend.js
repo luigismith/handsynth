@@ -64,6 +64,11 @@ export class Backend {
       auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ampcloud-auth' },
     });
     this.urlCache = new Map();
+    // set when the page was opened from a "reset your password" email link
+    this.recovery = /type=recovery/.test(location.hash + location.search);
+    this.sb.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') this.recovery = true;
+    });
     this.user = null;
   }
 
@@ -115,6 +120,13 @@ export class Backend {
     this.urlCache.clear();
     await this.sb.auth.signOut();
     this.user = null;
+  }
+
+  /** Email a password-reset link that brings the user back to this page. */
+  async sendPasswordReset(email) {
+    await this._check(
+      this.sb.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${location.origin}${location.pathname}` }),
+    );
   }
 
   async changePassword(password) {
@@ -199,6 +211,24 @@ export class Backend {
     await this._check(this.sb.from('tracks').delete().eq('id', track.id));
     await this.sb.storage.from(BUCKET).remove([track.path]);
     this.urlCache.delete(track.id);
+  }
+
+  /** File name for a download: "Artista - Titolo.mp3". */
+  downloadName(track) {
+    const ext = track.format || track.path.split('.').pop() || 'mp3';
+    const base = `${track.artist ? `${track.artist} - ` : ''}${track.title}`
+      .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_')
+      .trim()
+      .slice(0, 150);
+    return `${base || 'brano'}.${ext}`;
+  }
+
+  /** Signed URL that makes the browser save the file instead of playing it.
+   *  Storage reads `download` from the query string, outside the signed token,
+   *  so a cached streaming URL works without another round trip. */
+  async downloadUrl(track) {
+    const url = this.cachedUrl(track) || (await this.streamUrl(track));
+    return `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(this.downloadName(track))}`;
   }
 
   /** Signed URL already in hand (valid for at least another minute), or null. */

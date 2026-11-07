@@ -159,6 +159,7 @@ export function createPlaylistWindow(app) {
       [
         { label: 'Riproduci', action: () => app.playIndex(i) },
         { label: 'Info brano', action: () => app.showTrackInfo(trackAt(i)) },
+        { label: 'Scarica', action: () => app.downloadTracks([...sel].sort((a, b) => a - b).map(trackAt)) },
         { label: 'Copia link del brano', action: () => app.copyTrackLink(trackAt(i)) },
         '-',
         { label: 'Rimuovi dalla playlist', action: removeSelected },

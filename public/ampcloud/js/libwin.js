@@ -174,6 +174,7 @@ export function createLibraryWindow(app) {
     const one = tracks.length === 1 ? tracks[0] : null;
     const editable = tracks.length > 0 && tracks.every((t) => app.canEdit(t));
     return [
+      { label: tracks.length > 1 ? `Scarica ${tracks.length} brani` : 'Scarica', action: () => app.downloadTracks(tracks), disabled: !tracks.length },
       { label: 'Info brano', action: () => app.showTrackInfo(one), disabled: !one },
       { label: 'Copia link da mandare agli amici', action: () => app.copyTrackLink(one), disabled: !one },
       { label: 'Modifica titolo / artista…', action: () => editTrack(one), disabled: !one || !app.canEdit(one) },

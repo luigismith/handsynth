@@ -125,7 +125,34 @@ async function loginDialog(backend, cfg, inviteCode) {
   const invite = field('Codice invito', { value: inviteCode || '', autocomplete: 'off' });
   const extra = h('div', { class: 'register-only' }, username, invite);
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
-  const body = h('div', {}, tabs, email, password, extra);
+  const forgotNote = h('div', { class: 'dlg-note', role: 'status' });
+  const forgot = h(
+    'div',
+    { class: 'login-only' },
+    h('button', {
+      type: 'button',
+      class: 'linkbtn',
+      text: 'Password dimenticata?',
+      onclick: async () => {
+        const addr = email.querySelector('input').value.trim();
+        if (!addr.includes('@')) {
+          forgotNote.textContent = 'Scrivi qui sopra la tua email, poi premi di nuovo “Password dimenticata?”.';
+          email.querySelector('input').focus();
+          return;
+        }
+        forgotNote.textContent = 'Invio in corso…';
+        try {
+          await backend.sendPasswordReset(addr);
+          forgotNote.textContent =
+            'Fatto: se l’email è registrata ti arriva un link (guarda anche nello spam). Aprilo da questo dispositivo e scegli la nuova password. Se non arriva nulla, chiedi all’admin.';
+        } catch (err) {
+          forgotNote.textContent = err.message;
+        }
+      },
+    }),
+    forgotNote,
+  );
+  const body = h('div', {}, tabs, email, password, forgot, extra);
   const setMode = (m) => {
     mode = m;
     tabs.replaceChildren(
@@ -138,6 +165,7 @@ async function loginDialog(backend, cfg, inviteCode) {
       }),
     );
     extra.hidden = m !== 'register';
+    forgot.hidden = m !== 'login';
     password.querySelector('input').autocomplete = m === 'login' ? 'current-password' : 'new-password';
   };
   setMode(mode);
@@ -610,6 +638,24 @@ class App {
     }
   }
 
+  async downloadTracks(tracks) {
+    tracks = tracks.filter(Boolean);
+    if (!tracks.length) return toast('Seleziona prima un brano');
+    for (const [i, t] of tracks.entries()) {
+      try {
+        const a = h('a', { href: await this.backend.downloadUrl(t), download: this.backend.downloadName(t), rel: 'noopener' });
+        document.body.append(a);
+        a.click();
+        a.remove();
+      } catch (err) {
+        toast(`Download non riuscito (“${t.title}”): ${err.message}`);
+      }
+      // browsers drop downloads fired in a burst
+      if (i < tracks.length - 1) await new Promise((r) => setTimeout(r, 800));
+    }
+    toast(tracks.length === 1 ? `Download di “${tracks[0].title}” avviato` : `${tracks.length} download avviati`);
+  }
+
   copyTrackLink(t) {
     if (!t) return;
     this.copy(`${this.appUrl()}#brano=${t.id}`, 'Link copiato: mandalo agli amici (devono avere un account)');
@@ -670,6 +716,7 @@ class App {
         '-',
         { label: 'Carica brani…', hint: 'L', action: () => this.pickFiles() },
         { label: 'Cerca nella libreria…', hint: 'J', action: () => this.focusSearch() },
+        { label: 'Scarica il brano in ascolto', action: () => this.downloadTracks([this.current]), disabled: !this.current },
         '-',
         { label: 'Lettore', checked: true, disabled: true },
         { label: 'Equalizzatore', hint: 'Alt+G', checked: wm.isVisible('eq'), action: () => wm.toggle('eq') },
@@ -726,7 +773,11 @@ class App {
         row('Caricato da', `${t.owner} il ${new Date(t.createdAt).toLocaleString('it-IT')}`),
         row('Ascolti', String(t.plays)),
       ),
-    });
+      buttons: [
+        { label: 'Chiudi', value: null },
+        { label: '⬇ Scarica', value: 'download', primary: true },
+      ],
+    }).then((v) => v === 'download' && this.downloadTracks([t]));
   }
 
   showShortcuts() {
@@ -907,6 +958,25 @@ class App {
   }
 }
 
+async function newPasswordDialog(backend) {
+  const pw = field('Nuova password', { type: 'password', autocomplete: 'new-password', minlength: '6' });
+  const pw2 = field('Ripeti la nuova password', { type: 'password', autocomplete: 'new-password' });
+  await dialog({
+    title: 'SCEGLI UNA NUOVA PASSWORD',
+    dismissable: false,
+    body: h('div', {}, h('p', { class: 'dlg-text', text: 'Sei entrato con il link dell’email. Scegli la nuova password:' }), pw, pw2),
+    buttons: [{ label: 'Salva', value: true, primary: true }],
+    onSubmit: async () => {
+      const a = pw.querySelector('input').value;
+      if (a.length < 6) throw new Error('Almeno 6 caratteri');
+      if (a !== pw2.querySelector('input').value) throw new Error('Le due password non coincidono');
+      await backend.changePassword(a);
+      backend.recovery = false;
+      toast('Password aggiornata');
+    },
+  });
+}
+
 async function boot() {
   const hash = readHash();
   const cfg = loadConfig(hash);
@@ -925,6 +995,16 @@ async function boot() {
     user = await backend.currentUser();
   } catch (err) {
     toast(err.message);
+  }
+  const linkError = new URLSearchParams(location.hash.slice(1)).get('error_description');
+  if (linkError) {
+    history.replaceState(null, '', location.pathname);
+    await alertBox('Link non valido', `Il link dell’email non funziona più (${linkError}). Chiedi un nuovo link da “Password dimenticata?”.`);
+  }
+  if (user && backend.recovery) {
+    // opened from the reset email: the link logged us in, now pick a password
+    history.replaceState(null, '', location.pathname);
+    await newPasswordDialog(backend);
   }
   if (!user) {
     user = await loginDialog(backend, cfg, hash.invite?.code);
