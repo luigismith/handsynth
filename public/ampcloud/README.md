@@ -93,4 +93,10 @@ Scorciatoie: **X** play, **C** pausa, **V** stop, **Z/B** precedente/successivo,
 | `vendor/supabase-2.117.0.js` | libreria ufficiale `@supabase/supabase-js` (licenza MIT, vedi `vendor/supabase-LICENSE.txt`) |
 | `vendor/lame-1.2.1.min.js` | encoder MP3 [LAME](https://lame.sourceforge.io/) in JavaScript (lamejs 1.2.1, LGPL-3.0, non modificato, vedi `vendor/lamejs-LICENSE.txt`) |
 
+**Aggiornare il sito**: a ogni modifica dei file in `js/` o `css/` cambia il numero `?v=` in `index.html` e in tutti gli `import` di `js/` (stesso valore ovunque), così i telefoni non restano con la versione vecchia in cache:
+```bash
+sed -i -E "s/\?v=[0-9.]+/?v=NUOVA/g" index.html js/*.js
+```
+Il **registro diagnostico** (`client_logs`) annota passi ed errori dei caricamenti; lo legge solo l'admin, da **Table Editor** in Supabase.
+
 La grafica è disegnata da zero in CSS e canvas, senza skin o loghi di altri programmi.

@@ -182,6 +182,23 @@ drop policy if exists "playlists: eliminazione" on public.playlists;
 create policy "playlists: eliminazione" on public.playlists
   for delete to authenticated using (owner_id = auth.uid() or public.is_admin());
 
+-- ---------- registro diagnostico (scrivono i browser, legge solo l'admin) ----------
+create table if not exists public.client_logs (
+  id         bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  user_id    uuid default auth.uid(),
+  event      text not null check (length(event) <= 60),
+  detail     jsonb not null default '{}',
+  user_agent text check (length(user_agent) <= 400)
+);
+alter table public.client_logs enable row level security;
+drop policy if exists "client_logs: scrittura" on public.client_logs;
+create policy "client_logs: scrittura" on public.client_logs
+  for insert to authenticated with check (user_id = auth.uid() and pg_column_size(detail) < 4000);
+drop policy if exists "client_logs: lettura admin" on public.client_logs;
+create policy "client_logs: lettura admin" on public.client_logs
+  for select to authenticated using (public.is_admin());
+
 -- ---------- storage: bucket privato per i file audio ----------
 insert into storage.buckets (id, name, public)
 values ('tracks', 'tracks', false)

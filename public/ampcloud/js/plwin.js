@@ -1,6 +1,6 @@
 // Playlist editor: the play queue. Numbered rows, selection, drag to reorder,
 // ADD / REM / SEL / MISC / LIST menus, shared playlists saved in the cloud.
-import { h, showMenu, fmtTime, promptBox, confirmBox, toast } from './ui.js';
+import { h, showMenu, fmtTime, promptBox, confirmBox, toast } from './ui.js?v=1.1.0';
 
 export function createPlaylistWindow(app) {
   const list = h('div', { class: 'pl-list', tabindex: '0', role: 'listbox', 'aria-label': 'Playlist' });

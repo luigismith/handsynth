@@ -140,6 +140,15 @@ export class Backend {
     await this._check(this.sb.auth.updateUser({ password }));
   }
 
+  /** Best-effort diagnostic event (upload steps, errors). Never throws. */
+  log(event, detail = {}) {
+    if (!this.user || (this._logged = (this._logged || 0) + 1) > 60) return;
+    this.sb
+      .from('client_logs')
+      .insert({ event, detail, user_agent: navigator.userAgent.slice(0, 400) })
+      .then(() => {}, () => {});
+  }
+
   // ---------- tracks ----------
   async listTracks() {
     const rows = await this._check(

@@ -1,7 +1,7 @@
 // The main player window: LCD time + visualizer, scrolling title, bitrate
 // info, volume / balance / seek sliders, transport, shuffle / repeat.
-import { h, icon, slider, fmtTime, store, showMenu } from './ui.js';
-import { BIG, SMALL, drawText, drawDigit, textWidth } from './font.js';
+import { h, icon, slider, fmtTime, store, showMenu } from './ui.js?v=1.1.0';
+import { BIG, SMALL, drawText, drawDigit, textWidth } from './font.js?v=1.1.0';
 
 const GREEN = '#00e85c';
 const GREEN_DIM = '#0b3a1e';
