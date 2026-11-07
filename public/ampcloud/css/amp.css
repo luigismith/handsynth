@@ -985,7 +985,8 @@ canvas {
   font-weight: normal;
   padding: 2px 10px 2px 0;
   vertical-align: top;
-  white-space: nowrap;
+  max-width: 45%;
+  overflow-wrap: anywhere;
 }
 .info-table td {
   color: var(--lcd);
