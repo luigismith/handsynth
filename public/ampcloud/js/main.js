@@ -1,9 +1,9 @@
 // AmpCloud bootstrap and app controller: configuration, login, playback
 // queue, uploads, keyboard shortcuts, menus and lock-screen controls.
-import { Backend, FORMATS } from './backend.js';
-import { Engine, IS_IOS } from './engine.js';
-import { readTags } from './tags.js';
-import { needsConversion, toMp3, CONVERT_ONLY } from './convert.js';
+import { Backend, FORMATS } from './backend.js?v=1.1.0';
+import { Engine, IS_IOS } from './engine.js?v=1.1.0';
+import { readTags } from './tags.js?v=1.1.0';
+import { needsConversion, toMp3, CONVERT_ONLY } from './convert.js?v=1.1.0';
 import {
   $,
   h,
@@ -17,13 +17,13 @@ import {
   toast,
   store,
   fmtTime,
-} from './ui.js';
-import { createMainWindow } from './mainwin.js';
-import { createEqWindow } from './eqwin.js';
-import { createPlaylistWindow } from './plwin.js';
-import { createLibraryWindow } from './libwin.js';
+} from './ui.js?v=1.1.0';
+import { createMainWindow } from './mainwin.js?v=1.1.0';
+import { createEqWindow } from './eqwin.js?v=1.1.0';
+import { createPlaylistWindow } from './plwin.js?v=1.1.0';
+import { createLibraryWindow } from './libwin.js?v=1.1.0';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const b64 = {
   enc: (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
   dec: (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))),
@@ -499,11 +499,13 @@ class App {
       if (!IS_IOS) input.accept = [...FORMATS, ...CONVERT_ONLY].map((f) => `.${f}`).join(',') + ',audio/*';
       input.addEventListener('change', () => {
         const files = [...input.files];
+        this.backend.log('picker_change', { count: files.length, names: files.map((f) => `${f.name} (${f.size})`).slice(0, 10), v: VERSION });
         input.value = ''; // picking the same file again must fire `change` again
         if (files.length) this.upload(files);
       });
       document.body.append(input);
     }
+    this.backend.log('picker_open', { v: VERSION });
     input.click();
   }
 
@@ -532,10 +534,14 @@ class App {
         this.setLibraryStatus?.(`${verb === 'CARICO' ? 'Carico' : 'Converto in MP3'} ${n}/${total}: ${file.name}${pct}`);
       };
       status('CARICO', 0);
+      const info = { name: file.name, size: file.size, type: file.type, v: VERSION };
+      let stage = 'tags';
+      this.backend.log('upload_start', info);
       try {
         const meta = await readTags(file);
         let upload = file;
         if (needsConversion(file)) {
+          stage = 'convert';
           // too big for the free plan (or AIFF): make a 320 kbps MP3 first
           status('CONVERTO', 0);
           const mp3 = await toMp3(file, (p) => status('CONVERTO', p));
@@ -548,7 +554,9 @@ class App {
             format: 'mp3',
           });
         }
+        stage = 'upload';
         const t = await this.backend.uploadTrack(upload, meta, (p) => status('CARICO', p));
+        this.backend.log('upload_ok', { ...info, uploadedSize: upload.size, duration: meta.duration });
         this.library.unshift(t);
         this.tracks.set(t.id, t);
         this.backend.prefetchUrls([t]).catch(() => {});
@@ -557,6 +565,7 @@ class App {
         this.emit('library');
       } catch (err) {
         failures.push([file.name, err.message]);
+        this.backend.log('upload_fail', { ...info, stage, error: String(err?.message || err).slice(0, 500) });
       }
     }
     this._uploadQueue = null;
@@ -938,6 +947,9 @@ class App {
   }
 
   async start(hash) {
+    this.backend.log('app_start', { v: VERSION, w: innerWidth, h: innerHeight });
+    window.addEventListener('error', (e) => this.backend.log('js_error', { msg: String(e.message).slice(0, 300), src: `${e.filename}:${e.lineno}` }));
+    window.addEventListener('unhandledrejection', (e) => this.backend.log('js_rejection', { msg: String(e.reason?.message || e.reason).slice(0, 300) }));
     const desktop = $('#desktop');
     const wm = (this.wm = new WindowManager(desktop));
     const phone = document.documentElement.clientWidth < 600;
