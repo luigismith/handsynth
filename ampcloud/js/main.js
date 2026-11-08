@@ -89,7 +89,7 @@ async function setupDialog(cfg) {
         'p',
         { class: 'dlg-text' },
         'Il sito salva brani e account su un progetto Supabase (gratuito). Se hai ricevuto un link invito, aprilo e questo passo viene saltato. Istruzioni complete: ',
-        h('a', { href: 'https://github.com/luigismith/handsynth/blob/main/public/ampcloud/README.md', target: '_blank', rel: 'noopener' }, 'README'),
+        h('a', { href: 'https://github.com/luigismith/handsynth/blob/main/ampcloud/README.md', target: '_blank', rel: 'noopener' }, 'README'),
         '.',
       ),
       url,

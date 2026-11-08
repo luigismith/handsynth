@@ -1,47 +1,13 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build output
-dist/
-.vite/
-
-# Electron / electron-builder packaged installers
-release/
-
-# Platform-native icons are generated locally from electron/icons/icon.png
-# (see electron/icons/README.md). The committed PNG is the source of truth.
-electron/icons/icon.ico
-electron/icons/icon.icns
-
-# Test / coverage
-coverage/
-*.lcov
-
-# Logs
-*.log
-npm-debug.log*
-pnpm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# OS
+# OS / editor
 .DS_Store
 Thumbs.db
-desktop.ini
-
-# IDE
 .idea/
 .vscode/
 *.swp
-*.swo
-*~
 
-# Env
+# Pages build output
+_site/
+
+# Supabase CLI local state
+.supabase/
 .env
-.env.local
-.env.*.local
-
-# Misc
-*.tsbuildinfo
-.cache/

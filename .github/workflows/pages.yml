@@ -1,7 +1,12 @@
 name: Deploy to GitHub Pages
 
+# The site is plain static files (no build). On every push to main: check
+# that the JavaScript parses, then publish ampcloud/ at <pages-url>/ampcloud/
+# with a redirect from the root.
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -10,51 +15,45 @@ permissions:
   pages: write
   id-token: write
 
-# One deployment at a time; a newer push waits instead of cancelling a
-# deployment that is already uploading.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
   build:
-    name: test + build
+    name: check + package
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.0
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
+          node-version: 22
 
-      - name: Install
-        run: pnpm install --frozen-lockfile
+      - name: Check JavaScript syntax
+        run: for f in ampcloud/js/*.js; do node --check "$f"; done
 
-      # Never publish a red build: the site only updates when tests pass.
-      - name: Test
-        run: pnpm exec vitest run
-
-      - name: Build
-        run: pnpm build
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r ampcloud _site/ampcloud
+          cp index.html _site/index.html
 
       - name: Configure Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: _site
 
   deploy:
     name: deploy
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
