@@ -24,10 +24,23 @@ function loadLame() {
   return lameLoading;
 }
 
-export function needsConversion(file) {
+/** Target for every upload: small files that still sound good. */
+export const TARGET_KBPS = 96;
+/** MP3s at or below this bitrate are uploaded as they are (no re-encode). */
+const KEEP_MP3_UP_TO = 128;
+
+/** Compress unless the file is already a light MP3. `meta.bitrate` is the
+ *  average kbps measured from size and duration. */
+export function needsConversion(file, meta = {}) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  return CONVERT_ONLY.includes(ext) || file.size > MAX_UPLOAD_BYTES;
+  if (CONVERT_ONLY.includes(ext) || file.size > MAX_UPLOAD_BYTES) return true;
+  if (ext !== 'mp3') return true;
+  return !(meta.bitrate > 0 && meta.bitrate <= KEEP_MP3_UP_TO);
 }
+
+/** Can the original go up unchanged if the browser can't decode it? */
+export const canUploadAsIs = (file) =>
+  !CONVERT_ONLY.includes((file.name.split('.').pop() || '').toLowerCase()) && file.size <= MAX_UPLOAD_BYTES;
 
 const yieldToUi = () => new Promise((r) => setTimeout(r, 0));
 
@@ -55,7 +68,9 @@ export async function toMp3(file, onProgress = () => {}) {
   const duration = audio.duration;
   // highest bitrate that fits, with 3% margin for headers / padding
   const budgetKbps = ((MAX_UPLOAD_BYTES * 0.97 * 8) / duration / 1000) | 0;
-  const bitrate = MP3_RATES.find((r) => r <= budgetKbps);
+  // mono needs about two thirds of the stereo bitrate for the same quality
+  const want = channels === 1 ? 64 : TARGET_KBPS;
+  const bitrate = MP3_RATES.find((r) => r <= Math.min(want, budgetKbps));
   if (!bitrate) throw new Error('Brano troppo lungo per stare in 50 MB anche come MP3');
 
   const enc = new window.lamejs.Mp3Encoder(channels, SAMPLE_RATE, bitrate);

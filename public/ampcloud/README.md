@@ -69,10 +69,8 @@ Scorciatoie: **X** play, **C** pausa, **V** stop, **Z/B** precedente/successivo,
 ---
 
 ## Limiti del piano gratuito di Supabase
-- **50 MB per file**. Un file più grande (un WAV da studio, per esempio) viene convertito dal sito in MP3 a 320 kbps prima di caricarlo, direttamente nel browser: a 320 kbps ci stanno circa 20 minuti. Lo stesso vale per i file AIFF. Puoi anche convertire prima per conto tuo:
-  ```bash
-  ffmpeg -i brano.wav -b:a 320k brano.mp3
-  ```
+- **Spazio**: ogni brano viene compresso nel browser in MP3 a 96 kbps (64 kbps se mono) prima di caricarlo: circa 0,7 MB al minuto, ben ascoltabile. Gli MP3 già leggeri (fino a 128 kbps) vengono caricati così come sono. Il piano gratuito ha circa 1 GB di spazio: con la compressione sono circa 1400 minuti di musica.
+- **50 MB per file** dopo la compressione: a 96 kbps ci stanno circa 70 minuti.
 - **iPhone**: il selettore file mostra solo l'app **File**. I brani dell'app Musica non si vedono: salvali prima in File (o in iCloud Drive).
 - Spazio e traffico mensile sono limitati (circa 1 GB di file). I numeri attuali sono su https://supabase.com/pricing, l'occupazione in **Project Settings → Usage**.
 - **I progetti gratuiti vanno in pausa dopo una settimana senza attività.** Si riattivano dalla dashboard con **Restore project**: i dati restano.
