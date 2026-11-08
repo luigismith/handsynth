@@ -1,7 +1,7 @@
 // The main player window: LCD time + visualizer, scrolling title, bitrate
 // info, volume / balance / seek sliders, transport, shuffle / repeat.
-import { h, icon, slider, fmtTime, store, showMenu } from './ui.js?v=1.1.0';
-import { BIG, SMALL, drawText, drawDigit, textWidth } from './font.js?v=1.1.0';
+import { h, icon, slider, fmtTime, store, showMenu } from './ui.js?v=1.2.0';
+import { BIG, SMALL, drawText, drawDigit, textWidth } from './font.js?v=1.2.0';
 
 const GREEN = '#00e85c';
 const GREEN_DIM = '#0b3a1e';
@@ -82,7 +82,7 @@ export function createMainWindow(app) {
       btn('t-stop', 'Stop (V)', () => app.stop(), icon('stop')),
       btn('t-next', 'Successivo (B)', () => app.next(), icon('next')),
     ),
-    btn('t-eject', 'Carica brani (L)', () => app.pickFiles(), icon('eject')),
+    btn('t-eject', 'Carica brani (L)', (e) => app.showUploadMenu(e.currentTarget), icon('eject')),
     shuffleBtn,
     repeatBtn,
     h('button', {
