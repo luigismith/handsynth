@@ -1,9 +1,9 @@
 // AmpCloud bootstrap and app controller: configuration, login, playback
 // queue, uploads, keyboard shortcuts, menus and lock-screen controls.
-import { Backend, FORMATS } from './backend.js?v=1.3.0';
-import { Engine, IS_IOS } from './engine.js?v=1.3.0';
-import { readTags } from './tags.js?v=1.3.0';
-import { needsConversion, canUploadAsIs, toMp3, CONVERT_ONLY } from './convert.js?v=1.3.0';
+import { Backend, FORMATS } from './backend.js?v=1.3.1';
+import { Engine, IS_IOS } from './engine.js?v=1.3.1';
+import { readTags } from './tags.js?v=1.3.1';
+import { needsConversion, canUploadAsIs, toMp3, CONVERT_ONLY } from './convert.js?v=1.3.1';
 import {
   $,
   h,
@@ -17,13 +17,13 @@ import {
   toast,
   store,
   fmtTime,
-} from './ui.js?v=1.3.0';
-import { createMainWindow } from './mainwin.js?v=1.3.0';
-import { createEqWindow } from './eqwin.js?v=1.3.0';
-import { createPlaylistWindow } from './plwin.js?v=1.3.0';
-import { createLibraryWindow } from './libwin.js?v=1.3.0';
+} from './ui.js?v=1.3.1';
+import { createMainWindow } from './mainwin.js?v=1.3.1';
+import { createEqWindow } from './eqwin.js?v=1.3.1';
+import { createPlaylistWindow } from './plwin.js?v=1.3.1';
+import { createLibraryWindow } from './libwin.js?v=1.3.1';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const b64 = {
   enc: (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
   dec: (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))),
