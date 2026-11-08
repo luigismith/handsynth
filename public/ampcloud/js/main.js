@@ -1,9 +1,9 @@
 // AmpCloud bootstrap and app controller: configuration, login, playback
 // queue, uploads, keyboard shortcuts, menus and lock-screen controls.
-import { Backend, FORMATS } from './backend.js?v=1.1.0';
-import { Engine, IS_IOS } from './engine.js?v=1.1.0';
-import { readTags } from './tags.js?v=1.1.0';
-import { needsConversion, toMp3, CONVERT_ONLY } from './convert.js?v=1.1.0';
+import { Backend, FORMATS } from './backend.js?v=1.2.0';
+import { Engine, IS_IOS } from './engine.js?v=1.2.0';
+import { readTags } from './tags.js?v=1.2.0';
+import { needsConversion, toMp3, CONVERT_ONLY } from './convert.js?v=1.2.0';
 import {
   $,
   h,
@@ -17,13 +17,13 @@ import {
   toast,
   store,
   fmtTime,
-} from './ui.js?v=1.1.0';
-import { createMainWindow } from './mainwin.js?v=1.1.0';
-import { createEqWindow } from './eqwin.js?v=1.1.0';
-import { createPlaylistWindow } from './plwin.js?v=1.1.0';
-import { createLibraryWindow } from './libwin.js?v=1.1.0';
+} from './ui.js?v=1.2.0';
+import { createMainWindow } from './mainwin.js?v=1.2.0';
+import { createEqWindow } from './eqwin.js?v=1.2.0';
+import { createPlaylistWindow } from './plwin.js?v=1.2.0';
+import { createLibraryWindow } from './libwin.js?v=1.2.0';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const b64 = {
   enc: (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
   dec: (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))),
@@ -199,6 +199,38 @@ async function loginDialog(backend, cfg, inviteCode) {
     },
   });
   return user;
+}
+
+const norm = (v) =>
+  String(v || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+
+/** Two library entries (or an entry and a file about to be uploaded) are the
+ *  same recording: identical size and length, or same title/artist/length. */
+function sameRecording(a, b) {
+  const close = Math.abs((a.duration || 0) - (b.duration || 0)) <= 1.5;
+  if (!close) return false;
+  if (a.size && a.size === b.size) return true;
+  return Boolean(norm(a.title)) && norm(a.title) === norm(b.title) && norm(a.artist) === norm(b.artist) && a.duration > 0;
+}
+
+/** Drive file/folder ids from pasted share links. */
+function parseDriveLinks(text) {
+  const out = [];
+  for (const raw of String(text).match(/https?:\/\/[^\s<>"']+/g) || []) {
+    if (!/(drive|docs)\.google\.com/.test(raw)) continue;
+    let m = /\/folders\/([\w-]{10,})/.exec(raw) || (/folderview/.test(raw) && /[?&]id=([\w-]{10,})/.exec(raw));
+    if (m) {
+      out.push({ folder: true, id: m[1] });
+      continue;
+    }
+    m = /\/d\/([\w-]{10,})/.exec(raw) || /[?&]id=([\w-]{10,})/.exec(raw);
+    if (m) out.push({ folder: false, id: m[1] });
+  }
+  return out.filter((l, i) => out.findIndex((x) => x.id === l.id) === i);
 }
 
 // ---------------------------------------------------------------------------
@@ -509,36 +541,66 @@ class App {
     input.click();
   }
 
-  async upload(files) {
+  /** Same recording already in the library? (same file size, or same title,
+   *  artist and length: a re-upload converted to MP3 has a different size) */
+  findDuplicate(c, exceptId) {
+    return this.library.find((t) => t.id !== exceptId && sameRecording(t, c)) || null;
+  }
+
+  /**
+   * Upload queue. Items are File objects or Google Drive jobs
+   * ({drive: {id, name}}), which are downloaded first. Files already in the
+   * library are skipped. One report at the end.
+   */
+  async upload(items, prior = []) {
     const accepted = [...FORMATS, ...CONVERT_ONLY];
-    const extOf = (f) => (f.name.split('.').pop() || '').toLowerCase();
-    const ok = files.filter((f) => accepted.includes(extOf(f)));
-    const failures = files
-      .filter((f) => !ok.includes(f))
-      .map((f) => [f.name, `formato .${extOf(f)} non supportato (vanno bene ${accepted.join(', ')})`]);
-    if (!ok.length) return this.reportUploadFailures(failures, 0);
+    const extOf = (name) => (name.split('.').pop() || '').toLowerCase();
+    const unsupported = (name) => `formato .${extOf(name)} non supportato (vanno bene ${accepted.join(', ')})`;
+    const failures = [...prior];
+    const ok = items.filter((it) => {
+      if (it.drive) return true; // name may be unknown until downloaded
+      if (accepted.includes(extOf(it.name))) return true;
+      failures.push([it.name, unsupported(it.name)]);
+      return false;
+    });
     if (this._uploadQueue) {
       this._uploadQueue.push(...ok);
+      this._uploadFailures.push(...failures);
       return;
     }
+    if (!ok.length) return this.reportUploadFailures(failures, 0);
     this._uploadQueue = [...ok];
+    this._uploadFailures = failures;
     let done = 0;
     const added = [];
     while (this._uploadQueue.length) {
-      const file = this._uploadQueue.shift();
-      const total = done + failures.length + this._uploadQueue.length + 1;
-      const n = done + failures.length + 1;
+      const item = this._uploadQueue.shift();
+      const total = done + this._uploadFailures.length + this._uploadQueue.length + 1;
+      const n = done + this._uploadFailures.length + 1;
+      let label = item.drive ? item.drive.name || 'file da Google Drive' : item.name;
+      const VERBS = { CARICO: 'Carico', CONVERTO: 'Converto in MP3', DRIVE: 'Scarico da Drive' };
       const status = (verb, p) => {
         const pct = p === undefined ? '' : ` ${Math.round(p * 100)}%`;
-        this.uploading = `${verb} ${n}/${total}: ${file.name}${pct}`;
-        this.setLibraryStatus?.(`${verb === 'CARICO' ? 'Carico' : 'Converto in MP3'} ${n}/${total}: ${file.name}${pct}`);
+        this.uploading = `${verb} ${n}/${total}: ${label}${pct}`;
+        this.setLibraryStatus?.(`${VERBS[verb]} ${n}/${total}: ${label}${pct}`);
       };
-      status('CARICO', 0);
-      const info = { name: file.name, size: file.size, type: file.type, v: VERSION };
-      let stage = 'tags';
-      this.backend.log('upload_start', info);
+      let stage = 'drive';
+      let info = { name: label, v: VERSION, drive: Boolean(item.drive) };
       try {
+        let file = item;
+        if (item.drive) {
+          status('DRIVE', 0);
+          file = await this.backend.driveFile(item.drive.id, (p) => status('DRIVE', p), item.drive.name);
+          label = file.name;
+          if (!accepted.includes(extOf(file.name))) throw new Error(unsupported(file.name));
+        }
+        info = { ...info, name: file.name, size: file.size, type: file.type };
+        stage = 'tags';
+        status('CARICO', 0);
+        this.backend.log('upload_start', info);
         const meta = await readTags(file);
+        const dup = this.findDuplicate({ size: file.size, title: meta.title, artist: meta.artist, duration: meta.duration });
+        if (dup) throw Object.assign(new Error(`c’è già in libreria: “${dup.title}” (caricato da ${dup.owner})`), { duplicate: true });
         let upload = file;
         if (needsConversion(file)) {
           stage = 'convert';
@@ -555,6 +617,7 @@ class App {
           });
         }
         stage = 'upload';
+        status('CARICO', 0);
         const t = await this.backend.uploadTrack(upload, meta, (p) => status('CARICO', p));
         this.backend.log('upload_ok', { ...info, uploadedSize: upload.size, duration: meta.duration });
         this.library.unshift(t);
@@ -564,15 +627,160 @@ class App {
         done++;
         this.emit('library');
       } catch (err) {
-        failures.push([file.name, err.message]);
-        this.backend.log('upload_fail', { ...info, stage, error: String(err?.message || err).slice(0, 500) });
+        this._uploadFailures.push([label, err.message]);
+        if (!err.duplicate)
+          this.backend.log('upload_fail', { ...info, stage, error: String(err?.message || err).slice(0, 500) });
       }
     }
+    const allFailures = this._uploadFailures;
     this._uploadQueue = null;
+    this._uploadFailures = null;
     this.uploading = null;
     this.setLibraryStatus?.(null);
     if (done && !this.playlist.length) this.setPlaylist(added, -1);
-    this.reportUploadFailures(failures, done);
+    this.reportUploadFailures(allFailures, done);
+  }
+
+  showUploadMenu(anchor) {
+    showMenu(
+      [
+        { label: 'Dal dispositivo (file, iCloud, Drive app…)', action: () => this.pickFiles() },
+        { label: 'Da Google Drive (incolla un link)…', action: () => this.importFromDrive() },
+      ],
+      anchor,
+    );
+  }
+
+  /** Paste links to Drive files/folders shared with "anyone with the link". */
+  async importFromDrive() {
+    const area = h('textarea', {
+      class: 'inp drive-links',
+      rows: '4',
+      placeholder: 'https://drive.google.com/drive/folders/…\nhttps://drive.google.com/file/d/…',
+      spellcheck: 'false',
+      autocapitalize: 'off',
+    });
+    const progress = h('div', { class: 'dlg-note', role: 'status' });
+    let jobs = [];
+    const accepted = [...FORMATS, ...CONVERT_ONLY];
+    const v = await dialog({
+      title: 'IMPORTA DA GOOGLE DRIVE',
+      body: h(
+        'div',
+        {},
+        h(
+          'p',
+          { class: 'dlg-text' },
+          'In Google Drive: tasto destro (o ⋮) sul file o sulla cartella → ',
+          h('b', { text: 'Condividi' }),
+          ' → Accesso generale: ',
+          h('b', { text: 'Chiunque abbia il link' }),
+          '. Poi copia il link e incollalo qui (anche più link, uno per riga). Da una cartella prendo tutti i file audio, anche nelle sottocartelle.',
+        ),
+        area,
+        progress,
+      ),
+      buttons: [
+        { label: 'Annulla', value: null },
+        { label: 'Importa', value: 'go', primary: true },
+      ],
+      onSubmit: async () => {
+        const links = parseDriveLinks(area.value);
+        if (!links.length) throw new Error('Non trovo link di Google Drive: incolla il link di condivisione');
+        jobs = [];
+        const walk = async (folderId, depth) => {
+          progress.textContent = `Leggo la cartella… (${jobs.length} file audio trovati)`;
+          for (const e of await this.backend.driveList(folderId)) {
+            if (e.folder) {
+              if (depth < 3) await walk(e.id, depth + 1);
+            } else if (accepted.includes((e.name.split('.').pop() || '').toLowerCase())) {
+              jobs.push({ drive: { id: e.id, name: e.name } });
+            }
+          }
+        };
+        try {
+          for (const l of links) {
+            if (l.folder) await walk(l.id, 0);
+            else jobs.push({ drive: { id: l.id, name: '' } });
+          }
+        } finally {
+          progress.textContent = '';
+        }
+        if (!jobs.length) throw new Error('Nessun file audio nella cartella (mp3, wav, flac, m4a…)');
+      },
+    });
+    if (v !== 'go' || !jobs.length) return;
+    toast(`Importo ${jobs.length} ${jobs.length === 1 ? 'file' : 'file'} da Google Drive…`);
+    this.backend.log('drive_import', { count: jobs.length, v: VERSION });
+    this.upload(jobs);
+  }
+
+  /** Find recordings uploaded more than once and delete the extra copies. */
+  async removeDuplicates() {
+    const lib = this.library;
+    const used = new Set();
+    const toDelete = [];
+    let othersOnly = 0;
+    for (let i = 0; i < lib.length; i++) {
+      if (used.has(i)) continue;
+      const group = [lib[i]];
+      for (let j = i + 1; j < lib.length; j++) {
+        if (!used.has(j) && sameRecording(lib[i], lib[j])) {
+          used.add(j);
+          group.push(lib[j]);
+        }
+      }
+      if (group.length < 2) continue;
+      // keep a copy I can't delete if there is one, else the most played, else the oldest
+      group.sort(
+        (a, b) =>
+          Number(this.canEdit(a)) - Number(this.canEdit(b)) || b.plays - a.plays || a.createdAt - b.createdAt,
+      );
+      const [keep, ...extra] = group;
+      for (const t of extra) {
+        if (this.canEdit(t)) toDelete.push({ t, keep });
+        else othersOnly++;
+      }
+    }
+    if (!toDelete.length) {
+      return alertBox(
+        'DUPLICATI',
+        othersOnly
+          ? `Ci sono ${othersOnly} doppioni caricati da altri: può eliminarli chi li ha caricati, o l’admin.`
+          : 'Nessun brano duplicato in libreria.',
+      );
+    }
+    const rows = toDelete
+      .slice(0, 40)
+      .map(({ t, keep }) =>
+        h('tr', {}, h('th', { text: `${t.title} (${t.owner})` }), h('td', { text: `copia di “${keep.title}”` })),
+      );
+    const ok = await dialog({
+      title: 'ELIMINA DUPLICATI',
+      body: h(
+        'div',
+        {},
+        h('p', {
+          class: 'dlg-text',
+          text: `Ho trovato ${toDelete.length} ${toDelete.length === 1 ? 'copia in più' : 'copie in più'}. Tengo l’originale (il più ascoltato) ed elimino queste dal cloud:`,
+        }),
+        h('table', { class: 'info-table' }, ...rows),
+        toDelete.length > 40 ? h('p', { class: 'dlg-text small', text: `…e altre ${toDelete.length - 40}.` }) : null,
+        othersOnly ? h('p', { class: 'dlg-text small', text: `${othersOnly} doppioni sono di altri: li lascio.` }) : null,
+      ),
+      buttons: [
+        { label: 'Annulla', value: null },
+        { label: `Elimina ${toDelete.length}`, value: true, primary: true },
+      ],
+    });
+    if (!ok) return;
+    let n = 0;
+    for (const { t } of toDelete) {
+      this.setLibraryStatus?.(`Elimino duplicati ${++n}/${toDelete.length}…`);
+      await this.deleteTrack(t);
+    }
+    this.setLibraryStatus?.(null);
+    toast(`Eliminati ${n} duplicati`);
   }
 
   /** Toasts vanish: when something fails, say exactly which files and why. */
@@ -739,6 +947,8 @@ class App {
         { label: `Connesso come ${this.user.username}${this.user.isAdmin ? ' (admin)' : ''}`, disabled: true },
         '-',
         { label: 'Carica brani…', hint: 'L', action: () => this.pickFiles() },
+        { label: 'Importa da Google Drive…', action: () => this.importFromDrive() },
+        { label: 'Elimina file duplicati…', action: () => this.removeDuplicates() },
         { label: 'Cerca nella libreria…', hint: 'J', action: () => this.focusSearch() },
         { label: 'Scarica il brano in ascolto', action: () => this.downloadTracks([this.current]), disabled: !this.current },
         '-',

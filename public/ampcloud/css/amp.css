@@ -764,6 +764,17 @@ canvas {
   color: var(--pl-current);
   font-weight: bold;
 }
+.drive-links {
+  width: 100%;
+  font-size: 13px;
+  line-height: 18px;
+  padding: 5px 6px;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+.lib-btn.dupes {
+  color: #6a1c1c;
+}
 .lib-btn.upload {
   color: #0b5a2c;
 }

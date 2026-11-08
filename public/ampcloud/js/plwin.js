@@ -1,6 +1,6 @@
 // Playlist editor: the play queue. Numbered rows, selection, drag to reorder,
 // ADD / REM / SEL / MISC / LIST menus, shared playlists saved in the cloud.
-import { h, showMenu, fmtTime, promptBox, confirmBox, toast } from './ui.js?v=1.1.0';
+import { h, showMenu, fmtTime, promptBox, confirmBox, toast } from './ui.js?v=1.2.0';
 
 export function createPlaylistWindow(app) {
   const list = h('div', { class: 'pl-list', tabindex: '0', role: 'listbox', 'aria-label': 'Playlist' });
@@ -30,7 +30,8 @@ export function createPlaylistWindow(app) {
         { label: 'Brani selezionati in libreria', action: () => app.enqueue(app.librarySelection()) },
         { label: 'Tutta la libreria', action: () => app.enqueue(app.visibleLibrary().map((t) => t.id)) },
         '-',
-        { label: 'Carica nuovi brani dal computer…', action: () => app.pickFiles() },
+        { label: 'Carica nuovi brani dal dispositivo…', action: () => app.pickFiles() },
+        { label: 'Importa da Google Drive…', action: () => app.importFromDrive() },
       ]),
       menuBtn('REM', () => [
         { label: 'Rimuovi selezionati', hint: 'Canc', action: removeSelected, disabled: !sel.size },
@@ -48,6 +49,7 @@ export function createPlaylistWindow(app) {
         { label: 'Ordina per chi l’ha caricato', action: () => sortBy((t) => `${t.owner} ${t.title}`) },
         { label: 'Mescola', action: shuffleList },
         { label: 'Inverti ordine', action: reverseList },
+        { label: 'Togli i brani ripetuti', action: dedupeList },
         '-',
         { label: 'Info brano', action: () => app.showTrackInfo(trackAt([...sel][0] ?? app.index)) },
       ]),
@@ -285,6 +287,12 @@ export function createPlaylistWindow(app) {
       }
       return a;
     });
+  }
+  function dedupeList() {
+    const before = ids().length;
+    reorder((a) => a.filter((id, i) => a.indexOf(id) === i));
+    const removed = before - ids().length;
+    toast(removed ? `Tolti ${removed} brani ripetuti dalla playlist` : 'Nessun brano ripetuto in playlist');
   }
   function reverseList() {
     reorder((a) => a.reverse());

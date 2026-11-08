@@ -149,6 +149,52 @@ export class Backend {
       .then(() => {}, () => {});
   }
 
+  // ---------- Google Drive (through the drive-import edge function) ----------
+  async _fnFetch(params) {
+    const { data } = await this.sb.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) throw new Error('Sessione scaduta: rientra');
+    const res = await fetch(`${this.url}/functions/v1/drive-import?${new URLSearchParams(params)}`, {
+      headers: { Authorization: `Bearer ${token}`, apikey: this.key },
+    }).catch(() => {
+      throw new Error('Google Drive non raggiungibile');
+    });
+    if (!res.ok) {
+      let msg = `Errore ${res.status}`;
+      try {
+        msg = (await res.json()).error || msg;
+      } catch {}
+      if (res.status === 404 && /requested function/i.test(msg)) msg = 'Import da Drive non installato sul server';
+      throw new Error(msg);
+    }
+    return res;
+  }
+
+  /** Files (and subfolders) of a folder shared with "anyone with the link". */
+  async driveList(folderId) {
+    return (await this._fnFetch({ action: 'list', id: folderId })).json();
+  }
+
+  /** Download one shared Drive file as a File, with progress 0..1. */
+  async driveFile(fileId, onProgress = () => {}, fallbackName = '') {
+    const res = await this._fnFetch({ action: 'file', id: fileId });
+    const name = decodeURIComponent(res.headers.get('x-file-name') || '') || fallbackName || `${fileId}.mp3`;
+    const total = Number(res.headers.get('content-length') || 0);
+    const type = res.headers.get('content-type') || '';
+    if (!res.body || !total) return new File([await res.blob()], name, { type });
+    const reader = res.body.getReader();
+    const parts = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      got += value.length;
+      onProgress(got / total);
+    }
+    return new File(parts, name, { type });
+  }
+
   // ---------- tracks ----------
   async listTracks() {
     const rows = await this._check(

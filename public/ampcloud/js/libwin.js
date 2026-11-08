@@ -1,6 +1,6 @@
 // Shared library window: every track uploaded by the group, searchable and
 // sortable. Upload, enqueue, play, edit, delete, copy share link.
-import { h, showMenu, fmtTime, confirmBox, dialog, field } from './ui.js?v=1.1.0';
+import { h, showMenu, fmtTime, confirmBox, dialog, field } from './ui.js?v=1.2.0';
 
 const COLS = [
   { key: 'title', label: 'Titolo' },
@@ -50,10 +50,11 @@ export function createLibraryWindow(app) {
     h(
       'div',
       { class: 'lib-bottom' },
-      btn('+ CARICA', 'Carica brani dal computer (o trascinali qui)', () => app.pickFiles(), 'upload'),
+      btn('+ CARICA', 'Carica brani dal dispositivo o da Google Drive', (e) => app.showUploadMenu(e.currentTarget), 'upload'),
       btn('ACCODA', 'Aggiungi i selezionati alla playlist', () => app.enqueue(selectedIds())),
       btn('▶ PLAY', 'Riproduci subito i selezionati', () => playSelected()),
       btn('…', 'Altre azioni', (e) => showMenu(moreMenu(), e.currentTarget)),
+      btn('DUPLICATI', 'Trova ed elimina i brani caricati più volte', () => app.removeDuplicates(), 'dupes'),
       status,
     ),
     h('div', { class: 'grip', title: 'Ridimensiona' }),
@@ -181,6 +182,7 @@ export function createLibraryWindow(app) {
       { label: 'Elimina dal cloud…', action: () => deleteTracks(tracks), disabled: !editable },
       '-',
       { label: 'Seleziona tutto', action: selectAll },
+      { label: 'Elimina file duplicati…', action: () => app.removeDuplicates() },
       { label: 'Aggiorna libreria', action: () => app.refresh() },
     ];
   }
