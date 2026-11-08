@@ -57,6 +57,8 @@ const toTrack = (r) => ({
   format: r.format || '',
   path: r.path,
   plays: r.plays || 0,
+  bpm: r.bpm ? Number(r.bpm) : null,
+  beatOffset: r.beat_offset == null ? null : Number(r.beat_offset),
   createdAt: Date.parse(r.created_at) || 0,
   ownerId: r.owner_id,
   owner: r.owner?.username || '?',
@@ -365,6 +367,10 @@ export class Backend {
     const data = await this._check(this.sb.storage.from(BUCKET).createSignedUrl(track.path, SIGNED_URL_TTL));
     this.urlCache.set(track.id, { url: data.signedUrl, expires: Date.now() + SIGNED_URL_TTL * 1000 });
     return data.signedUrl;
+  }
+
+  async setBpm(id, bpm, offset) {
+    await this._check(this.sb.rpc('set_bpm', { track: id, value: bpm, beat_offset: offset }));
   }
 
   async countPlay(id) {

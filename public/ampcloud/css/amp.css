@@ -551,6 +551,72 @@ canvas {
   background: rgba(0, 0, 0, 0.85);
 }
 
+/* -------------------------------------------------------------- analyzer */
+.an-scope {
+  position: absolute;
+  left: 11px;
+  top: 18px;
+  cursor: pointer;
+}
+.an-bpm {
+  position: absolute;
+  left: 175px;
+  top: 18px;
+}
+.an-btn {
+  position: absolute;
+  top: 61px;
+  height: 14px;
+  font: bold 7px/1 Verdana, sans-serif;
+}
+.an-tap {
+  left: 175px;
+  width: 31px;
+}
+.an-x2 {
+  left: 208px;
+  width: 27px;
+}
+.an-d2 {
+  left: 237px;
+  width: 27px;
+}
+.an-vu {
+  position: absolute;
+  left: 11px;
+  top: 80px;
+  cursor: pointer;
+}
+.an-scope,
+.an-bpm,
+.an-vu {
+  box-shadow:
+    inset 1px 1px 0 var(--frame-lo),
+    0 0 0 1px var(--frame-lo),
+    1px 1px 0 1px var(--frame-hi);
+}
+.an-notice {
+  display: none;
+}
+.anwin.nograph .an-notice {
+  display: grid;
+  place-items: center;
+  position: absolute;
+  left: 11px;
+  top: 18px;
+  width: 160px;
+  height: 58px;
+  padding: 6px;
+  text-align: center;
+  font-size: 8px;
+  line-height: 1.3;
+  color: #9a9ab8;
+  background: #000;
+}
+.anwin.nograph .an-vu {
+  visibility: hidden;
+}
+
 /* -------------------------------------------------------------- playlist */
 .plwin,
 .libwin {
@@ -700,7 +766,7 @@ canvas {
 .lib-head,
 .lib-row {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) 34px minmax(0, 1.1fr) 24px;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) 34px minmax(0, 1.1fr) 24px 24px;
   gap: 4px;
   padding: 0 3px;
 }
@@ -724,6 +790,7 @@ canvas {
   color: #fff;
 }
 .lib-col.c-duration,
+.lib-col.c-bpm,
 .lib-col.c-plays {
   text-align: right;
 }
@@ -750,6 +817,7 @@ canvas {
   color: #3fc977;
 }
 .lib-row .c-duration,
+.lib-row .c-bpm,
 .lib-row .c-plays {
   text-align: right;
   font-variant-numeric: tabular-nums;

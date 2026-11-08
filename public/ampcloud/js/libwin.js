@@ -1,6 +1,6 @@
 // Shared library window: every track uploaded by the group, searchable and
 // sortable. Upload, enqueue, play, edit, delete, copy share link.
-import { h, showMenu, fmtTime, confirmBox, dialog, field } from './ui.js?v=1.4.0';
+import { h, showMenu, fmtTime, confirmBox, dialog, field } from './ui.js?v=1.5.0';
 
 const COLS = [
   { key: 'title', label: 'Titolo' },
@@ -8,6 +8,7 @@ const COLS = [
   { key: 'duration', label: 'Durata', num: true },
   { key: 'owner', label: 'Da' },
   { key: 'plays', label: '▶', num: true, title: 'Ascolti' },
+  { key: 'bpm', label: 'BPM', num: true, title: 'Battiti al minuto (rilevati quando il brano viene ascoltato)' },
 ];
 
 export function createLibraryWindow(app) {
@@ -132,6 +133,7 @@ export function createLibraryWindow(app) {
           h('span', { class: 'c-duration', text: fmtTime(t.duration) }),
           h('span', { class: 'c-owner', text: t.owner }),
           h('span', { class: 'c-plays', text: String(t.plays) }),
+          h('span', { class: 'c-bpm', text: t.bpm ? String(Math.round(t.bpm)) : '' }),
         ),
       );
     }
