@@ -1,135 +1,16 @@
 <!doctype html>
-<!--
-  The `lang` attribute starts as English (the canonical source language) and
-  is overwritten at boot by main.ts → getLang() once the i18n layer has
-  resolved localStorage + navigator.language. The HudControls language
-  switcher updates it on every flip.
--->
-<html lang="en">
+<html lang="it">
   <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-    />
-    <meta name="theme-color" content="#0a0a0c" />
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0a0c'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='%23ff6a14' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E"
-    />
-    <title>HandSynth</title>
-    <meta
-      name="description"
-      content="A gestural synthesizer played with your hands via webcam."
-    />
-    <style>
-      :root {
-        color-scheme: dark;
-      }
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-      }
-      html,
-      body,
-      #app {
-        margin: 0;
-        padding: 0;
-        height: 100%;
-        overflow: hidden;
-        background: #0a0a0c;
-        color: #c8c8d4;
-        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-      }
-      /* Subtle hex-grid pattern + CRT vignette overlay. */
-      body::before {
-        content: '';
-        position: fixed;
-        inset: 0;
-        z-index: 0;
-        pointer-events: none;
-        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='48' viewBox='0 0 28 48'><g fill='none' stroke='%233a3a48' stroke-width='1' stroke-opacity='0.35'><path d='M14 0 L28 8 L28 24 L14 32 L0 24 L0 8 Z'/><path d='M14 16 L28 24 L28 40 L14 48 L0 40 L0 24 Z'/></g></svg>");
-        background-size: 28px 48px;
-        opacity: 0.06;
-      }
-      body::after {
-        content: '';
-        position: fixed;
-        inset: 0;
-        z-index: 4;
-        pointer-events: none;
-        background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.45) 100%);
-      }
-      #app {
-        position: fixed;
-        inset: 0;
-      }
-      /*
-       * Webcam + visualizer are BOTH CSS-mirrored (selfie style). MediaPipe
-       * reads the raw pixel data of the <video> element, which is unaffected
-       * by CSS transforms — so MediaPipe still computes landmarks in the
-       * un-mirrored frame, but they're DRAWN on a flipped canvas, which
-       * lands them on top of the flipped video where the user expects to
-       * see their own hand. The HandTracker already swaps MediaPipe's
-       * handedness labels for the un-mirrored input, so right/left mappings
-       * are correct.
-       */
-      #webcam {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        opacity: 0.18;
-        z-index: 1;
-        pointer-events: none;
-        transform: scaleX(-1);
-      }
-      #visualizer {
-        position: absolute;
-        inset: 0;
-        z-index: 2;
-      }
-      /*
-       * NOTE on mirroring: only the <video> is CSS-flipped. The HandTracker
-       * x-mirrors landmarks on output, so every downstream consumer
-       * (visualizer skeleton, gesture distance, palmCenter) already lives in
-       * the same selfie-mirrored frame as the visible video. Flipping the
-       * canvas too would double-mirror.
-       */
-      #ui-layer {
-        position: absolute;
-        inset: 0;
-        z-index: 3;
-        pointer-events: none;
-      }
-      #ui-layer > * {
-        pointer-events: auto;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        * {
-          transition: none !important;
-          animation: none !important;
-        }
-      }
-    </style>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AmpCloud</title>
+    <meta http-equiv="refresh" content="0; url=ampcloud/" />
+    <script>
+      // keep #invito=… / #brano=… links working from the old address
+      location.replace('ampcloud/' + location.search + location.hash);
+    </script>
   </head>
-  <body>
-    <div id="app">
-      <video id="webcam" autoplay playsinline muted></video>
-      <canvas id="visualizer"></canvas>
-      <div id="ui-layer">
-        <div id="onboarding"></div>
-        <div id="settings-host"></div>
-        <div id="terminal-host"></div>
-        <div id="vibe-selector" hidden></div>
-        <div id="error-overlay"></div>
-        <div id="hud-controls-host"></div>
-        <div id="help-host"></div>
-        <div id="calibration-host"></div>
-      </div>
-    </div>
-    <script type="module" src="/src/main.ts"></script>
+  <body style="background:#0e0e16;color:#c8c8d8;font:14px Tahoma,Verdana,sans-serif">
+    <p><a href="ampcloud/" style="color:#00e85c">Vai ad AmpCloud</a></p>
   </body>
 </html>
