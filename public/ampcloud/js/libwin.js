@@ -1,6 +1,6 @@
 // Shared library window: every track uploaded by the group, searchable and
 // sortable. Upload, enqueue, play, edit, delete, copy share link.
-import { h, showMenu, fmtTime, confirmBox, dialog, field } from './ui.js?v=1.3.0';
+import { h, showMenu, fmtTime, confirmBox, dialog, field } from './ui.js?v=1.3.1';
 
 const COLS = [
   { key: 'title', label: 'Titolo' },

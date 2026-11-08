@@ -25,9 +25,9 @@ function loadLame() {
 }
 
 /** Target for every upload: small files that still sound good. */
-export const TARGET_KBPS = 96;
+export const TARGET_KBPS = 64;
 /** MP3s at or below this bitrate are uploaded as they are (no re-encode). */
-const KEEP_MP3_UP_TO = 128;
+const KEEP_MP3_UP_TO = 80;
 
 /** Compress unless the file is already a light MP3. `meta.bitrate` is the
  *  average kbps measured from size and duration. */
@@ -69,7 +69,7 @@ export async function toMp3(file, onProgress = () => {}) {
   // highest bitrate that fits, with 3% margin for headers / padding
   const budgetKbps = ((MAX_UPLOAD_BYTES * 0.97 * 8) / duration / 1000) | 0;
   // mono needs about two thirds of the stereo bitrate for the same quality
-  const want = channels === 1 ? 64 : TARGET_KBPS;
+  const want = channels === 1 ? 48 : TARGET_KBPS;
   const bitrate = MP3_RATES.find((r) => r <= Math.min(want, budgetKbps));
   if (!bitrate) throw new Error('Brano troppo lungo per stare in 50 MB anche come MP3');
 
