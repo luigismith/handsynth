@@ -110,3 +110,95 @@ export async function toMp3(file, onProgress = () => {}) {
   if (mp3.size > MAX_UPLOAD_BYTES) throw new Error('Anche convertito in MP3 supera i 50 MB');
   return { file: mp3, duration, bitrate, sampleRate: SAMPLE_RATE, channels };
 }
+
+// ---------------------------------------------------------------------------
+// Library compression (admin tool): decode on the main thread, encode in a
+// pool of Web Workers so several tracks are processed at once.
+// ---------------------------------------------------------------------------
+
+/** Decode any browser-supported audio to 44.1 kHz PCM (AudioBuffer). */
+export async function decodeAudio(arrayBuffer) {
+  const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const ctx = new Offline(2, 1, SAMPLE_RATE);
+  return new Promise((resolve, reject) => {
+    const p = ctx.decodeAudioData(arrayBuffer, resolve, reject);
+    if (p?.then) p.then(resolve, reject);
+  });
+}
+
+const toInt16 = (f32) => {
+  const out = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    const s = f32[i] < -1 ? -1 : f32[i] > 1 ? 1 : f32[i];
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+};
+
+export class EncoderPool {
+  constructor(size = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1))) {
+    this.size = size;
+    this.workers = [];
+    this.idle = [];
+    this.waiting = [];
+    this.jobs = new Map();
+    this.nextId = 1;
+  }
+
+  _spawn() {
+    const w = new Worker(new URL('./encoder-worker.js?v=1.4.0', import.meta.url));
+    w.onmessage = (e) => {
+      const job = this.jobs.get(e.data.id);
+      if (!job) return;
+      if (e.data.progress !== undefined) return job.onProgress(e.data.progress);
+      this.jobs.delete(e.data.id);
+      this._release(w);
+      if (e.data.error) job.reject(new Error(e.data.error));
+      else job.resolve(e.data.parts);
+    };
+    w.onerror = (e) => {
+      for (const [id, job] of this.jobs) if (job.worker === w) (this.jobs.delete(id), job.reject(new Error(e.message || 'Errore encoder')));
+    };
+    this.workers.push(w);
+    return w;
+  }
+
+  _acquire() {
+    if (this.idle.length) return Promise.resolve(this.idle.pop());
+    if (this.workers.length < this.size) return Promise.resolve(this._spawn());
+    return new Promise((r) => this.waiting.push(r));
+  }
+
+  _release(w) {
+    const next = this.waiting.shift();
+    if (next) next(w);
+    else this.idle.push(w);
+  }
+
+  /**
+   * MP3-encode an AudioBuffer. The PCM is converted to 16 bit and handed to a
+   * worker (transferred, not copied). Resolves with {blob, kbps, channels}.
+   */
+  async encode(audio, kbpsStereo, kbpsMono, onProgress = () => {}) {
+    const channels = Math.min(2, audio.numberOfChannels);
+    const left = toInt16(audio.getChannelData(0));
+    const right = channels > 1 ? toInt16(audio.getChannelData(1)) : null;
+    const kbps = channels > 1 ? kbpsStereo : kbpsMono;
+    const w = await this._acquire();
+    const id = this.nextId++;
+    const parts = await new Promise((resolve, reject) => {
+      this.jobs.set(id, { resolve, reject, onProgress, worker: w });
+      const transfer = right ? [left.buffer, right.buffer] : [left.buffer];
+      w.postMessage({ id, left, right, sampleRate: SAMPLE_RATE, kbps }, transfer);
+    });
+    return { blob: new Blob(parts, { type: 'audio/mpeg' }), kbps, channels };
+  }
+
+  close() {
+    for (const w of this.workers) w.terminate();
+    this.workers = [];
+    this.idle = [];
+  }
+}
+
+export { KEEP_MP3_UP_TO };

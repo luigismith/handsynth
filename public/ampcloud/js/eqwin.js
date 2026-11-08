@@ -1,7 +1,7 @@
 // 10-band graphic equalizer window with preamp, ON/AUTO and presets.
-import { h, slider, showMenu, store, promptBox, toast } from './ui.js?v=1.3.1';
-import { SMALL, drawText } from './font.js?v=1.3.1';
-import { EQ_LABELS } from './engine.js?v=1.3.1';
+import { h, slider, showMenu, store, promptBox, toast } from './ui.js?v=1.4.0';
+import { SMALL, drawText } from './font.js?v=1.4.0';
+import { EQ_LABELS } from './engine.js?v=1.4.0';
 
 // Original preset curves (dB, -12..+12), 10 bands 60 Hz → 16 kHz.
 export const PRESETS = {

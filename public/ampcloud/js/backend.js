@@ -203,15 +203,11 @@ export class Backend {
     return rows.map(toTrack);
   }
 
-  /** Upload a file with progress, then register it in the database. */
-  async uploadTrack(file, meta, onProgress = () => {}) {
+  /** PUT a blob into the bucket at `path`, with upload progress 0..1. */
+  async putObject(path, blob, mime, onProgress = () => {}) {
     const { data } = await this.sb.auth.getSession();
     const token = data?.session?.access_token;
-    if (!token || !this.user) throw new Error('Sessione scaduta: rientra');
-    const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (!MIME[ext]) throw new Error(`Formato non supportato (.${ext}). Usa: ${FORMATS.join(', ')}`);
-    const path = `${this.user.id}/${uuid()}.${ext}`;
-
+    if (!token) throw new Error('Sessione scaduta: rientra');
     await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${this.url}/storage/v1/object/${BUCKET}/${path}`);
@@ -219,7 +215,7 @@ export class Backend {
       xhr.setRequestHeader('apikey', this.key);
       xhr.setRequestHeader('x-upsert', 'false');
       xhr.setRequestHeader('cache-control', '86400');
-      xhr.setRequestHeader('Content-Type', MIME[ext]);
+      xhr.setRequestHeader('Content-Type', mime);
       xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) return resolve();
@@ -233,8 +229,53 @@ export class Backend {
         reject(new Error(msg));
       };
       xhr.onerror = () => reject(new Error('Caricamento interrotto (rete)'));
-      xhr.send(file);
+      xhr.send(blob);
     });
+  }
+
+  /**
+   * Swap a track's audio for a re-encoded MP3 (admin library compression):
+   * upload the new file, point the row at it, then delete the old file.
+   */
+  async replaceTrackAudio(track, blob, meta) {
+    if (!this.user) throw new Error('Sessione scaduta: rientra');
+    const path = `${this.user.id}/${uuid()}.mp3`;
+    await this.putObject(path, blob, 'audio/mpeg');
+    let row;
+    try {
+      row = await this._check(
+        this.sb
+          .from('tracks')
+          .update({
+            path,
+            size: blob.size,
+            format: 'mp3',
+            bitrate: meta.bitrate,
+            sample_rate: meta.sampleRate,
+            channels: meta.channels,
+            duration: meta.duration,
+          })
+          .eq('id', track.id)
+          .select('*, owner:profiles(username)')
+          .single(),
+      );
+    } catch (err) {
+      await this.sb.storage.from(BUCKET).remove([path]);
+      throw err;
+    }
+    await this.sb.storage.from(BUCKET).remove([track.path]);
+    this.urlCache.delete(track.id);
+    return toTrack(row);
+  }
+
+  /** Upload a file with progress, then register it in the database. */
+  async uploadTrack(file, meta, onProgress = () => {}) {
+    const { data } = await this.sb.auth.getSession();
+    if (!data?.session?.access_token || !this.user) throw new Error('Sessione scaduta: rientra');
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!MIME[ext]) throw new Error(`Formato non supportato (.${ext}). Usa: ${FORMATS.join(', ')}`);
+    const path = `${this.user.id}/${uuid()}.${ext}`;
+    await this.putObject(path, file, MIME[ext], onProgress);
 
     try {
       const row = await this._check(

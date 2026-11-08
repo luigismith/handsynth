@@ -1,9 +1,9 @@
 // AmpCloud bootstrap and app controller: configuration, login, playback
 // queue, uploads, keyboard shortcuts, menus and lock-screen controls.
-import { Backend, FORMATS } from './backend.js?v=1.3.1';
-import { Engine, IS_IOS } from './engine.js?v=1.3.1';
-import { readTags } from './tags.js?v=1.3.1';
-import { needsConversion, canUploadAsIs, toMp3, CONVERT_ONLY } from './convert.js?v=1.3.1';
+import { Backend, FORMATS } from './backend.js?v=1.4.0';
+import { Engine, IS_IOS } from './engine.js?v=1.4.0';
+import { readTags } from './tags.js?v=1.4.0';
+import { needsConversion, canUploadAsIs, toMp3, CONVERT_ONLY, TARGET_KBPS, KEEP_MP3_UP_TO, decodeAudio, EncoderPool } from './convert.js?v=1.4.0';
 import {
   $,
   h,
@@ -17,13 +17,13 @@ import {
   toast,
   store,
   fmtTime,
-} from './ui.js?v=1.3.1';
-import { createMainWindow } from './mainwin.js?v=1.3.1';
-import { createEqWindow } from './eqwin.js?v=1.3.1';
-import { createPlaylistWindow } from './plwin.js?v=1.3.1';
-import { createLibraryWindow } from './libwin.js?v=1.3.1';
+} from './ui.js?v=1.4.0';
+import { createMainWindow } from './mainwin.js?v=1.4.0';
+import { createEqWindow } from './eqwin.js?v=1.4.0';
+import { createPlaylistWindow } from './plwin.js?v=1.4.0';
+import { createLibraryWindow } from './libwin.js?v=1.4.0';
 
-const VERSION = '1.3.1';
+const VERSION = '1.4.0';
 const b64 = {
   enc: (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
   dec: (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))),
@@ -723,6 +723,131 @@ class App {
     this.upload(jobs);
   }
 
+  /**
+   * Admin tool: re-encode every track that isn't already a light MP3 to
+   * TARGET_KBPS, swapping the file in place (same id, plays, playlists).
+   * Runs in this browser, several tracks at a time; safe to stop and resume.
+   */
+  async compressLibrary() {
+    if (!this.user.isAdmin) return alertBox('COMPRIMI LIBRERIA', 'Solo l’admin può comprimere la libreria.');
+    if (this._compress) return toast('La compressione è già in corso');
+    const isLight = (t) => t.format === 'mp3' && t.bitrate > 0 && t.bitrate <= KEEP_MP3_UP_TO;
+    const todo = this.library.filter((t) => !isLight(t)).sort((a, b) => b.size - a.size);
+    if (!todo.length) return alertBox('COMPRIMI LIBRERIA', 'Tutti i brani sono già compressi.');
+    const MB = (b) => Math.round(b / 1048576).toLocaleString('it-IT');
+    const before = todo.reduce((s, t) => s + t.size, 0);
+    const after = todo.reduce((s, t) => s + (t.duration || 0) * TARGET_KBPS * 125, 0);
+    const pool = new EncoderPool();
+    const minutes = Math.ceil(todo.reduce((s, t) => s + (t.duration || 0), 0) / (8 * pool.size) / 60);
+    const go = await dialog({
+      title: 'COMPRIMI LIBRERIA',
+      body: h(
+        'div',
+        {},
+        h('p', {
+          class: 'dlg-text',
+          text: `${todo.length} brani da comprimere: ${MB(before)} MB → circa ${MB(after)} MB (MP3 ${TARGET_KBPS} kbps). Titoli, ascolti e playlist restano.`,
+        }),
+        h('p', {
+          class: 'dlg-text',
+          text: `Lavora questo computer: tienilo acceso con questa pagina aperta (circa ${minutes <= 1 ? 'un minuto' : minutes < 90 ? `${minutes} minuti` : `${Math.round(minutes / 6) / 10} ore`}, dipende dal computer e dalla connessione). Puoi interrompere dal menu O e riprendere quando vuoi: i brani già fatti vengono saltati.`,
+        }),
+        h('p', { class: 'dlg-text small', text: 'Gli originali sul server vengono sostituiti: l’operazione non si può annullare.' }),
+      ),
+      buttons: [
+        { label: 'Annulla', value: null },
+        { label: 'Comprimi', value: true, primary: true },
+      ],
+    });
+    if (!go) return pool.close();
+
+    const run = (this._compress = { stop: false, done: 0, failed: 0, skipped: 0, saved: 0, total: todo.length });
+    const warn = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    let wake = null;
+    try {
+      wake = await navigator.wakeLock?.request('screen');
+    } catch {}
+    this.backend.log('compress_run', { count: todo.length, mb: MB(before), workers: pool.size, v: VERSION });
+    const show = () => {
+      const n = run.done + run.failed + run.skipped;
+      this.uploading = `COMPRIMO LIBRERIA ${n}/${run.total} - RISPARMIATI ${MB(run.saved)} MB`;
+      this.setLibraryStatus?.(`Compressione ${n}/${run.total} · risparmiati ${MB(run.saved)} MB${run.stop ? ' · mi fermo…' : ''}`);
+    };
+    show();
+
+    // memory guard: decoded audio is big, so cap the seconds of audio in flight
+    const BUDGET = 1500;
+    let inUse = 0;
+    const waiters = [];
+    const acquire = async (cost) => {
+      while (inUse > 0 && inUse + cost > BUDGET) await new Promise((r) => waiters.push(r));
+      inUse += cost;
+    };
+    const release = (cost) => {
+      inUse -= cost;
+      waiters.splice(0).forEach((r) => r());
+    };
+
+    const one = async (t) => {
+      const cost = Math.min(BUDGET, Math.max(60, t.duration || 300));
+      await acquire(cost);
+      try {
+        if (run.stop) return;
+        if (this.current?.id === t.id && this.engine.playing) {
+          run.skipped++; // don't swap the file under the track that's playing
+          return;
+        }
+        const url = this.backend.cachedUrl(t) || (await this.backend.streamUrl(t));
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`download ${res.status}`);
+        const audio = await decodeAudio(await res.arrayBuffer());
+        const { blob, kbps, channels } = await pool.encode(audio, TARGET_KBPS, 48);
+        if (blob.size >= t.size * 0.9) {
+          run.skipped++;
+          return;
+        }
+        const nt = await this.backend.replaceTrackAudio(t, blob, { bitrate: kbps, sampleRate: 44100, channels, duration: audio.duration });
+        const i = this.library.findIndex((x) => x.id === t.id);
+        if (i >= 0) this.library[i] = nt;
+        this.tracks.set(t.id, nt);
+        run.saved += t.size - blob.size;
+        run.done++;
+        this.backend.log('compress_ok', { id: t.id, from: t.size, to: blob.size });
+      } catch (err) {
+        run.failed++;
+        this.backend.log('compress_fail', { id: t.id, title: t.title, size: t.size, error: String(err?.message || err).slice(0, 300) });
+      } finally {
+        release(cost);
+        show();
+      }
+    };
+
+    let next = 0;
+    const lanes = Array.from({ length: pool.size + 1 }, async () => {
+      while (next < todo.length && !run.stop) await one(todo[next++]);
+    });
+    await Promise.all(lanes);
+    pool.close();
+    window.removeEventListener('beforeunload', warn);
+    wake?.release?.().catch?.(() => {});
+    this._compress = null;
+    this.uploading = null;
+    this.setLibraryStatus?.(null);
+    this.emit('library');
+    this.backend.log('compress_end', { done: run.done, failed: run.failed, skipped: run.skipped, savedMB: MB(run.saved) });
+    alertBox(
+      'COMPRIMI LIBRERIA',
+      `${run.stop ? 'Interrotta. ' : 'Finito! '}Compressi ${run.done} brani, risparmiati ${MB(run.saved)} MB.` +
+        (run.failed ? ` ${run.failed} non riusciti (riprova più tardi).` : '') +
+        (run.skipped ? ` ${run.skipped} saltati.` : '') +
+        (run.stop || run.failed ? ' Rilancia la compressione per continuare: i brani già fatti vengono saltati.' : ''),
+    );
+  }
+
   /** Find recordings uploaded more than once and delete the extra copies. */
   async removeDuplicates() {
     const lib = this.library;
@@ -782,6 +907,17 @@ class App {
       ],
     });
     if (!ok) return;
+    // point playlists at the copy we keep, so nothing disappears from them
+    const remap = new Map(toDelete.map(({ t, keep }) => [t.id, keep.id]));
+    const fix = (ids) => ids.map((id) => remap.get(id) || id).filter((id, i, a) => a.indexOf(id) === i);
+    const curId = this.playlist[this.index];
+    const local = fix(this.playlist);
+    this.setPlaylist(local, curId ? local.indexOf(remap.get(curId) || curId) : -1);
+    for (const p of this.playlists) {
+      if (!p.trackIds.some((id) => remap.has(id)) || !(p.ownerId === this.user.id || this.user.isAdmin)) continue;
+      p.trackIds = fix(p.trackIds);
+      await this.backend.savePlaylist({ id: p.id, name: p.name, trackIds: p.trackIds }).catch(() => {});
+    }
     let n = 0;
     for (const { t } of toDelete) {
       this.setLibraryStatus?.(`Elimino duplicati ${++n}/${toDelete.length}…`);
@@ -957,6 +1093,13 @@ class App {
         { label: 'Carica brani…', hint: 'L', action: () => this.pickFiles() },
         { label: 'Importa da Google Drive…', action: () => this.importFromDrive() },
         { label: 'Elimina file duplicati…', action: () => this.removeDuplicates() },
+        ...(this.user.isAdmin
+          ? [
+              this._compress
+                ? { label: 'Interrompi la compressione', action: () => ((this._compress.stop = true), toast('Finisco i brani in corso e mi fermo')) }
+                : { label: 'Comprimi la libreria (admin)…', action: () => this.compressLibrary() },
+            ]
+          : []),
         { label: 'Cerca nella libreria…', hint: 'J', action: () => this.focusSearch() },
         { label: 'Scarica il brano in ascolto', action: () => this.downloadTracks([this.current]), disabled: !this.current },
         '-',
