@@ -70,6 +70,7 @@ Scorciatoie: **X** play, **C** pausa, **V** stop, **Z/B** precedente/successivo,
 
 ## Limiti del piano gratuito di Supabase
 - **Spazio**: ogni brano viene compresso nel browser in MP3 a 64 kbps (48 kbps se mono) prima di caricarlo: circa 0,5 MB al minuto, ascoltabile bene soprattutto da telefono. Gli MP3 già leggeri (fino a 80 kbps) vengono caricati così come sono. Il piano gratuito ha circa 1 GB di spazio: con la compressione sono circa 35 ore di musica. Per cambiare qualità: `TARGET_KBPS` in `js/convert.js`.
+- **Libreria già caricata**: l'admin, da un computer, apre il menu **O → Comprimi la libreria (admin)…**. Il sito ricomprime a 64 kbps i brani più pesanti, alcuni in parallelo, e sostituisce i file al loro posto: titoli, ascolti e playlist restano. Tieni la pagina aperta; si può interrompere dallo stesso menu e riprendere, perché i brani già fatti vengono saltati.
 - **50 MB per file** dopo la compressione: a 64 kbps ci stanno circa 100 minuti.
 - **iPhone**: il selettore file mostra solo l'app **File**. I brani dell'app Musica non si vedono: salvali prima in File (o in iCloud Drive).
 - Spazio e traffico mensile sono limitati (circa 1 GB di file). I numeri attuali sono su https://supabase.com/pricing, l'occupazione in **Project Settings → Usage**.
