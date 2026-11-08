@@ -1,9 +1,9 @@
 // AmpCloud bootstrap and app controller: configuration, login, playback
 // queue, uploads, keyboard shortcuts, menus and lock-screen controls.
-import { Backend, FORMATS } from './backend.js?v=1.2.0';
-import { Engine, IS_IOS } from './engine.js?v=1.2.0';
-import { readTags } from './tags.js?v=1.2.0';
-import { needsConversion, toMp3, CONVERT_ONLY } from './convert.js?v=1.2.0';
+import { Backend, FORMATS } from './backend.js?v=1.3.0';
+import { Engine, IS_IOS } from './engine.js?v=1.3.0';
+import { readTags } from './tags.js?v=1.3.0';
+import { needsConversion, canUploadAsIs, toMp3, CONVERT_ONLY } from './convert.js?v=1.3.0';
 import {
   $,
   h,
@@ -17,13 +17,13 @@ import {
   toast,
   store,
   fmtTime,
-} from './ui.js?v=1.2.0';
-import { createMainWindow } from './mainwin.js?v=1.2.0';
-import { createEqWindow } from './eqwin.js?v=1.2.0';
-import { createPlaylistWindow } from './plwin.js?v=1.2.0';
-import { createLibraryWindow } from './libwin.js?v=1.2.0';
+} from './ui.js?v=1.3.0';
+import { createMainWindow } from './mainwin.js?v=1.3.0';
+import { createEqWindow } from './eqwin.js?v=1.3.0';
+import { createPlaylistWindow } from './plwin.js?v=1.3.0';
+import { createLibraryWindow } from './libwin.js?v=1.3.0';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const b64 = {
   enc: (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
   dec: (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))),
@@ -578,7 +578,7 @@ class App {
       const total = done + this._uploadFailures.length + this._uploadQueue.length + 1;
       const n = done + this._uploadFailures.length + 1;
       let label = item.drive ? item.drive.name || 'file da Google Drive' : item.name;
-      const VERBS = { CARICO: 'Carico', CONVERTO: 'Converto in MP3', DRIVE: 'Scarico da Drive' };
+      const VERBS = { CARICO: 'Carico', COMPRIMO: 'Comprimo', DRIVE: 'Scarico da Drive' };
       const status = (verb, p) => {
         const pct = p === undefined ? '' : ` ${Math.round(p * 100)}%`;
         this.uploading = `${verb} ${n}/${total}: ${label}${pct}`;
@@ -602,19 +602,27 @@ class App {
         const dup = this.findDuplicate({ size: file.size, title: meta.title, artist: meta.artist, duration: meta.duration });
         if (dup) throw Object.assign(new Error(`c’è già in libreria: “${dup.title}” (caricato da ${dup.owner})`), { duplicate: true });
         let upload = file;
-        if (needsConversion(file)) {
+        if (needsConversion(file, meta)) {
           stage = 'convert';
-          // too big for the free plan (or AIFF): make a 320 kbps MP3 first
-          status('CONVERTO', 0);
-          const mp3 = await toMp3(file, (p) => status('CONVERTO', p));
-          upload = mp3.file;
-          Object.assign(meta, {
-            duration: mp3.duration,
-            bitrate: mp3.bitrate,
-            sampleRate: mp3.sampleRate,
-            channels: mp3.channels,
-            format: 'mp3',
-          });
+          // compress to a light MP3 (96 kbps): a fraction of the space, still sounds good
+          status('COMPRIMO', 0);
+          try {
+            const mp3 = await toMp3(file, (p) => status('COMPRIMO', p));
+            if (mp3.file.size < file.size || !canUploadAsIs(file)) {
+              upload = mp3.file;
+              Object.assign(meta, {
+                duration: mp3.duration,
+                bitrate: mp3.bitrate,
+                sampleRate: mp3.sampleRate,
+                channels: mp3.channels,
+                format: 'mp3',
+              });
+            }
+          } catch (err) {
+            // e.g. a format this browser can't decode: send the original if it fits
+            if (!canUploadAsIs(file)) throw err;
+            this.backend.log('compress_skip', { ...info, error: String(err?.message || err).slice(0, 200) });
+          }
         }
         stage = 'upload';
         status('CARICO', 0);
