@@ -1,9 +1,9 @@
 // AmpCloud bootstrap and app controller: configuration, login, playback
 // queue, uploads, keyboard shortcuts, menus and lock-screen controls.
-import { Backend, FORMATS } from './backend.js?v=1.4.0';
-import { Engine, IS_IOS } from './engine.js?v=1.4.0';
-import { readTags } from './tags.js?v=1.4.0';
-import { needsConversion, canUploadAsIs, toMp3, CONVERT_ONLY, TARGET_KBPS, KEEP_MP3_UP_TO, decodeAudio, EncoderPool } from './convert.js?v=1.4.0';
+import { Backend, FORMATS } from './backend.js?v=1.5.0';
+import { Engine, IS_IOS } from './engine.js?v=1.5.0';
+import { readTags } from './tags.js?v=1.5.0';
+import { needsConversion, canUploadAsIs, toMp3, CONVERT_ONLY, TARGET_KBPS, KEEP_MP3_UP_TO, decodeAudio, EncoderPool } from './convert.js?v=1.5.0';
 import {
   $,
   h,
@@ -17,13 +17,15 @@ import {
   toast,
   store,
   fmtTime,
-} from './ui.js?v=1.4.0';
-import { createMainWindow } from './mainwin.js?v=1.4.0';
-import { createEqWindow } from './eqwin.js?v=1.4.0';
-import { createPlaylistWindow } from './plwin.js?v=1.4.0';
-import { createLibraryWindow } from './libwin.js?v=1.4.0';
+} from './ui.js?v=1.5.0';
+import { createMainWindow } from './mainwin.js?v=1.5.0';
+import { createEqWindow } from './eqwin.js?v=1.5.0';
+import { createPlaylistWindow } from './plwin.js?v=1.5.0';
+import { createLibraryWindow } from './libwin.js?v=1.5.0';
+import { createAnalyzerWindow } from './anwin.js?v=1.5.0';
+import { detectBpm } from './bpm.js?v=1.5.0';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const b64 = {
   enc: (obj) => btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
   dec: (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))),
@@ -341,6 +343,7 @@ class App {
     if (this.history.at(-1) !== i) this.history.push(i);
     this.emit('track');
     this.updateMediaSession();
+    setTimeout(() => this.current === t && this.analyzeBpm(t), 1500);
     try {
       // With a pre-signed URL, load + play run synchronously inside the tap:
       // iPhone Safari refuses play() that comes after a network wait.
@@ -406,6 +409,43 @@ class App {
       return this.playIndex(this.history.pop());
     }
     this.playIndex(this.index > 0 ? this.index - 1 : this.repeat ? n - 1 : 0);
+  }
+
+  // ----- BPM -----
+  bpmStatus(t) {
+    if (!t) return '';
+    const s = this._bpm?.[t.id];
+    if (s) return s;
+    return t.bpm ? 'auto' : '';
+  }
+
+  /** Detect the tempo of a track once (downloads the small MP3 again). */
+  async analyzeBpm(t) {
+    this._bpm ||= {};
+    if (!t || t.bpm || this._bpm[t.id] || (t.duration && t.duration > 900)) return;
+    this._bpm[t.id] = 'analyzing';
+    try {
+      const url = this.backend.cachedUrl(t) || (await this.backend.streamUrl(t));
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`download ${res.status}`);
+      const r = await detectBpm(await res.arrayBuffer());
+      if (!r) throw new Error('nessun ritmo');
+      await this.setTrackBpm(t, r.bpm, r.offset, 'auto');
+    } catch (err) {
+      this._bpm[t.id] = 'failed';
+      this.backend.log('bpm_fail', { id: t.id, error: String(err?.message || err).slice(0, 200) });
+    }
+  }
+
+  async setTrackBpm(t, bpm, offset, how) {
+    this._bpm ||= {};
+    for (const x of [t, this.tracks.get(t.id), this.current?.id === t.id ? this.current : null]) {
+      if (x) (x.bpm = bpm), (x.beatOffset = offset);
+    }
+    this._bpm[t.id] = how;
+    this.emit('library');
+    if (how === 'manual') toast(`BPM impostati: ${bpm}`);
+    await this.backend.setBpm(t.id, bpm, offset).catch((err) => toast(`BPM non salvati: ${err.message}`));
   }
 
   setShuffle(v) {
@@ -1107,6 +1147,7 @@ class App {
         { label: 'Equalizzatore', hint: 'Alt+G', checked: wm.isVisible('eq'), action: () => wm.toggle('eq') },
         { label: 'Playlist', hint: 'Alt+E', checked: wm.isVisible('pl'), action: () => wm.toggle('pl') },
         { label: 'Libreria condivisa', hint: 'Alt+L', checked: wm.isVisible('lib'), action: () => wm.toggle('lib') },
+        { label: 'Analizzatore (BPM, VU)', hint: 'Alt+A', checked: wm.isVisible('an'), action: () => wm.toggle('an') },
         { label: 'Dimensione', items: this.scaleItems() },
         { label: 'Ripristina posizione finestre', action: () => wm.resetLayout() },
         '-',
@@ -1157,6 +1198,7 @@ class App {
         row('Dimensione', `${mb} MB`),
         row('Caricato da', `${t.owner} il ${new Date(t.createdAt).toLocaleString('it-IT')}`),
         row('Ascolti', String(t.plays)),
+        row('BPM', t.bpm ? `${t.bpm}` : 'non ancora rilevati'),
       ),
       buttons: [
         { label: 'Chiudi', value: null },
@@ -1245,7 +1287,7 @@ class App {
       if (e.target.closest?.('input, textarea, select') || document.querySelector('.overlay')) return;
       const k = e.key.toLowerCase();
       if (e.altKey) {
-        const map = { g: 'eq', e: 'pl', l: 'lib' };
+        const map = { g: 'eq', e: 'pl', l: 'lib', a: 'an' };
         if (map[k]) {
           e.preventDefault();
           this.wm.toggle(map[k]);
@@ -1317,7 +1359,14 @@ class App {
     wm.add(createMainWindow(this), { id: 'main', x: 0, y: 0 });
     wm.add(createEqWindow(this), { id: 'eq', x: 0, y: 116, hidden: phone });
     wm.add(createPlaylistWindow(this), { id: 'pl', x: 0, y: 232, resizable: true, w: 275, h: 232, minW: 275, minH: 116 });
-    wm.add(createLibraryWindow(this), { id: 'lib', x: 275, y: 0, resizable: true, w: 375, h: 464, minW: 275, minH: 116 });
+    wm.add(createLibraryWindow(this), { id: 'lib', x: 275, y: 0, resizable: true, w: 375, h: 348, minW: 275, minH: 116 });
+    // the analyzer docks under the library, wherever the user left it
+    const libPos = store.get('win:lib', null);
+    wm.add(createAnalyzerWindow(this), {
+      id: 'an',
+      x: libPos ? libPos.x : 275,
+      y: libPos ? libPos.y + (libPos.shade ? 14 : libPos.h) : 348,
+    });
     wm.onchange = () => this.emit('state');
     wm.fit();
     wm.focus('main');

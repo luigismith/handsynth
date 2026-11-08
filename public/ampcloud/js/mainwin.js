@@ -1,7 +1,7 @@
 // The main player window: LCD time + visualizer, scrolling title, bitrate
 // info, volume / balance / seek sliders, transport, shuffle / repeat.
-import { h, icon, slider, fmtTime, store, showMenu } from './ui.js?v=1.4.0';
-import { BIG, SMALL, drawText, drawDigit, textWidth } from './font.js?v=1.4.0';
+import { h, icon, slider, fmtTime, store, showMenu } from './ui.js?v=1.5.0';
+import { BIG, SMALL, drawText, drawDigit, textWidth } from './font.js?v=1.5.0';
 
 const GREEN = '#00e85c';
 const GREEN_DIM = '#0b3a1e';
@@ -48,7 +48,7 @@ export function createMainWindow(app) {
     btn('', 'Opzioni (menu)', (e) => app.showOptions(e.currentTarget), 'O'),
     btn('', 'Libreria condivisa', () => app.wm.toggle('lib'), 'L'),
     btn('', 'Info brano', () => app.showTrackInfo(), 'I'),
-    btn('', 'Dimensione finestre', (e) => app.showScaleMenu(e.currentTarget), 'D'),
+    btn('', 'Analizzatore: BPM, oscilloscopio, VU (Alt+A)', () => app.wm.toggle('an'), 'A'),
     btn('', 'Modalità visualizzatore', () => cycleVis(), 'V'),
   );
 

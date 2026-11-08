@@ -88,9 +88,22 @@ export class Engine extends EventTarget {
     this.analyser.smoothingTimeConstant = 0.6;
     this.gain = ctx.createGain();
     this.panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    // stereo taps for the analyzer window (oscilloscope, VU meter)
+    this.splitter = ctx.createChannelSplitter(2);
+    this.anL = ctx.createAnalyser();
+    this.anR = ctx.createAnalyser();
+    for (const a of [this.anL, this.anR]) {
+      a.fftSize = 2048;
+      a.smoothingTimeConstant = 0;
+    }
+    this.scopeL = new Float32Array(2048);
+    this.scopeR = new Float32Array(2048);
     let node = this.source.connect(this.preamp);
     for (const f of this.filters) node = node.connect(f);
     node.connect(this.analyser);
+    node.connect(this.splitter);
+    this.splitter.connect(this.anL, 0);
+    this.splitter.connect(this.anR, 1);
     node = node.connect(this.gain);
     if (this.panner) node = node.connect(this.panner);
     node.connect(ctx.destination);
@@ -208,6 +221,14 @@ export class Engine extends EventTarget {
       out[i] = m / 255;
     }
     return true;
+  }
+
+  /** Last ~46 ms of left/right samples (post-EQ), or null without the graph. */
+  scope() {
+    if (!this.hasGraph || !this.anL) return null;
+    this.anL.getFloatTimeDomainData(this.scopeL);
+    this.anR.getFloatTimeDomainData(this.scopeR);
+    return { l: this.scopeL, r: this.scopeR, sampleRate: this.ctx.sampleRate };
   }
 
   waveform() {

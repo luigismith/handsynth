@@ -146,7 +146,7 @@ export class EncoderPool {
   }
 
   _spawn() {
-    const w = new Worker(new URL('./encoder-worker.js?v=1.4.0', import.meta.url));
+    const w = new Worker(new URL('./encoder-worker.js?v=1.5.0', import.meta.url));
     w.onmessage = (e) => {
       const job = this.jobs.get(e.data.id);
       if (!job) return;

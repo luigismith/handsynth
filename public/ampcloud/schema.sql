@@ -148,6 +148,18 @@ drop policy if exists "tracks: eliminazione" on public.tracks;
 create policy "tracks: eliminazione" on public.tracks
   for delete to authenticated using (owner_id = auth.uid() or public.is_admin());
 
+-- BPM rilevato dal sito (o corretto a mano), condiviso con tutti
+alter table public.tracks add column if not exists bpm real check (bpm is null or bpm between 30 and 300);
+alter table public.tracks add column if not exists beat_offset real;
+create or replace function public.set_bpm(track uuid, value real, beat_offset real default null)
+returns void language sql security definer set search_path = public as $$
+  update public.tracks
+     set bpm = round(value::numeric, 1), beat_offset = set_bpm.beat_offset
+   where id = track and auth.uid() is not null and value between 30 and 300;
+$$;
+revoke execute on function public.set_bpm(uuid, real, real) from public, anon;
+grant execute on function public.set_bpm(uuid, real, real) to authenticated;
+
 -- contatore ascolti (chiunque sia iscritto può incrementarlo, di 1)
 create or replace function public.count_play(track uuid)
 returns integer language sql security definer set search_path = public as $$

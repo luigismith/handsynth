@@ -60,6 +60,7 @@ Dallo stesso menu puoi cambiare il codice invito. I link vecchi smettono di funz
 | Mandare un brano a un amico | Clic destro sul brano → **Copia link** (serve un account per ascoltarlo) |
 | Playlist condivise | Pulsante **LIST** nella playlist: salva, apri, accoda. Le vedono tutti |
 | Equalizzatore | **ON** lo attiva, **PRESET** carica o salva le curve, **AUTO** ricorda l'EQ di ogni brano |
+| Analizzatore | Finestra **ANALIZZATORE** (tasto **A** nella barra laterale del lettore, o Alt+A). **BPM** rilevati automaticamente la prima volta che un brano viene ascoltato, salvati per tutti e mostrati anche in libreria; LED rosso sul battito e quarti della battuta; **TAP** per batterli a mano (almeno 4 colpi), **×2 / ÷2** per correggere il raddoppio. **Oscilloscopio**: clic per passare alla vista XY (immagine stereo). **VU meter** stereo con picco in dBFS; clic per azzerare i picchi. Su iPhone/iPad oscilloscopio e VU non sono disponibili (i BPM sì) |
 | Modificare / eliminare | Clic destro sul brano in libreria. Ognuno gestisce i propri brani, l'admin tutti |
 | Ridurre una finestra | Doppio clic sulla barra del titolo |
 | Dimensione | Menu **O → Dimensione**, oppure il tasto **D** della barra laterale |
