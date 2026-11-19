@@ -36,3 +36,7 @@ I dettagli sono in [`ampcloud/README.md`](ampcloud/README.md).
 
 ## Licenza
 MIT, vedi [LICENSE](LICENSE). Librerie incluse in `ampcloud/vendor/`: `@supabase/supabase-js` (MIT) e lamejs/LAME (LGPL-3.0), con le loro licenze accanto.
+
+---
+
+Made by **Luigi Massari** in Taranto, Italy: electronic instruments, 3D printing, laser cutting and software. More work at [luigimassari.com](https://luigimassari.com/).
